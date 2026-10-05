@@ -1,4 +1,4 @@
-*testing.txt*  Test runner and orchestration for Neovim plugins (pre-alpha skeleton)
+*testing.txt*  Test runner and orchestration for Neovim plugins (pre-alpha)
 
 Author: Stefan Bartl
 License: MIT
@@ -13,14 +13,16 @@ CONTENTS                                                        *testing-content
   5. Commands ............................................ |testing-commands|
   6. Keymaps and autocommands ............................ |testing-bindings|
   7. Health check ........................................ |testing-health|
+  8. Command-line driver ................................. |testing-cli|
+  9. Result-IR and assertions ............................ |testing-kernel|
 
 ==============================================================================
 1. Introduction                                                    *testing-intro*
 
 testing.nvim is meant to become a test runner and orchestration layer for Neovim
-plugins. This release is a pre-alpha skeleton: the module layout, the
-configuration, the `:Testing` command, the health check and the project's own
-test suite exist; the runner itself does not.
+plugins. This release is pre-alpha (milestone M0): it has a result kernel, a shim
+for existing spec files and a command-line driver. There is no runner proper, no
+reporter and no editor UI yet.
 
 ==============================================================================
 2. Requirements                                               *testing-requirements*
@@ -84,7 +86,54 @@ option.
 7. Health check                                                    *testing-health*
 
 `:checkhealth testing` reports the Neovim version, the lib.nvim modules the plugin
-calls, the effective configuration and whether `:Testing` is registered. It is
-read-only.
+calls, whether the kernel modules load, whether the command-line entry is on the
+runtimepath, the effective configuration and whether `:Testing` is registered.
+It is read-only and loads no plugin that is lazy-loaded.
+
+==============================================================================
+8. Command-line driver                                                *testing-cli*
+
+Runs the `TESTS/*_spec.lua` files of a project in one Neovim process, in the order
+of the project's own `TESTS/run.lua`, and writes the Result-IR: >sh
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua <root> [options]
+<
+Run it from `<root>`: specs that inspect "this repository" read the working
+directory, and the driver does not change it.
+
+  --json {file}      Write the Result-IR (schema_version 1) to {file} and validate
+                     it again.
+  --rtp {dir}        Add {dir} to the runtimepath (repeatable).
+  --only {text}      Only spec files whose path contains {text} (repeatable).
+  --sentinel {name}  Last line on success. Default: the one the project's
+                     TESTS/run.lua prints.
+  --no-timings       Do not print the timing line.
+  -h, --help         Usage.
+
+Exit codes: 0 green, 1 a spec failed or errored, 2 usage or configuration error
+(also: lib.nvim not found), 3 infrastructure error (the JSON could not be written
+or failed validation). lib.nvim is looked up in $LIB_NVIM_DIR, <repo>/.deps/lib.nvim
+and a sibling ../lib.nvim.
+
+The driver does not lie: a spec listed in TESTS/run.lua but missing on disk is a
+failing case; a spec that calls os.exit is an `error` case; quitting the editor
+(:qa!) ends with exit code 3 ("run did not complete"); a filtered run (--only)
+prints "partial run: N of M spec files" instead of the sentinel; every case notes
+that its `effects` were not collected (M0). With --json the free text is redacted
+(user and host name, environment NAME=value pairs, e-mail addresses) and the
+validator refuses what is left.
+
+Dialect A (`return function(H) ... end`) has no test cases: one spec file is one
+case. A file that raises becomes an `error` case with a traceback and the run goes
+on with the next file.
+
+==============================================================================
+9. Result-IR and assertions                                        *testing-kernel*
+
+Module `testing.core.result` builds, counts, encodes and validates the Result-IR:
+{ schema_version, run, cases, summary }. Encoding is deterministic (sorted keys) and
+replaces the repo, home, temp and state directories by placeholders. A case with no
+assertion fails. Module `testing.core.assert` holds assertions that record a failure
+instead of raising, so every failure of a case is reported. Both are pure Lua; see
+lua/testing/core/README.md in the repository.
 
  vim:tw=78:ts=8:ft=help:norl:

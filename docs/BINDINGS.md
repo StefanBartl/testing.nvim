@@ -34,6 +34,13 @@ harmlessly, by `setup()`.
 Neither subcommand takes a range or a count: there is no text to act on and
 nothing to repeat.
 
+## Command-line entry
+
+Not a Neovim binding, but the other way in: `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua
+<root> [--json <file>] [--rtp <dir>] [--only <text>] [--sentinel <name>] [--no-timings]`. Options and
+exit codes are in the README and in `:help testing-cli`. It registers no command, keymap or
+autocommand in an interactive session.
+
 ## Autocommands
 
 None.

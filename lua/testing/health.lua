@@ -13,6 +13,22 @@ local REQUIRED_LIB = {
   { "lib.nvim.notify", "messages" },
   { "lib.nvim.bindings.usercmd.composer", "the :Testing command" },
   { "lib.nvim.bindings.keymap", "named keymap actions" },
+  { "lib.nvim.json", "deterministic JSON for the Result-IR" },
+  { "lib.lua.error", "safe_call around spec bodies" },
+  { "lib.nvim.fs.project_key", "stable project key of a run" },
+  { "lib.nvim.fs.write.atomic", "atomic write of the JSON IR" },
+  { "lib.nvim.system.job", "process execution (runner)" },
+}
+
+---Kernel modules that the CLI and the in-process driver need; a failure here is a defect of the
+---plugin itself, not of the environment.
+---@type string[]
+local KERNEL = {
+  "testing.core.result",
+  "testing.core.assert",
+  "testing.dialect.harness_a",
+  "testing.run.inproc",
+  "testing.cli",
 }
 
 ---@return nil
@@ -42,6 +58,28 @@ function M.check()
   end
   if not lib_ok then
     return
+  end
+
+  health.start("testing.nvim: kernel")
+  for _, name in ipairs(KERNEL) do
+    local ok, err = pcall(require, name)
+    if ok then
+      health.ok(name)
+    else
+      health.error(("%s failed to load: %s"):format(name, tostring(err)), {
+        "This is a defect of testing.nvim; report it with this message",
+      })
+    end
+  end
+  local ir_ok, result = pcall(require, "testing.core.result")
+  if ir_ok and type(result.SCHEMA_VERSION) == "number" then
+    health.info(("Result-IR schema_version %d"):format(result.SCHEMA_VERSION))
+  end
+  -- The CLI entry is a file on the runtimepath, not a module: probe it without loading anything.
+  if #vim.api.nvim_get_runtime_file("scripts/testing.lua", false) > 0 then
+    health.ok("scripts/testing.lua (command-line entry) is on the runtimepath")
+  else
+    health.info("scripts/testing.lua is not on the runtimepath; run it by path instead")
   end
 
   health.start("testing.nvim: configuration")

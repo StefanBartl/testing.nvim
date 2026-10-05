@@ -1,7 +1,21 @@
 -- TESTS/testing/config_spec.lua -- testing.config: validation, merge over the defaults, reset.
 
 return function(H)
-  local eq, ok = H.eq, H.ok
+  local ok = H.ok
+  -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)
+  local function eq(actual, expected, msg)
+    return ok(
+      vim.deep_equal(actual, expected),
+      ("%s: expected %s, got %s"):format(msg, vim.inspect(expected), vim.inspect(actual))
+    )
+  end
+  -- dialect A has no `has`: a plain substring check on top of H.ok (a tail call keeps the call site)
+  local function has(haystack, needle, msg)
+    return ok(
+      type(haystack) == "string" and haystack:find(needle, 1, true) ~= nil,
+      msg .. " (got " .. tostring(haystack):sub(1, 200) .. ")"
+    )
+  end
   local config = require("testing.config")
   local DEFAULTS = require("testing.config.DEFAULTS")
 
@@ -21,7 +35,7 @@ return function(H)
   valid, problems = config.validate({ notify_prefix = 3, keymaps = "no", nope = true })
   eq(valid, {}, "wrong types and unknown keys are dropped")
   eq(#problems, 3, "each dropped key is reported")
-  H.has(table.concat(problems, "\n"), "unknown option 'nope'", "an unknown key is named")
+  has(table.concat(problems, "\n"), "unknown option 'nope'", "an unknown key is named")
 
   valid = config.validate({ notify_prefix = "" })
   eq(valid, {}, "an empty prefix is dropped")

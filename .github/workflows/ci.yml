@@ -67,6 +67,59 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # M0 exit criterion kept as a regression check: lib.nvim's whole suite, unchanged, runs through
+  # testing.nvim's driver with the same verdict as lib.nvim's own TESTS/run.lua. Not part of the
+  # ci-verified gate yet: it has only been verified locally (Windows), and lib.nvim's suite
+  # touches git and the network, so it must prove stable on all three runners first.
+  lib-suite:
+    name: lib.nvim suite via testing.nvim (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: StefanBartl/lib.nvim
+          path: .deps/lib.nvim
+          ref: ci-verified
+      # telemetry_wrap_spec.lua needs the real runtime-analysis.telemetry module on the runtimepath.
+      - uses: actions/checkout@v5
+        with:
+          repository: StefanBartl/runtime-analysis.nvim
+          path: .deps/runtime-analysis.nvim
+          ref: ci-verified
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - name: Run the lib.nvim suite
+        env:
+          LIB_NVIM_DIR: ${{ github.workspace }}/.deps/lib.nvim
+          DRIVER: ${{ github.workspace }}/scripts/testing.lua
+          RTP_EXTRA: ${{ github.workspace }}/.deps/runtime-analysis.nvim
+          IR_FILE: ${{ runner.temp }}/lib-suite-ir.json
+        run: |
+          exec > >(tee -a "$RUNNER_TEMP/lib-suite-output.log") 2>&1
+          # The specs read the working directory as "this repository": run from the lib.nvim root.
+          cd .deps/lib.nvim
+          nvim -n -i NONE --headless -u NONE -l "$DRIVER" . --rtp "$RTP_EXTRA" --json "$IR_FILE"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: lib-suite-ir-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/lib-suite-ir.json
+            ${{ runner.temp }}/lib-suite-output.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Consumers of this repo that check it out as a CI dependency pin `ref: ci-verified`: that branch
   # only ever moves once stylua, luacheck and the three-platform test matrix have all passed.
   publish-ci-verified:
