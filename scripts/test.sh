@@ -1,38 +1,40 @@
 #!/usr/bin/env bash
 #
-# Runs the spec suite headlessly: nvim -n -i NONE --headless -u NONE -l TESTS/run.lua
+# Runs this repository's specs through its own runner (dogfood):
 #
-#   scripts/test.sh            every spec under TESTS/testing/
-#   scripts/test.sh config     only specs whose file name contains "config"
+#   nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . [options]
 #
-# Exit code 0: all specs passed. 1: a spec failed, or nvim / lib.nvim was not found.
-# lib.nvim is a hard dependency and is looked up in, in this order:
-#   1. $LIB_NVIM_DIR
-#   2. <repo>/.deps/lib.nvim
-#   3. <repo>/../lib.nvim (a sibling checkout)
+#   scripts/test.sh                    every spec under TESTS/
+#   scripts/test.sh --file config      only spec files whose name contains "config"
+#   scripts/test.sh --json out.json    additionally write the Result-IR
+#   scripts/test.sh --junit out.xml    additionally write a JUnit report
+#
+# Every option of `scripts/testing.lua --help` is passed through unchanged.
+#
+# Exit code: 0 all green, 1 a spec failed, 2 usage or configuration error, 3 infrastructure error
+# (nvim is not on PATH, or lib.nvim was not found: the runner then names all four places it looked
+# in: $LIB_NVIM_DIR, <repo>/.deps/lib.nvim, <repo>/../lib.nvim, stdpath('data')/lazy/lib.nvim).
 
-set -euo pipefail
+set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-fail() {
-  printf '\033[31m%s\033[0m\n' "$1" >&2
-  exit 1
-}
-
-command -v nvim >/dev/null 2>&1 || fail "error: nvim is not on PATH."
-
-is_lib() { [[ -n "${1:-}" && -d "$1/lua/lib/nvim" ]]; }
-
-if ! is_lib "${LIB_NVIM_DIR:-}" && ! is_lib ".deps/lib.nvim" && ! is_lib "../lib.nvim"; then
-  fail "error: lib.nvim not found. Searched:
-  - \$LIB_NVIM_DIR (${LIB_NVIM_DIR:-unset})
-  - $(pwd)/.deps/lib.nvim
-  - $(cd .. && pwd)/lib.nvim
-Set LIB_NVIM_DIR, or clone it to .deps/lib.nvim, or place it beside this repo."
+if ! command -v nvim >/dev/null 2>&1; then
+  printf '\033[31m%s\033[0m\n' "error: nvim is not on PATH." >&2
+  exit 3
 fi
 
-# Throwaway app name: the run gets its own stdpath("config"/"data"/"state"), never the developer's.
+# Throwaway app name and state: the run never reads or writes the developer's real
+# stdpath("config"/"data"/"state"/"cache").
 export NVIM_APPNAME="${NVIM_APPNAME:-testing-nvim-tests}"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+if command -v cygpath >/dev/null 2>&1; then
+  scratch="$(cygpath -m "$scratch")"
+fi
+export XDG_STATE_HOME="$scratch/state"
+export XDG_CACHE_HOME="$scratch/cache"
 
-exec nvim -n -i NONE --headless -u NONE -l TESTS/run.lua "$@"
+# No `exec`: the trap must remove the scratch directory afterwards.
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . "$@"
+exit $?

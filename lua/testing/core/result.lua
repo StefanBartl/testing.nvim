@@ -438,13 +438,15 @@ local function redact_string(s, r, ci)
   s = s:gsub("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+", "<EMAIL>")
   for _, w in ipairs(r.words or {}) do
     if type(w.text) == "string" and #w.text >= 3 then
-      s = replace_word(s, w.text, w.ph or "<REDACTED>", ci)
+      -- always case-insensitive, like the validator's `forbid` scan: what one removes the other
+      -- must not find (a user `Runner` on a case-sensitive file system, a text saying `runner`)
+      s = replace_word(s, w.text, w.ph or "<REDACTED>", true)
     end
   end
   return s
 end
 
----Redact the free-text fields of every case (assertion text, error message and traceback, notes),
+---Redact the free-text fields of every case (assertion text, error message and traceback, notes, reason),
 ---on a copy. Structural strings (ids, status, kinds, paths) are never touched.
 ---@param value Testing.Result
 ---@param r Testing.Result.Redact
@@ -459,6 +461,7 @@ local function redact_result(value, r, ci)
     for _, a in ipairs(c.assertions or {}) do
       a.msg, a.expected, a.actual = red(a.msg), red(a.expected), red(a.actual)
     end
+    c.reason = red(c.reason)
     if type(c.error) == "table" then
       c.error.message, c.error.traceback = red(c.error.message), red(c.error.traceback)
     end
@@ -556,7 +559,14 @@ local function scan_leaks(value, path, opts, problems, depth)
   end
   local t = type(value)
   if t == "string" then
-    for _, bad in ipairs(opts.forbid or {}) do
+    -- ids, names, describe titles and file names are the project's own words, not data about the
+    -- machine: only free text can leak a user or host name (a spec titled "the runner" is no leak
+    -- on a CI runner whose user is `runner`)
+    local free_text = path:find("%.assertions%.")
+      or path:find("%.notes%.")
+      or path:find("%.error%.")
+      or path:find("%.reason$")
+    for _, bad in ipairs((free_text or not opts.forbid_free_text_only) and opts.forbid or {}) do
       -- Whole word, case-insensitive: the user name `bartl` is a leak in `by bartl` but not in the
       -- public handle `StefanBartl/lib.nvim`.
       if bad ~= "" and replace_word(value, bad, "", true) ~= value then

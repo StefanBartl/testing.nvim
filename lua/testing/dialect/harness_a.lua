@@ -14,8 +14,11 @@
 ---   * `H.eq` / `H.ok` are NOT wrapped: the spec's call site is then frame 3 of the assertion and
 ---     `a.depth` stays 0 (a non-tail wrapper would need `a.depth = 1`).
 ---
---- Reading an `H` key that does not exist raises a descriptive error (the old table answered `nil`
---- and the spec died with "attempt to call a nil value"): same verdict, a better message.
+--- Reading an `H` key that does not exist answers `nil`, exactly like the old table: feature
+--- detection (`if H.x then`, `vim.inspect(H)`, `pairs(H)`) must not raise (M0 review follow-up). A
+--- spec that calls a key the shim lacks still dies at the call ("attempt to call a nil value (field
+--- 'x')"), which names the key; the dialect sniffer reports specs that use keys of no known
+--- harness (`testing.discover.sniff`).
 ---
 --- Differences to the old harness, all by design and documented in `docs`/the M0 notes:
 ---   * `eq`/`ok` never raise, `with_patched` still re-raises a raise of its body;
@@ -86,16 +89,7 @@ function M.new(a)
     end, fn)
   end
 
-  return setmetatable(H, {
-    __index = function(_, key)
-      error(
-        ("dialect A: H.%s is not part of the harness (known: eq, ok, tmpfile, read_lines, with_patched, with_stdpath_config)"):format(
-          tostring(key)
-        ),
-        2
-      )
-    end,
-  })
+  return H
 end
 
 return M

@@ -130,10 +130,21 @@ return function(H)
   end)
   eq(vim.fn.stdpath("config"), real_config, "stdpath is restored")
 
-  -- an unknown H key is a descriptive error, not a silent nil
-  local got, msg = pcall(function()
+  -- an unknown H key answers nil, like the old table: feature detection and inspection must not raise
+  local detected, value = pcall(function()
+    if h.has then
+      return "present"
+    end
     return h.has
   end)
-  eq(got, false, "unknown key raises")
-  has(msg, "H.has is not part of the harness", "names the key")
+  eq(detected, true, "reading an unknown key does not raise")
+  eq(value, nil, "an unknown key is nil")
+  eq(type(vim.inspect(h)), "string", "vim.inspect(H) works")
+  eq(rawget(h, "has"), nil, "nothing was added by the read")
+  -- calling a key the shim lacks fails at the call and names the key
+  local call_ok, called_err = pcall(function()
+    return h.has("a", "a", "x")
+  end)
+  eq(call_ok, false, "calling a missing key fails")
+  has(called_err, "has", "the message names the key")
 end

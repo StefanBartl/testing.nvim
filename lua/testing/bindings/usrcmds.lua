@@ -1,18 +1,235 @@
 ---@module 'testing.bindings.usrcmds'
 ---@brief Registers the `:Testing` user command (lib.nvim composer verb).
 ---@description
---- `:Testing health` runs `:checkhealth testing`, `:Testing config` prints the effective
---- configuration. Routes, completion and usage text all come from one route tree
---- (lib.nvim.bindings.usercmd.composer).
+--- Subcommands (see docs/BINDINGS.md):
+---
+---   :Testing [run] [<root>] [--file=..] [--filter=..] [--reporter=..] [--rtp=..] [--config=..]
+---   :Testing file [<spec>]       run the spec of the current buffer (mapping a source file to its spec is M3)
+---   :Testing last                repeat the last run
+---   :Testing list [<root>] ...   list what would run
+---   :Testing init [<root>] [--force] [--plugin=<name>]   generate the test setup of a plugin repo
+---   :Testing health | config | doctor [<root>]
+---
+--- Runs go to a headless child nvim (`testing.bindings.child`), never into this editor. Completion
+--- comes from the same route tree as the dispatch and is computed live (UI-22/23/26): the
+--- subcommands and `--flags` from the tree, the reporters from `testing.args.REPORTERS` at the moment
+--- of the keypress, the `--file=` candidates from the spec files that exist below the project root now.
+--- No keymap is bound here; keymaps are the user's opt-in (`keymaps.lua`).
 
 local M = {}
 
 local registered = false
 
+---Run options of the last `run`/`file`, for `:Testing last`.
+---@type { sub: string, opts: Testing.Child.Opts }|nil
+M.last_run = nil
+
+---Names of the argument types this module registers with the composer.
+M.TYPE_REPORTER = "TESTING_REPORTER"
+M.TYPE_SPEC = "TESTING_SPEC"
+
+---@param path string
+---@return string
+local function abs(path)
+  return (vim.fs.normalize(vim.fn.fnamemodify(path, ":p")):gsub("/+$", ""))
+end
+
+---The project root of a command: the explicit directory, else the nearest ancestor of `from` (the
+---current directory by default) that holds `.testing.lua`, `TESTS` or `.git`, else the current directory.
+---@param explicit? string
+---@param from? string A file or directory to start the upward search at.
+---@return string root Absolute, forward slashes, no trailing slash.
+function M.resolve_root(explicit, from)
+  if type(explicit) == "string" and explicit ~= "" then
+    return abs(explicit)
+  end
+  local start = vim.fn.getcwd()
+  if from and from ~= "" then
+    start = vim.fn.isdirectory(from) == 1 and from or vim.fs.dirname(from)
+  end
+  local found = require("lib.nvim.fs.find_upward_dir")({ ".testing.lua", "TESTS", ".git" }, start)
+  return abs(found or vim.fn.getcwd())
+end
+
+---Spec files below `<root>/TESTS`, relative to the root (what `--file=` matches against).
+---@param root string
+---@return string[]
+function M.spec_files(root)
+  local found = vim.fs.find(function(name)
+    return name:match("_spec%.lua$") ~= nil
+  end, { path = root .. "/TESTS", type = "file", limit = 1000 })
+  local out = {}
+  for _, path in ipairs(found) do
+    out[#out + 1] = require("lib.nvim.fs.relpath")(path, root)
+  end
+  table.sort(out)
+  return out
+end
+
+---The flags of the commands that run or list specs.
+---@return table[]
+local function run_flags()
+  return {
+    { name = "file", type = M.TYPE_SPEC, repeatable = true },
+    { name = "filter", type = "STRING", repeatable = true },
+    { name = "reporter", type = M.TYPE_REPORTER },
+    { name = "rtp", type = "DIR", repeatable = true },
+    { name = "config", type = "FILE" },
+  }
+end
+
+---`ctx.flags` as the child's flag table.
+---@param flags table<string, any>
+---@return Testing.Child.Flags
+function M.child_flags(flags)
+  return {
+    file = flags.file,
+    filter = flags.filter,
+    reporter = flags.reporter,
+    rtp = flags.rtp,
+    config = flags.config,
+  }
+end
+
+---@param sub "run"|"list"|"doctor"
+---@param opts Testing.Child.Opts
+local function start(sub, opts)
+  local notify = require("testing.notify").get()
+  local ok, err = require("testing.bindings.child").start(sub, opts)
+  if not ok then
+    notify.error(("cannot start the test process: %s"):format(tostring(err)))
+    return
+  end
+  if sub == "run" then
+    M.last_run = { sub = sub, opts = opts }
+  end
+  notify.info(("testing %s: %s"):format(sub, opts.root))
+end
+
+---The relative spec path of the current buffer, or nil with the reason.
+---@param path? string Explicit file (else the current buffer's name).
+---@return string|nil root
+---@return string|nil rel
+---@return string|nil err
+function M.current_spec(path)
+  local file = path
+  if not file or file == "" then
+    file = vim.api.nvim_buf_get_name(0)
+  end
+  if file == "" then
+    return nil, nil, "the current buffer has no file"
+  end
+  file = abs(file)
+  if not file:match("_spec%.lua$") then
+    return nil,
+      nil,
+      ("%s is not a spec file (*_spec.lua); running the spec of a source file is not implemented yet"):format(
+        file
+      )
+  end
+  local root = M.resolve_root(nil, file)
+  local rel = require("lib.nvim.fs.relpath")(file, root)
+  if rel:sub(1, 3) == "../" or rel:match("^%a:") or rel:sub(1, 1) == "/" then
+    return nil, nil, ("%s is outside the project root %s"):format(file, root)
+  end
+  return root, rel
+end
+
+---Handler of `:Testing run` and of the bare `:Testing`.
+---@param ctx { args: table<string, any>, flags: table<string, any> }
+function M.run_all(ctx)
+  start("run", { root = M.resolve_root(ctx.args.root), flags = M.child_flags(ctx.flags) })
+end
+
 ---The route tree of `:Testing`.
 ---@return table[]
 function M.routes()
+  local function notify()
+    return require("testing.notify").get()
+  end
+
   return {
+    {
+      path = { "run" },
+      desc = "Run the spec files of the project (headless child nvim)",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = run_flags(),
+      run = M.run_all,
+    },
+    {
+      path = { "file" },
+      desc = "Run the spec file of the current buffer",
+      args = { { name = "spec", type = "FILE", optional = true } },
+      flags = { { name = "rtp", type = "DIR", repeatable = true } },
+      run = function(ctx)
+        local root, rel, err = M.current_spec(ctx.args.spec)
+        if not root then
+          notify().warn(tostring(err))
+          return
+        end
+        start("run", { root = root, flags = { file = { rel }, rtp = ctx.flags.rtp } })
+      end,
+    },
+    {
+      path = { "last" },
+      desc = "Repeat the last run",
+      run = function()
+        local last = M.last_run
+        if not last then
+          notify().warn("there is no earlier run in this session")
+          return
+        end
+        start(last.sub, last.opts)
+      end,
+    },
+    {
+      path = { "list" },
+      desc = "List the spec files that would run, run nothing",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = run_flags(),
+      run = function(ctx)
+        start("list", { root = M.resolve_root(ctx.args.root), flags = M.child_flags(ctx.flags) })
+      end,
+    },
+    {
+      path = { "init" },
+      desc = "Generate .testing.lua, TESTS/minimal_init.lua, scripts/test.sh and a CI job (never overwrites)",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = {
+        { name = "force", bool = true },
+        { name = "plugin", type = "STRING" },
+      },
+      run = function(ctx)
+        local root = ctx.args.root and abs(ctx.args.root) or abs(vim.fn.getcwd())
+        local result = require("testing.scaffold").init(
+          root,
+          { force = ctx.flags.force, plugin = ctx.flags.plugin }
+        )
+        local lines = {}
+        if #result.created > 0 then
+          lines[#lines + 1] = "created: " .. table.concat(result.created, ", ")
+        end
+        if #result.replaced > 0 then
+          lines[#lines + 1] = "replaced (--force): " .. table.concat(result.replaced, ", ")
+        end
+        if #result.skipped > 0 then
+          lines[#lines + 1] = "kept (exists; --force replaces): "
+            .. table.concat(result.skipped, ", ")
+        end
+        for _, e in ipairs(result.errors) do
+          lines[#lines + 1] = "error: " .. e
+        end
+        if #lines == 0 then
+          lines[1] = "nothing to do"
+        end
+        local text = ("testing init %s\n%s"):format(root, table.concat(lines, "\n"))
+        if #result.errors > 0 then
+          notify().error(text)
+        else
+          notify().info(text)
+        end
+      end,
+    },
     {
       path = { "health" },
       desc = "Run :checkhealth testing",
@@ -24,10 +241,58 @@ function M.routes()
       path = { "config" },
       desc = "Show the effective configuration",
       run = function()
-        require("testing.notify").get().info(vim.inspect(require("testing.config").get()))
+        notify().info(vim.inspect(require("testing.config").get()))
+      end,
+    },
+    {
+      path = { "doctor" },
+      desc = "Show the project's resolved configuration and the dependency report",
+      args = { { name = "root", type = "DIR", optional = true } },
+      run = function(ctx)
+        start("doctor", { root = M.resolve_root(ctx.args.root) })
       end,
     },
   }
+end
+
+---Register the argument types (live completion) with the composer.
+---@param composer table
+local function register_types(composer)
+  local prefix = require("lib.nvim.bindings.usercmd.composer.argtypes").prefix
+  composer.register_type(M.TYPE_REPORTER, {
+    validate = function(raw)
+      local names = require("testing.args").REPORTERS
+      if vim.tbl_contains(names, raw) then
+        return true, raw, nil
+      end
+      return false, nil, ("expected one of %s"):format(table.concat(names, "|"))
+    end,
+    complete = function(lead)
+      return prefix(require("testing.args").REPORTERS, lead)
+    end,
+  })
+  composer.register_type(M.TYPE_SPEC, {
+    validate = function(raw)
+      if raw == "" then
+        return false, nil, "expected a part of a spec file name"
+      end
+      return true, raw, nil
+    end,
+    complete = function(lead)
+      local ok, files = pcall(M.spec_files, M.resolve_root())
+      if not ok then
+        return {}
+      end
+      -- A substring is what `--file` means, so offer the whole path for any part the user typed.
+      local out = {}
+      for _, f in ipairs(files) do
+        if lead == "" or f:find(lead, 1, true) then
+          out[#out + 1] = f
+        end
+      end
+      return out
+    end,
+  })
 end
 
 ---Register `:Testing`. Safe to call twice.
@@ -37,8 +302,13 @@ function M.register()
     return true
   end
   local ok, err = pcall(function()
-    require("lib.nvim.bindings.usercmd.composer").verb("Testing", {
-      desc = "testing.nvim: health, config",
+    local composer = require("lib.nvim.bindings.usercmd.composer")
+    register_types(composer)
+    composer.verb("Testing", {
+      desc = "testing.nvim: run, file, last, list, init, health, config, doctor",
+      default = function()
+        M.run_all({ args = {}, flags = {} })
+      end,
       routes = M.routes(),
     })
   end)

@@ -13,22 +13,39 @@ CONTENTS                                                        *testing-content
   5. Commands ............................................ |testing-commands|
   6. Keymaps and autocommands ............................ |testing-bindings|
   7. Health check ........................................ |testing-health|
-  8. Command-line driver ................................. |testing-cli|
-  9. Result-IR and assertions ............................ |testing-kernel|
+  8. Command-line runner ................................. |testing-cli|
+  9. Project file .testing.lua ........................... |testing-project|
+ 10. Exit codes .......................................... |testing-exit-codes|
+ 11. Dialects ............................................ |testing-dialects|
+ 12. Reporters and the Result-IR ......................... |testing-reporters|
+ 13. Migrating from busted or plenary .................... |testing-migrating|
 
 ==============================================================================
 1. Introduction                                                    *testing-intro*
 
-testing.nvim is meant to become a test runner and orchestration layer for Neovim
-plugins. This release is pre-alpha (milestone M0): it has a result kernel, a shim
-for existing spec files and a command-line driver. There is no runner proper, no
-reporter and no editor UI yet.
+testing.nvim is a test runner for Neovim plugins. It runs existing spec files
+unchanged (the `return function(H)` styles of the author's plugins and busted
+style `describe` / `it` specs, without plenary or busted), reports through a
+terminal reporter, GitHub annotations, JUnit XML and a JSON result format, and
+refuses to report a green run it cannot stand behind.
+
+This release is pre-alpha (milestone M1). All spec files share one Neovim
+process, `effects` of a case are not measured, and there is no editor UI beyond
+|:Testing|. The long form of this help is in the repository's docs/ directory.
 
 ==============================================================================
 2. Requirements                                               *testing-requirements*
 
   - Neovim 0.10 or newer
-  - lib.nvim (hard dependency): https://github.com/StefanBartl/lib.nvim
+  - lib.nvim (hard dependency): https://github.com/StefanBartl/lib.nvim, at
+    least the commits 6304829 (fs.write.atomic) and 89cb912 (safe_call keeps
+    non-string errors)
+
+The command-line runner looks for lib.nvim in four places, in this order:
+$LIB_NVIM_DIR, <repo>/.deps/lib.nvim, <repo>/../lib.nvim and
+stdpath('data')/lazy/lib.nvim. If it finds none, it names all four and exits
+with 3. An override ($LIB_NVIM_DIR) that is set but invalid is a failure, never
+skipped.
 
 ==============================================================================
 3. Setup                                                             *testing-setup*
@@ -50,8 +67,10 @@ so `cmd = "Testing"` lazy-loading works without `setup()`.
 ==============================================================================
 4. Configuration                                                    *testing-config*
 
-All keys are optional. A key with the wrong type, and any unknown key, is dropped
-and reported with a warning; the default stays in place.
+These are the options of `setup()`. The per-project file of the command-line
+runner is a different thing, see |testing-project|. All keys are optional. A key
+with the wrong type, and any unknown key, is dropped and reported with a
+warning; the default stays in place.
 
                                                           *testing-notify_prefix*
 notify_prefix ~
@@ -70,10 +89,23 @@ keymaps ~
 5. Commands                                                      *testing-commands*
 
                                                                        *:Testing*
-:Testing health     Run `:checkhealth testing`.
-:Testing config     Show the effective configuration.
+:Testing [run] [{root}] [--file=..] [--filter=..] [--reporter=..]
+        Run the specs of the project in a headless child Neovim, never in this
+        editor. {root} defaults to the nearest directory upwards that holds
+        `.testing.lua`, `TESTS` or `.git`.
+:Testing file [{spec}]    Run the spec of the current buffer.
+:Testing last             Repeat the last run.
+:Testing list [{root}]    List what would run.
+:Testing init [{root}] [--force] [--plugin={name}]
+        Generate the test setup of a plugin repository. An existing file is
+        never overwritten without `--force`.
+:Testing health           Run `:checkhealth testing`.
+:Testing config           Show the effective plugin configuration.
+:Testing doctor [{root}]  Show the project configuration and the dependency
+                          report.
 
-Subcommands are completed with <Tab>.
+Subcommands and flags are completed with <Tab>. The complete reference is
+docs/BINDINGS.md.
 
 ==============================================================================
 6. Keymaps and autocommands                                      *testing-bindings*
@@ -85,55 +117,146 @@ option.
 ==============================================================================
 7. Health check                                                    *testing-health*
 
-`:checkhealth testing` reports the Neovim version, the lib.nvim modules the plugin
-calls, whether the kernel modules load, whether the command-line entry is on the
-runtimepath, the effective configuration and whether `:Testing` is registered.
-It is read-only and loads no plugin that is lazy-loaded.
+`:checkhealth testing` reports, in separate sections: the Neovim version; the
+lib.nvim modules the plugin calls, plus two behaviors it relies on (safe_call
+keeps non-string errors, fs.write.atomic refuses an invalid call), each probed
+without writing anything; whether the kernel modules load; the dialect and
+reporter registries; whether the command-line runner can find lib.nvim; the
+`.testing.lua` of the current directory; the effective configuration; and
+whether |:Testing| is registered.
+
+It is read-only, starts no process and loads no plugin that is lazy-loaded.
+`.testing.lua` is a Lua file and loading it executes it, so the health check
+does not: it evaluates the file in an empty environment with an instruction
+budget. A plain table is validated for real; a file that needs more is reported
+as "not evaluated here" (never as valid). `testing doctor` evaluates it.
+
+A level never contradicts its text: an error is something broken, a warning is
+something that will fail elsewhere (for example the command-line runner not
+finding lib.nvim while the editor works), an info is something not checked.
 
 ==============================================================================
-8. Command-line driver                                                *testing-cli*
+8. Command-line runner                                                *testing-cli*
 
-Runs the `TESTS/*_spec.lua` files of a project in one Neovim process, in the order
-of the project's own `TESTS/run.lua`, and writes the Result-IR: >sh
-    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua <root> [options]
+>sh
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor] [{root}] [options]
 <
-Run it from `<root>`: specs that inspect "this repository" read the working
-directory, and the driver does not change it.
+Run it from {root}: specs that look at "this repository" read the working
+directory and the runner does not change it. `scripts/test.sh` runs this
+repository's own specs this way.
 
-  --json {file}      Write the Result-IR (schema_version 1) to {file} and validate
-                     it again.
+Subcommands: `run` (default), `list` (= `run --list`), `doctor` (resolved
+configuration and dependency report). `init` is available as |:Testing| init
+only.
+
+Selection ~
+  --file {text}      Only spec files whose file name contains {text}
+                     (repeatable). `--only` is an alias.
+  --filter {text}    Only cases whose name contains {text} (literal).
+  --tags {a,b}       Only cases with one of these tags: a `#word` in a busted
+  --exclude-tags     title, or a `-- @tags a b` header line in any spec.
+  --lf, --ff         Only what failed last time, or that first.
+  --list, --dry-run  List what would run, run nothing.
+  --config {file}    Project file inside the root.
   --rtp {dir}        Add {dir} to the runtimepath (repeatable).
-  --only {text}      Only spec files whose path contains {text} (repeatable).
-  --sentinel {name}  Last line on success. Default: the one the project's
-                     TESTS/run.lua prints.
-  --no-timings       Do not print the timing line.
-  -h, --help         Usage.
 
-Exit codes: 0 green, 1 a spec failed or errored, 2 usage or configuration error
-(also: lib.nvim not found), 3 infrastructure error (the JSON could not be written
-or failed validation). lib.nvim is looked up in $LIB_NVIM_DIR, <repo>/.deps/lib.nvim
-and a sibling ../lib.nvim.
+Control ~
+  -x, --maxfail {n}  Stop after the first / {n}th failure.
+  --shuffle, --seed {n}
+                     Random order; the seed is printed.
+  --case-timeout {ms}, --file-timeout {ms}
+                     Timeouts (best effort: Lua code and `vim.wait`, not a
+                     spec that blocks inside C).
+  --strict           A skipped case or a discovery finding makes the run red.
 
-The driver does not lie: a spec listed in TESTS/run.lua but missing on disk is a
-failing case; a spec that calls os.exit is an `error` case; quitting the editor
-(:qa!) ends with exit code 3 ("run did not complete"); a filtered run (--only)
-prints "partial run: N of M spec files" instead of the sentinel; every case notes
-that its `effects` were not collected (M0). With --json the free text is redacted
-(user and host name, environment NAME=value pairs, e-mail addresses) and the
-validator refuses what is left.
+Output ~
+  --reporter {name}  Terminal reporter.
+  --json {file}      Write the Result-IR (schema_version 1), validated.
+  --junit {file}     Write a JUnit XML report.
+  --github           GitHub Actions annotations and step summary.
+  --durations {n}    Name the {n} slowest cases.
+  --sentinel {name}  Last line of a complete green run (default TESTING_OK).
+  --no-timings       No timing line.
 
-Dialect A (`return function(H) ... end`) has no test cases: one spec file is one
-case. A file that raises becomes an `error` case with a traceback and the run goes
-on with the next file.
+An option that is parsed but not implemented is refused with exit code 2, never
+ignored. Only a complete green run with no skipped case prints the sentinel; a
+selection, `--maxfail` or a skip prints a distinct last line.
 
 ==============================================================================
-9. Result-IR and assertions                                        *testing-kernel*
+9. Project file .testing.lua                                      *testing-project*
 
-Module `testing.core.result` builds, counts, encodes and validates the Result-IR:
-{ schema_version, run, cases, summary }. Encoding is deterministic (sorted keys) and
-replaces the repo, home, temp and state directories by placeholders. A case with no
-assertion fails. Module `testing.core.assert` holds assertions that record a failure
-instead of raising, so every failure of a case is reported. Both are pure Lua; see
-lua/testing/core/README.md in the repository.
+A Lua file in the project root that returns a table; every key is optional. It
+is executed, so it is loaded only from the root named on the command line (or
+`--config`, inside that root), as text, below 256 KiB. Invalid values and
+unknown keys are warnings (the default stays); an unusable file is exit 2.
+
+  plugin       string       Module root of the project.
+  roots        string[]     Spec roots, relative. Default { "TESTS" }.
+  dialect      string       "auto" (default), "testing", "a", "b", "c", "d",
+                            "busted".
+  minit        false|string Minimal init, run before the specs.
+  deps         string[]     Dependencies that must resolve (exit 3 if not).
+  timeouts     table        case_ms (10000), file_ms (60000).
+  setup, conformance, coverage, snapshots, backends
+                            Validated, reserved: nothing acts on them yet.
+
+A dependency is looked up in $<NAME>_DIR, <root>/.deps/<name>, <root>/../<name>
+and stdpath('data')/lazy/<name>; the message of a miss names all four.
+
+==============================================================================
+10. Exit codes                                                  *testing-exit-codes*
+
+  0   Every spec file passed.
+  1   A case failed, errored or timed out (under --strict also a skip or a
+      discovery finding).
+  2   Usage or configuration error, or nothing to run (also a selection that
+      matches nothing).
+  3   Infrastructure error: a dependency is missing, minit raised, a report
+      could not be written, the editor was quit under the run, an internal
+      error.
+
+A spec cannot end the run: `os.exit` inside a spec is an error of that file.
+
+==============================================================================
+11. Dialects                                                      *testing-dialects*
+
+The dialect of a file is sniffed from its text (`dialect = "auto"`) or forced.
+
+  a, b, c   `return function(H)` with the helpers of lib.nvim, of
+            markdown/diff.nvim, of images.nvim. One case per file.
+  d         `require("harness")` and `M.run()` (spotlight.nvim). One case per
+            file.
+  h         `return function(H)` on the project's own `TESTS/harness.lua`.
+            One case per file.
+  busted    `describe` / `it` with before_each, after_each, setup, teardown,
+            pending and a luassert subset. One case per `it`. Not supported,
+            raising by name: spy, stub, mock, insulate, expose, finally,
+            xdescribe, luassert extensions.
+
+A failed check is recorded and the file goes on. A case without an assertion
+fails; a file whose dialect cannot be told is an error case with the reason
+(never a skip: set `dialect` in .testing.lua).
+
+==============================================================================
+12. Reporters and the Result-IR                                  *testing-reporters*
+
+The Result-IR (`schema_version` 1) is deterministic JSON: run, cases, summary.
+Statuses: pass, fail, error, skip, xfail, xpass, timeout, crash. Paths become
+<REPO>, <HOME>, <TMP>, <STATE>; with --json the free text is redacted (user and
+host name, environment pairs, e-mail addresses) and validated after writing.
+`effects` are not collected yet; every case says so.
+
+Reporters read the IR only and treat everything from the code under test as
+hostile input: `term` (default), `github` (annotations escaped so a test name
+cannot start a workflow command, step summary appended), `junit` (well-formed
+XML for any input). A reporter that fails is exit code 3.
+
+==============================================================================
+13. Migrating from busted or plenary                             *testing-migrating*
+
+Specs stay unchanged. Check out lib.nvim where the runner finds it, run the
+runner from the plugin root, read what it says about spec locations, unknown
+dialects and unsupported luassert features, then point scripts/test.sh and CI
+at the runner and remove the old one. See docs/MIGRATING.md.
 
  vim:tw=78:ts=8:ft=help:norl:

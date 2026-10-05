@@ -1,4 +1,4 @@
--- TESTS/harness.lua -- tiny assertion helpers shared by the specs (returned to each spec by run.lua).
+-- TESTS/harness.lua -- tiny assertion helpers shared by the specs (the runner hands them to each spec as `H`).
 
 local H = {}
 

@@ -1,104 +1,66 @@
 ---@module 'testing.cli'
----@brief Command-line entry: `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua <root> [options]`.
+---@brief Command-line entry: `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor] <root> [options]`.
 ---@description
---- Parses the arguments, runs the in-process driver over the spec files of `<root>/TESTS` and
---- returns the process exit code (the caller, `scripts/testing.lua`, passes it to `os.exit`):
+--- Parses the arguments (`testing.args`), loads the project's `.testing.lua`
+--- (`testing.config.project`), resolves its dependencies (`testing.deps`), and hands the run to
+--- `testing.run.project`. Returns the process exit code (the caller, `scripts/testing.lua`, passes
+--- it to `os.exit`):
 ---
----   0  every file passed
----   1  at least one file failed (or errored)
----   2  usage or configuration error (unknown option, no root, no spec found)
----   3  infrastructure error (cannot write or validate the JSON IR, internal error of the driver)
+---   0  every case passed (skips are reported and never green; `--strict` makes them red)
+---   1  at least one case failed, errored or timed out
+---   2  usage or configuration error (unknown option, no root, unusable `.testing.lua`, nothing to run)
+---   3  infrastructure error (a dependency is missing, the IR cannot be written or validated, a
+---      reporter failed, the editor was quit under the run, any internal error)
 ---
---- Options:
----   --json <file>     write the Result-IR (schema_version 1) to <file> and validate it again
----   --rtp <dir>       add <dir> to the runtimepath (repeatable); `<root>` itself is always added
----   --only <text>     run only spec files whose path contains <text> (repeatable)
----   --sentinel <name> last line printed when everything is green (default: the one the project's
----                     own TESTS/run.lua prints, e.g. LIB_TESTS_OK; else TESTING_OK)
----   --no-timings      do not print the timing line
----   -h, --help        this text
+--- `main` never raises: everything that can raise runs under `xpcall`, and a raise is exit code 3
+--- with a message on stderr (set `TESTING_DEBUG=1` for the traceback).
+---
+--- Honesty rule: an option that is parsed but not implemented is REFUSED with exit code 2 (see
+--- `M.UNWIRED`, empty since M1 wired every option), never silently ignored; a run that dropped
+--- `--filter` would be a green verdict about something else. Whoever adds an option that has no
+--- behavior yet lists its canonical name there.
+---
+--- Everything after "arguments, config and dependencies are fine" lives in `testing.run.project`:
+--- discovery, selection, the run, reporters, history, the sentinel.
+
+local args_mod = require("testing.args")
+local project = require("testing.run.project")
 
 local M = {}
 
-M.EXIT_OK = 0
-M.EXIT_FAILED = 1
-M.EXIT_USAGE = 2
-M.EXIT_INFRA = 3
+M.EXIT_OK = project.EXIT_OK
+M.EXIT_FAILED = project.EXIT_FAILED
+M.EXIT_USAGE = project.EXIT_USAGE
+M.EXIT_INFRA = project.EXIT_INFRA
 
-local USAGE = [[
-usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua <root> [options]
+---Options (canonical names of `Testing.Args.given`) that parse and validate but have no behavior
+---yet. Using one is exit code 2 with a message that says so. Empty: M1 wired them all.
+---@type table<string, true>
+M.UNWIRED = {}
 
-  <root>             project whose TESTS/*_spec.lua files are run (dialect A: `return function(H)`)
-  --json <file>      write the Result-IR (schema_version 1) to <file>
-  --rtp <dir>        add <dir> to the runtimepath (repeatable)
-  --only <text>      run only spec files whose path contains <text> (repeatable)
-  --sentinel <name>  last line when everything is green (default: taken from <root>/TESTS/run.lua)
-  --no-timings       do not print the timing line
-  -h, --help         this text
+---@class Testing.Cli.Services
+--- Seams for specs; the defaults are the real process streams and modules.
+---@field out? fun(s: string) stdout line sink
+---@field err? fun(s: string) stderr line sink
+---@field inproc? table `testing.run.inproc` (run, list, sanitize)
+---@field discover? table `testing.discover` (discover, order)
+---@field state_dir? string Replaces `stdpath('state')` for the history.
+---@field color? boolean Forces the colour decision of the terminal reporter.
 
-exit: 0 green, 1 failures, 2 usage/config error, 3 infrastructure error]]
+---Facts of one invocation after validation, before anything runs.
+---@class Testing.Cli.RunPlan
+---@field args Testing.Args
+---@field root string Absolute, normalized, no trailing slash.
+---@field project Testing.ProjectConfig
+---@field rtp_dirs string[] Absolute `--rtp` directories.
+---@field argv string[] The effective arguments (stored in the IR header).
 
----@param s string
-local function out(s)
-  io.stdout:write(s, "\n")
-end
-
----@param s string
-local function err(s)
-  io.stderr:write(s, "\n")
-end
-
----@class Testing.Cli.Args
----@field root? string
----@field json? string
----@field rtp string[]
----@field only string[]
----@field sentinel? string
----@field timings boolean
----@field help boolean
-
----Parse the arguments. Returns nil and a message on a usage error.
+---Parse; kept as a delegate for callers of the M0 API.
 ---@param argv string[]
----@return Testing.Cli.Args|nil
+---@return Testing.Args|nil
 ---@return string|nil problem
 function M.parse(argv)
-  ---@type Testing.Cli.Args
-  local args = { rtp = {}, only = {}, timings = true, help = false }
-  local i = 1
-  while i <= #argv do
-    local a = argv[i]
-    local function value()
-      i = i + 1
-      return argv[i]
-    end
-    if a == "-h" or a == "--help" then
-      args.help = true
-    elseif a == "--no-timings" then
-      args.timings = false
-    elseif a == "--json" or a == "--rtp" or a == "--only" or a == "--sentinel" then
-      local v = value()
-      if v == nil or v == "" then
-        return nil, ("option %s needs a value"):format(a)
-      end
-      if a == "--json" then
-        args.json = v
-      elseif a == "--sentinel" then
-        args.sentinel = v
-      elseif a == "--rtp" then
-        args.rtp[#args.rtp + 1] = v
-      else
-        args.only[#args.only + 1] = v
-      end
-    elseif a:sub(1, 1) == "-" then
-      return nil, ("unknown option %s"):format(a)
-    elseif args.root == nil then
-      args.root = a
-    else
-      return nil, ("unexpected argument %s (the root is already %s)"):format(a, args.root)
-    end
-    i = i + 1
-  end
-  return args, nil
+  return args_mod.parse(argv)
 end
 
 ---The arguments as a plain list (`arg` also carries the interpreter at index <= 0).
@@ -112,55 +74,92 @@ local function clean_argv(argv)
   return list
 end
 
----A spec must not end the run on its own: `os.exit` raises inside the spec (so that file becomes an
----`error` case and the run goes on), and quitting the editor any other way (`:qa!`, `:cquit`)
----is reported as "run did not complete" with exit code 3. Exit code 0 alone is therefore never
----the result of an aborted run. Returns the function that removes the guard again.
----@return fun() release
-local function guard_exit()
-  local real_exit = os.exit
-  rawset(os, "exit", function(code)
-    error(
-      ("os.exit(%s) called by a spec while the run is active; refused"):format(tostring(code)),
-      2
-    )
-  end)
-  local group = vim.api.nvim_create_augroup("TestingRunGuard", { clear = true })
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = group,
-    callback = function()
-      io.stderr:write(
-        "testing: run did not complete: the editor was quit while specs were running\n"
-      )
-      real_exit(M.EXIT_INFRA)
-    end,
-  })
-  return function()
-    rawset(os, "exit", real_exit)
-    pcall(vim.api.nvim_del_augroup_by_id, group)
-  end
+---@param path string
+---@return string
+local function abs(path)
+  return vim.fs.normalize(vim.fn.fnamemodify(path, ":p"))
 end
 
----Run the driver. Never raises: an internal error becomes exit code 3 with a message on stderr.
+---Print the effective configuration and the dependency report (`testing doctor`).
+---@param plan Testing.Cli.RunPlan
+---@param loaded Testing.ProjectConfig.Loaded
+---@param say fun(s: string)
+---@return integer exit_code 0, or 3 when a dependency the run needs is missing
+local function doctor(plan, loaded, say)
+  local deps = require("testing.deps")
+  say("testing doctor")
+  say("root:    " .. plan.root)
+  say("running: " .. deps.self_dir())
+  say("config:  " .. (loaded.path or "none (.testing.lua not found, defaults)"))
+  for _, p in ipairs(loaded.problems) do
+    say("  warning: " .. p)
+  end
+  say("resolved configuration:")
+  for line in vim.inspect(plan.project):gmatch("[^\n]+") do
+    say("  " .. line)
+  end
+
+  say("dependencies:")
+  local code = M.EXIT_OK
+  ---@param row table
+  local function show(row, required)
+    if row.ok then
+      say(("  ok       %s -> %s (%s)"):format(row.name, row.dir, row.source))
+    else
+      say(("  %s %s"):format(required and "MISSING " or "absent  ", row.name))
+      for line in row.message:gmatch("[^\n]+") do
+        say("      " .. line)
+      end
+      if required then
+        code = M.EXIT_INFRA
+      end
+    end
+  end
+  show(deps.report({ "lib.nvim" }, deps.self_dir())[1], true)
+  -- testing.nvim as seen from the project: only informative, the running copy is the one that counts.
+  show(deps.report({ "testing.nvim" }, plan.root)[1], false)
+  for _, row in ipairs(deps.report(plan.project.deps, plan.root)) do
+    show(row, true)
+  end
+  return code
+end
+
+---Everything after argument parsing. May raise; `M.main` turns that into exit code 3.
 ---@param argv string[]
+---@param sv Testing.Run.Services
 ---@return integer exit_code
-function M.main(argv)
-  local args, problem = M.parse(argv)
+local function execute(argv, sv)
+  local out, err = sv.out, sv.err
+  local usage = args_mod.usage()
+
+  local args, problem = args_mod.parse(argv)
   if not args then
-    err("testing: " .. problem)
-    err(USAGE)
+    err("testing: " .. tostring(problem))
+    err(usage)
     return M.EXIT_USAGE
   end
   if args.help then
-    out(USAGE)
+    out(usage)
     return M.EXIT_OK
+  end
+
+  for name in pairs(args.given) do
+    if M.UNWIRED[name] then
+      err(("testing: option --%s is not implemented yet"):format((name:gsub("_", "-"))))
+      return M.EXIT_USAGE
+    end
+  end
+  if args.command == "init" then
+    err("testing: `init` is not implemented yet")
+    return M.EXIT_USAGE
   end
   if not args.root then
     err("testing: no <root> given")
-    err(USAGE)
+    err(usage)
     return M.EXIT_USAGE
   end
-  local root = vim.fs.normalize(vim.fn.fnamemodify(args.root, ":p")):gsub("/+$", "")
+
+  local root = abs(args.root):gsub("/+$", "")
   if vim.fn.isdirectory(root) ~= 1 then
     err(("testing: root is not a directory: %s"):format(root))
     return M.EXIT_USAGE
@@ -169,14 +168,45 @@ function M.main(argv)
   -- Paths are resolved against the caller's cwd (the specs run in the cwd the caller chose).
   local rtp_dirs = {}
   for _, dir in ipairs(args.rtp) do
-    local abs = vim.fs.normalize(vim.fn.fnamemodify(dir, ":p"))
-    if vim.fn.isdirectory(abs) ~= 1 then
+    local dir_abs = abs(dir)
+    if vim.fn.isdirectory(dir_abs) ~= 1 then
       err(("testing: --rtp is not a directory: %s"):format(dir))
       return M.EXIT_USAGE
     end
-    rtp_dirs[#rtp_dirs + 1] = abs
+    rtp_dirs[#rtp_dirs + 1] = dir_abs
   end
-  local json_path = args.json and vim.fs.normalize(vim.fn.fnamemodify(args.json, ":p")) or nil
+
+  local loaded = require("testing.config.project").load(root, { file = args.config })
+  if loaded.error then
+    err("testing: " .. loaded.error)
+    return M.EXIT_USAGE
+  end
+  for _, p in ipairs(loaded.problems) do
+    err("testing: config: " .. p)
+  end
+  ---@type Testing.Cli.RunPlan
+  local plan = {
+    args = args,
+    root = root,
+    project = loaded.config,
+    rtp_dirs = rtp_dirs,
+    argv = clean_argv(argv),
+  }
+
+  if args.command == "doctor" then
+    return doctor(plan, loaded, out)
+  end
+
+  -- Dependencies of the project: every one resolved, ALL failures reported at once.
+  local deps = require("testing.deps")
+  local resolved, failures = deps.resolve_all(plan.project.deps, root)
+  if #failures > 0 then
+    err(table.concat(failures, "\n"))
+    return M.EXIT_INFRA
+  end
+  for _, r in ipairs(resolved) do
+    deps.add_to_rtp(r.dir, false)
+  end
 
   -- Specs are cwd-dependent (lib.nvim's git specs look at "this repo"), and the old runner is
   -- documented as "run from the repo root". There is deliberately NO chdir here: on Windows
@@ -190,57 +220,44 @@ function M.main(argv)
       )
     )
   end
-  vim.opt.rtp:append(root)
+  deps.add_to_rtp(root, false)
   for _, dir in ipairs(rtp_dirs) do
-    vim.opt.rtp:append(dir)
+    deps.add_to_rtp(dir, false)
   end
 
-  local inproc = require("testing.run.inproc")
-  local found = inproc.discover(root, args.only)
-  if #found.files == 0 then
-    err(
-      ("testing: no *_spec.lua file found below %s/TESTS%s"):format(
-        root,
-        #args.only > 0 and (" matching " .. table.concat(args.only, ", ")) or ""
-      )
-    )
-    return M.EXIT_USAGE
-  end
-  for _, note in ipairs(found.notes) do
-    err("testing: note: " .. note)
-  end
+  return project.execute(plan, sv)
+end
 
-  local release = guard_exit()
-  local ok, report = pcall(inproc.run, {
-    root = root,
-    files = found.files,
-    argv = clean_argv(argv),
-    timings = args.timings,
-  })
-  release()
+---Run the CLI. Never raises: an internal error becomes exit code 3 with a message on stderr.
+---@param argv string[] The arguments after the script (`_G.arg`).
+---@param services? Testing.Cli.Services
+---@return integer exit_code
+function M.main(argv, services)
+  ---@type Testing.Run.Services
+  local sv = vim.tbl_extend("force", {
+    out = function(s)
+      io.stdout:write(s, "\n")
+    end,
+    err = function(s)
+      io.stderr:write(s, "\n")
+    end,
+  }, services or {})
+
+  local ok, code = xpcall(execute, function(e)
+    if vim.env.TESTING_DEBUG and vim.env.TESTING_DEBUG ~= "" then
+      return debug.traceback(tostring(e), 2)
+    end
+    return tostring(e)
+  end, clean_argv(argv or {}), sv)
   if not ok then
-    err("testing: internal error: " .. tostring(report))
+    pcall(sv.err, "testing: internal error: " .. tostring(code))
     return M.EXIT_INFRA
   end
-
-  if json_path then
-    local wrote, werr = inproc.write_json(report.result, json_path, root)
-    if not wrote then
-      err("testing: " .. tostring(werr))
-      return M.EXIT_INFRA
-    end
+  if type(code) ~= "number" then
+    pcall(sv.err, "testing: internal error: no exit code was produced")
+    return M.EXIT_INFRA
   end
-  if report.exit_code == M.EXIT_OK then
-    if #found.files < found.total then
-      -- A filtered run is not the project's verdict: never print the sentinel a CI or the old
-      -- tooling would read as "the whole suite is green".
-      out(("\npartial run: %d of %d spec files (no sentinel)"):format(#found.files, found.total))
-    else
-      -- Transitional sentinel: last line, exactly as lib.nvim's runner prints it (blank line first).
-      out("\n" .. (args.sentinel or found.sentinel or "TESTING_OK"))
-    end
-  end
-  return report.exit_code
+  return code
 end
 
 return M

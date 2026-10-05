@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="testing.nvim" tests="2" failures="1" errors="0" skipped="0" time="0.000">
+  <testsuite name="TESTS/a_spec.lua" tests="1" failures="0" errors="0" skipped="0" time="0.000">
+    <properties>
+      <property name="nvim" value="0.12.2"/>
+      <property name="os" value="windows"/>
+    </properties>
+    <testcase classname="TESTS/a_spec.lua" name="a_spec.lua" time="0.000"/>
+  </testsuite>
+  <testsuite name="TESTS/b_spec.lua" tests="1" failures="1" errors="0" skipped="0" time="0.000">
+    <properties>
+      <property name="nvim" value="0.12.2"/>
+      <property name="os" value="windows"/>
+    </properties>
+    <testcase classname="TESTS/b_spec.lua" name="b_spec.lua" time="0.000">
+      <failure message="b1" type="eq"><![CDATA[<REPO>/TESTS/b_spec.lua:2  b1
+expected: 2
+actual: 1
+<REPO>/TESTS/b_spec.lua:3  b2
+expected: 3
+actual: 2]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

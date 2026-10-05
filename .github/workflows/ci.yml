@@ -46,7 +46,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
-      # lib.nvim is a hard runtime dependency; TESTS/minimal_init.lua finds it in .deps/lib.nvim.
+      # lib.nvim is a hard runtime dependency; the runner finds it in .deps/lib.nvim (and names all
+      # four places it searched when it is missing: exit code 3).
       - uses: actions/checkout@v5
         with:
           repository: StefanBartl/lib.nvim
@@ -56,14 +57,20 @@ jobs:
         with:
           neovim: true
           version: stable
-      - run: |
+      # Dogfood: this repository's own specs run through its own runner (scripts/test.sh wraps
+      # `nvim -l scripts/testing.lua .`), with the Result-IR and a JUnit report as artifacts.
+      - name: Run the specs with testing.nvim
+        run: |
           exec > >(tee -a "$RUNNER_TEMP/test-output.log") 2>&1
-          scripts/test.sh
+          scripts/test.sh --github --json "$RUNNER_TEMP/self-ir.json" --junit "$RUNNER_TEMP/self-junit.xml"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: test-output-tests-${{ matrix.os }}
-          path: ${{ runner.temp }}/test-output.log
+          name: self-run-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/self-ir.json
+            ${{ runner.temp }}/self-junit.xml
+            ${{ runner.temp }}/test-output.log
           if-no-files-found: ignore
           retention-days: 14
 

@@ -4,6 +4,9 @@
 --- Every key of `Testing.Config` appears here with its default. The file only names values: no
 --- environment lookup, no filesystem access (LUA-06), so `require("testing.config.DEFAULTS")` is
 --- safe from docs generators and specs.
+---
+--- `project` holds the defaults of the per-project file `.testing.lua` (see `testing.config.project`,
+--- which validates what a project writes there against exactly these keys).
 
 ---@type Testing.Config
 local DEFAULTS = {
@@ -12,6 +15,28 @@ local DEFAULTS = {
   -- Named keymap actions (action name -> lhs | list of lhs | false). The plugin has no action
   -- yet, so nothing is bound by default; the table is where a user spec rebinds or drops them.
   keymaps = {},
+  -- Defaults of `.testing.lua` in a project root.
+  project = {
+    -- Lua module root of the project (conformance and coverage need it); "" = the directory name
+    -- of the root without a trailing ".nvim".
+    plugin = "",
+    -- Spec roots relative to the project root. Legacy locations are discovered on top and reported.
+    roots = { "TESTS" },
+    -- "auto" = sniff the dialect per file; or "testing", "a", "b", "c", "d", "busted".
+    dialect = "auto",
+    -- Minimal init of the project (used by isolated child runs); false = none.
+    minit = "TESTS/minimal_init.lua",
+    -- Dependencies (directory names) resolved by testing.deps: $<NAME>_DIR, .deps/, ../, stdpath('data')/lazy/.
+    deps = {},
+    -- Options the conformance suite calls the plugin's setup() with.
+    setup = {},
+    conformance = { load_budget_ms = 40 },
+    -- Gate thresholds 0..1; 0 = report only.
+    coverage = { bindings = 0, commands = 0 },
+    timeouts = { case_ms = 10000, file_ms = 60000 },
+    snapshots = { dir = "TESTS/__snapshots__" },
+    backends = { luals = false, pty = false, playwright = false, webdriver = false },
+  },
 }
 
 return DEFAULTS
