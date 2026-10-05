@@ -1,0 +1,90 @@
+*testing.txt*  Test runner and orchestration for Neovim plugins (pre-alpha skeleton)
+
+Author: Stefan Bartl
+License: MIT
+
+==============================================================================
+CONTENTS                                                        *testing-contents*
+
+  1. Introduction ........................................ |testing-intro|
+  2. Requirements ........................................ |testing-requirements|
+  3. Setup ............................................... |testing-setup|
+  4. Configuration ....................................... |testing-config|
+  5. Commands ............................................ |testing-commands|
+  6. Keymaps and autocommands ............................ |testing-bindings|
+  7. Health check ........................................ |testing-health|
+
+==============================================================================
+1. Introduction                                                    *testing-intro*
+
+testing.nvim is meant to become a test runner and orchestration layer for Neovim
+plugins. This release is a pre-alpha skeleton: the module layout, the
+configuration, the `:Testing` command, the health check and the project's own
+test suite exist; the runner itself does not.
+
+==============================================================================
+2. Requirements                                               *testing-requirements*
+
+  - Neovim 0.10 or newer
+  - lib.nvim (hard dependency): https://github.com/StefanBartl/lib.nvim
+
+==============================================================================
+3. Setup                                                             *testing-setup*
+
+With lazy.nvim: >lua
+    {
+      "StefanBartl/testing.nvim",
+      dependencies = { "StefanBartl/lib.nvim" },
+      cmd = "Testing",
+      opts = {},
+    }
+<
+Without a plugin manager spec, call: >lua
+    require("testing").setup({})
+<
+`setup()` is safe to call twice. The plugin file registers `:Testing` on its own,
+so `cmd = "Testing"` lazy-loading works without `setup()`.
+
+==============================================================================
+4. Configuration                                                    *testing-config*
+
+All keys are optional. A key with the wrong type, and any unknown key, is dropped
+and reported with a warning; the default stays in place.
+
+                                                          *testing-notify_prefix*
+notify_prefix ~
+    Type: string, non-empty. Default: `"[testing]"`.
+    Prefix of every message the plugin shows.
+
+                                                              *testing-keymaps*
+keymaps ~
+    Type: table<string, string|string[]|false>|false. Default: `{}`.
+    Overrides for the plugin's named keymap actions: action name -> new left-hand
+    side, a list of them, or `false` to drop that action. `false` instead of a
+    table binds no key at all. The plugin declares no action yet, so nothing is
+    bound by default.
+
+==============================================================================
+5. Commands                                                      *testing-commands*
+
+                                                                       *:Testing*
+:Testing health     Run `:checkhealth testing`.
+:Testing config     Show the effective configuration.
+
+Subcommands are completed with <Tab>.
+
+==============================================================================
+6. Keymaps and autocommands                                      *testing-bindings*
+
+The plugin binds no key and registers no autocommand by default. Every keymap it
+gets later is a named action that can be moved or dropped through the `keymaps`
+option.
+
+==============================================================================
+7. Health check                                                    *testing-health*
+
+`:checkhealth testing` reports the Neovim version, the lib.nvim modules the plugin
+calls, the effective configuration and whether `:Testing` is registered. It is
+read-only.
+
+ vim:tw=78:ts=8:ft=help:norl:

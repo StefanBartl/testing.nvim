@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  stylua:
+    name: stylua (format check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: JohnnyMorganz/stylua-action@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Pinned, not "latest", like every repo of the fleet.
+          version: v2.5.2
+          args: --check .
+
+  luacheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leafo/gh-actions-lua@v13
+        with:
+          luaVersion: "5.4"
+      - uses: leafo/gh-actions-luarocks@v6
+      - run: luarocks install luacheck 1.2.0
+      - run: luacheck lua TESTS scripts plugin
+
+  tests:
+    name: specs (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      # One platform failing must not cancel the others.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        # One shell on all three platforms.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      # lib.nvim is a hard runtime dependency; TESTS/minimal_init.lua finds it in .deps/lib.nvim.
+      - uses: actions/checkout@v5
+        with:
+          repository: StefanBartl/lib.nvim
+          path: .deps/lib.nvim
+          ref: ci-verified
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - run: |
+          exec > >(tee -a "$RUNNER_TEMP/test-output.log") 2>&1
+          scripts/test.sh
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: test-output-tests-${{ matrix.os }}
+          path: ${{ runner.temp }}/test-output.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Consumers of this repo that check it out as a CI dependency pin `ref: ci-verified`: that branch
+  # only ever moves once stylua, luacheck and the three-platform test matrix have all passed.
+  publish-ci-verified:
+    name: publish ci-verified branch
+    needs: [stylua, luacheck, tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      # Never move ci-verified backwards: two pushes can finish out of order, and the older run
+      # must not overwrite the newer verified commit. The lookup fails closed and the update
+      # carries a lease on the tip it compared against.
+      - name: Publish ci-verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          tip=$(git ls-remote --heads origin refs/heads/ci-verified | cut -f1)
+          if [ -z "$tip" ]; then
+            git push origin HEAD:refs/heads/ci-verified
+            exit 0
+          fi
+          status=$(gh api "repos/$REPO/compare/$tip...$SHA" --jq .status)
+          case "$status" in
+            behind | identical)
+              echo "ci-verified ($tip) is '$status' relative to $SHA; leaving it alone"
+              ;;
+            ahead | diverged)
+              git push origin HEAD:refs/heads/ci-verified --force-with-lease="refs/heads/ci-verified:$tip"
+              ;;
+            *)
+              echo "::error::unexpected compare status '$status' for $tip...$SHA"
+              exit 1
+              ;;
+          esac
