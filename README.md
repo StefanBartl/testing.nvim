@@ -71,6 +71,10 @@ expect more than the driver below.
 
 - Neovim 0.10 or newer.
 - [lib.nvim](https://github.com/StefanBartl/lib.nvim) — a hard dependency, not optional.
+  It must be new enough to contain `lib.nvim.fs.write.atomic` (lib.nvim commit `6304829`) and the
+  `lib.lua.error.safe_call` that keeps non-string errors (commit `89cb912`); an older checkout fails
+  with `module 'lib.nvim.fs.write.atomic' not found` and `:checkhealth testing` names the missing
+  module and these commits.
 
 ## Installation
 

@@ -50,10 +50,10 @@ function M.check()
       health.ok(("%s -- %s"):format(req[1], req[2]))
     else
       lib_ok = false
-      health.error(
-        ("%s missing -- %s"):format(req[1], req[2]),
-        { 'Install or update "StefanBartl/lib.nvim" and list it as a dependency' }
-      )
+      health.error(("%s missing -- %s"):format(req[1], req[2]), {
+        'Install or update "StefanBartl/lib.nvim" and list it as a dependency',
+        "testing.nvim needs lib.nvim >= 6304829 (fs.write.atomic) and >= 89cb912 (safe_call keeps non-string errors)",
+      })
     end
   end
   if not lib_ok then

@@ -208,7 +208,17 @@ return function(H)
 
   -- ---------------------------------------------------------------------------------------------
   -- IR validity, in memory and after a JSON round trip
-  good, problems = result.validate(res)
+  -- The in-memory result still carries the host's absolute assertion paths (the encoder
+  -- normalizes them): validate the normalized form, repo before home (a checkout under $HOME,
+  -- e.g. /home/runner/work/... on a CI runner, must read <REPO>, not <HOME>/work/...).
+  local this = vim.fs.normalize(debug.getinfo(1, "S").source:sub(2))
+  local host_roots = {
+    repo = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(this))),
+    home = vim.uv.os_homedir(),
+  }
+  local ci_host = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
+  good, problems =
+    result.validate(result.normalize(res, host_roots, { case_insensitive = ci_host }))
   ok(good, "the built result is valid: " .. joined(problems))
 
   local text = enc(res)
@@ -318,6 +328,18 @@ return function(H)
     "a POSIX root is not matched in the middle of a path"
   )
   eq(result.normalize("/tmp/x", { tmp = "/tmp" }), "<TMP>/x", "a POSIX root at the start")
+  -- a checkout below the home directory (a Linux/macOS CI runner): the repo root wins over home
+  local posix = { repo = "/home/runner/work/p/p", home = "/home/runner", tmp = "/tmp" }
+  eq(
+    result.normalize("/home/runner/work/p/p/TESTS/a_spec.lua", posix),
+    "<REPO>/TESTS/a_spec.lua",
+    "a POSIX repo below home becomes <REPO>, not <HOME>/work/..."
+  )
+  eq(
+    result.normalize("/home/runner/.config/x", posix),
+    "<HOME>/.config/x",
+    "other paths below home stay <HOME>"
+  )
   eq(
     norm("no path here\\n"),
     "no path here\\n",

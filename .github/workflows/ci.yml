@@ -99,6 +99,11 @@ jobs:
         with:
           neovim: true
           version: stable
+      # lib.nvim's git_spec.lua reads the checkout it runs in and expects the branch to be `main`
+      # (lib's own CI checks out main). The ci-verified checkout is on a branch of that other name,
+      # so give it the name the unchanged lib.nvim spec expects; the commit stays the same.
+      - name: Name the lib.nvim checkout's branch main
+        run: git -C .deps/lib.nvim checkout -B main
       - name: Run the lib.nvim suite
         env:
           LIB_NVIM_DIR: ${{ github.workspace }}/.deps/lib.nvim
