@@ -269,6 +269,37 @@ local function print_unasserted(res, out)
   end
 end
 
+---Under `assertions = "warn"` a busted file without a registered case is a skip with a warning; the
+---terminal names the files (a skip is never silent, and `--strict` makes it red).
+---@param res Testing.Result
+---@param out fun(s: string)
+local function print_no_case(res, out)
+  local files = {}
+  local warning = require("testing.dialect.busted").NO_CASE_WARNING
+  for _, c in ipairs(res.cases) do
+    for _, n in ipairs(c.notes or {}) do
+      if n == warning then
+        files[#files + 1] = c.file or c.id
+        break
+      end
+    end
+  end
+  if #files == 0 then
+    return
+  end
+  out(
+    ('\n%d file(s) registered no case on this platform (assertions = "warn", skipped):'):format(
+      #files
+    )
+  )
+  for i = 1, math.min(#files, 10) do
+    out(safe("  " .. files[i]))
+  end
+  if #files > 10 then
+    out(("  ... and %d more"):format(#files - 10))
+  end
+end
+
 ---Execute one run of a project.
 ---@param plan Testing.Cli.RunPlan
 ---@param sv Testing.Run.Services
@@ -520,6 +551,13 @@ function M.execute(plan, sv)
       err("testing: " .. tostring(serr))
       return M.EXIT_INFRA
     end
+    if type(ir.warnings) == "table" and #ir.warnings > 0 then
+      err(
+        ("testing: note: the IR carries %d privacy warning(s) (see `warnings`)"):format(
+          #ir.warnings
+        )
+      )
+    end
   end
   if #sanitized_specs > 0 then
     emit(reports.run_reporters(ir --[[@as Testing.Result]], { reporters = sanitized_specs }))
@@ -540,6 +578,7 @@ function M.execute(plan, sv)
   print_findings(findings, out)
   if primary == "term" then
     print_unasserted(res, out)
+    print_no_case(res, out)
   end
   if report.stopped and report.files_unrun > 0 then
     out(

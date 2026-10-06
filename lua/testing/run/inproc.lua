@@ -693,25 +693,53 @@ function M.sanitize(res, root)
   local copy = vim.deepcopy(res)
   M.scrub_texts(copy, root)
   local redact, forbid = redaction()
-  local json, err = result.encode(copy, {
-    roots = M.path_roots(root),
-    case_insensitive = res.run.os == "windows",
-    redact = redact,
-  })
-  if not json then
+  local function encode_decode()
+    local text, err = result.encode(copy, {
+      roots = M.path_roots(root),
+      case_insensitive = res.run.os == "windows",
+      redact = redact,
+    })
+    if not text then
+      return nil, nil, err
+    end
+    local value, derr = require("lib.nvim.json").decode(text)
+    if type(value) ~= "table" then
+      return nil, nil, "the encoded IR does not decode again: " .. tostring(derr)
+    end
+    return value, text, nil
+  end
+  local decoded, json, err = encode_decode()
+  if not decoded then
     return nil, nil, err
   end
-  local decoded, derr = require("lib.nvim.json").decode(json)
-  if type(decoded) ~= "table" then
-    return nil, nil, "the encoded IR does not decode again: " .. tostring(derr)
-  end
-  local valid, problems =
-    result.validate(decoded, { forbid = forbid, forbid_free_text_only = true })
+  -- Only a structural problem (shape, verdict, summary) rejects the IR. A leak the redaction could
+  -- not remove (guard rail L2: a cosmetic privacy check never discards a verdict) becomes a
+  -- warning in the IR, without the leaked text itself.
+  local leaks = {}
+  local valid, problems = result.validate(
+    decoded,
+    { forbid = forbid, forbid_free_text_only = true, leak_warnings = leaks }
+  )
   if not valid then
     return nil, nil, "the IR failed validation:\n  " .. table.concat(problems, "\n  ")
   end
+  if #leaks > 0 then
+    local shown = vim.list_slice(leaks, 1, M.MAX_IR_WARNINGS)
+    if #leaks > #shown then
+      shown[#shown + 1] = ("... %d more"):format(#leaks - #shown)
+    end
+    copy.warnings = shown
+    decoded, json, err = encode_decode()
+    if not decoded then
+      return nil, nil, err
+    end
+  end
   return decoded, json, nil
 end
+
+---Most leak warnings the IR carries (`warnings`); the rest is counted.
+---@type integer
+M.MAX_IR_WARNINGS = 20
 
 ---Serialize, write and re-validate the IR; only a validated IR reaches the disk (atomically).
 ---@param res Testing.Result

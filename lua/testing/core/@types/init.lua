@@ -91,6 +91,7 @@
 ---@field run Testing.Result.Run
 ---@field cases Testing.Result.Case[]
 ---@field summary Testing.Result.Summary
+---@field warnings? string[] Privacy findings the redaction could not remove (set by `testing.run.inproc.sanitize`, never the leaked text itself; the verdict is unaffected).
 
 ---@class Testing.Result.RunOpts
 --- Fields of `Testing.Result.Run`; everything has a default.
@@ -142,6 +143,7 @@
 ---@field forbid_free_text_only? boolean Check `forbid` and the e-mail shape only in free text (assertion texts, error, notes, reason), not in ids, names and file names.
 ---@field allow_emails? boolean Skip the e-mail address leak check (default false).
 ---@field allow_abs_paths? boolean Skip the user-home-path leak check (default false).
+---@field leak_warnings? string[] When given, the findings of the leak checks (forbidden word, e-mail, user-home path) are appended here and are NOT problems: the result stays valid (they never contain the leaked text itself). Structural problems are unaffected.
 
 ---@class Testing.Result.Module
 ---@field SCHEMA_VERSION integer

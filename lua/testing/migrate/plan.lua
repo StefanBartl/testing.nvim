@@ -13,8 +13,9 @@
 ---   * `scripts/test.sh`        created, or replaced when it still starts plenary / the old runner;
 ---   * `TESTS/minimal_init.lua` created when absent (then with what `scripts/minimal_init.lua` set up
 ---                              besides the old runner, as a commented block, and that old file is
----                              DELETED); otherwise only the plenary statements are removed (self-contained
----                              call lines only, the rest of the file is kept as is);
+---                              DELETED); an existing one that is not the gate yet is REPLACED by it, with
+---                              what it set up besides the runtimepath carried over (a file that already is
+---                              the gate only loses its plenary statements, self-contained call lines);
 ---   * `.github/workflows/*`    edited line by line (`testing.migrate.ci`); a reference to the deleted
 ---                              `scripts/minimal_init.lua` points to the new file.
 ---
@@ -489,21 +490,37 @@ function M.plan(report, opts)
   local legacy = report.legacy_init
   local retire = legacy ~= nil and legacy.legacy == true
   local retired_init = false
-  if not report.minimal_init.exists then
+  -- An existing TESTS/minimal_init.lua that is not the gate yet (four lookup places, fatal on a
+  -- missing dependency) is replaced by it; what it set up besides the runtimepath is carried over.
+  local old_minit = report.texts["TESTS/minimal_init.lua"]
+  local replace_minit = report.minimal_init.exists
+    and not (
+      old_minit
+      and old_minit:find("local MARKERS", 1, true)
+      and old_minit:find("env_name", 1, true)
+    )
+  if not report.minimal_init.exists or replace_minit then
     local plugin_for_app = scaffold.sanitize_plugin(conf.plugin) or "plugin"
     local vars = scaffold.build_vars(plugin_for_app, dep_names, owner)
     local after = vars and scaffold.render_template("minimal_init.lua.tpl", vars)
     if after then
       local carried = 0
-      if retire then
+      local carry_blocks, carry_from, carry_fate
+      if replace_minit then
+        carry_blocks = legacy_init.split(old_minit or "")
+        carry_from, carry_fate = "TESTS/minimal_init.lua", "replaced by the migration"
+      elseif retire then
         ---@cast legacy -?
+        carry_blocks, carry_from = legacy.blocks, legacy.rel
+      end
+      if carry_blocks then
         local base = after
-        local section = legacy_init.section(legacy.blocks, legacy.rel)
+        local section = legacy_init.section(carry_blocks, carry_from, carry_fate)
         local tail = "return { root = root, deps = found }"
         local at = after:find(tail, 1, true)
         if section and at then
           after = after:sub(1, at - 1) .. section .. "\n" .. after:sub(at)
-          for _, b in ipairs(legacy.blocks) do
+          for _, b in ipairs(carry_blocks) do
             carried = carried + (b.kind == "carry" and 1 or 0)
           end
           -- a carried statement must neither shadow what the template defines nor break the file
@@ -528,32 +545,32 @@ function M.plan(report, opts)
           if clash then
             risk(
               ("%s defines a local `%s` that the new TESTS/minimal_init.lua uses itself: rename it in the carried block"):format(
-                legacy.rel,
+                carry_from,
                 clash
               )
             )
           end
-          if not loadstring(after) or after:lower():find("plenary", 1, true) then
+          if not loadstring(after) or section:lower():find("plenary", 1, true) then
             after, carried = base, 0
             risk(
-              ("what %s sets up could not be carried over safely (the result would not compile or still names the old runner): copy it into TESTS/minimal_init.lua by hand, the removed file is in the diff"):format(
-                legacy.rel
+              ("what %s sets up could not be carried over safely (the result would not compile or still names the old runner): copy it into TESTS/minimal_init.lua by hand, the old text is in the diff"):format(
+                carry_from
               )
             )
           end
         end
       end
       after = formatted(after, "TESTS/minimal_init.lua")
-      plan.ops[#plan.ops + 1] = make_op(nil, after, "TESTS/minimal_init.lua", {
+      plan.ops[#plan.ops + 1] = make_op(old_minit, after, "TESTS/minimal_init.lua", {
         kind = "minit",
-        reason = retire
-            and ("runtimepath for isolated child runs (`minit` of .testing.lua), plus %d block(s) carried over from %s"):format(
+        reason = carry_blocks
+            and ("runtimepath for isolated child runs (`minit` of .testing.lua) with the fatal four-place dependency lookup, plus %d block(s) carried over from %s"):format(
               carried,
-              legacy and legacy.rel or ""
+              carry_from
             )
           or "runtimepath for isolated child runs (`minit` of .testing.lua); fails with all four searched places when a dependency is missing",
       })
-      retired_init = retire
+      retired_init = retire and not replace_minit
     end
   elseif not report.plenary.keep_ci and #report.minimal_init.plenary_lines > 0 then
     local before = report.texts["TESTS/minimal_init.lua"] or ""
@@ -608,7 +625,7 @@ function M.plan(report, opts)
         comments = comments + 1
       end
     end
-    if comments > 0 and not report.plenary.keep_ci then
+    if comments > 0 and not report.plenary.keep_ci and not replace_minit then
       note(
         ("TESTS/minimal_init.lua keeps %d comment line(s) that mention plenary: reword them by hand"):format(
           comments
@@ -618,6 +635,42 @@ function M.plan(report, opts)
   end
 
   -- ---------------------------------------------------------------- CI
+  -- The branch each dependency checkout names. `ci-verified` unless the repository is known not to
+  -- have it (`opts.branch_exists`; without that seam nothing is asked and nothing is assumed).
+  local refs, unverified = {}, {}
+  ---@param name string
+  ---@return string ref
+  local function ref_of(name)
+    if refs[name] then
+      return refs[name]
+    end
+    local ref = scaffold.DEFAULT_REF
+    if opts.branch_exists then
+      local exists, why = opts.branch_exists(owner, name)
+      if exists == false then
+        ref = "main"
+        note(
+          ("dependency %s has no %s branch: pinned to main (the checkout step says so; switch it once the branch exists)"):format(
+            name,
+            scaffold.DEFAULT_REF
+          )
+        )
+      elseif exists == nil then
+        unverified[name] = true
+        note(
+          ("could not check whether %s has a %s branch (%s): the checkout names it, confirm it exists"):format(
+            name,
+            scaffold.DEFAULT_REF,
+            text.show(why or "no answer", 120)
+          )
+        )
+      end
+    else
+      unverified[name] = true
+    end
+    refs[name] = ref
+    return ref
+  end
   local added = {}
   local wrapped = false
   local unmappable = report.runner.unmappable or {}
@@ -638,7 +691,7 @@ function M.plan(report, opts)
     is_self = report.is_self == true,
     owner = owner,
     dep_step = function(name, prefix)
-      return scaffold.dep_step(name, owner, prefix)
+      return scaffold.dep_step(name, owner, prefix, ref_of(name))
     end,
     artifact_step = function(suffix)
       local t, err = scaffold.render_template("ci_artifact_step.yml.tpl", { SUFFIX = suffix })
@@ -710,13 +763,21 @@ function M.plan(report, opts)
     )
   end
   if next(added) ~= nil then
-    local names = vim.tbl_keys(added)
+    local names, to_confirm = vim.tbl_keys(added), {}
     table.sort(names)
-    risk(
-      "the CI did not check out "
-        .. table.concat(names, ", ")
-        .. " yet: the migration adds the steps from `ci-verified`, confirm that branch exists in each"
-    )
+    for _, n in ipairs(names) do
+      if unverified[n] then
+        to_confirm[#to_confirm + 1] = n
+      end
+    end
+    if #to_confirm > 0 then
+      risk(
+        "the CI did not check out "
+          .. table.concat(names, ", ")
+          .. " yet: the migration adds the steps from `ci-verified`, confirm that branch exists in "
+          .. table.concat(to_confirm, ", ")
+      )
+    end
   end
   if not any_runner and not wrapped and #report.ci.workflows > 0 then
     risk(
@@ -725,6 +786,47 @@ function M.plan(report, opts)
   end
   if #report.ci.workflows == 0 then
     note("the repository has no CI workflow: `testing init` writes a 3-OS job")
+  end
+
+  -- ---------------------------------------------------------------- override variables of the dependencies
+  do
+    local deps_mod = require("testing.deps")
+    local all = { "testing.nvim" }
+    vim.list_extend(all, dep_names)
+    local shown, stale = {}, {}
+    local final_text = {}
+    for rel, t in pairs(report.texts) do
+      final_text[rel] = t
+    end
+    for _, op in ipairs(plan.ops) do
+      final_text[op.path] = op.after
+    end
+    for _, name in ipairs(all) do
+      local new = deps_mod.env_name(name)
+      shown[#shown + 1] = ("%s -> $%s"):format(name, new)
+      local base = name:gsub("%.nvim$", "")
+      if base ~= name then
+        local up = deps_mod.env_name(base):gsub("_DIR$", "")
+        for _, old in ipairs({ up .. "_DIR", up .. "_PATH", (new:gsub("_DIR$", "_PATH")) }) do
+          for rel, t in pairs(final_text) do
+            if t:find("%f[%w_]" .. old .. "%f[^%w_]") then
+              stale[#stale + 1] = ("%s in %s (now $%s)"):format(old, text.show(rel, 100), new)
+            end
+          end
+        end
+      end
+    end
+    if #dep_names > 0 then
+      note(
+        ("the override variable of a dependency is derived from its repository name, not from the short name: %s; docs and scripts that use another spelling (e.g. $COLOR_MY_ASCII_DIR for color_my_ascii.nvim) must be adapted"):format(
+          table.concat(shown, ", ")
+        )
+      )
+    end
+    table.sort(stale)
+    if #stale > 0 then
+      note("old override spelling still in use: " .. table.concat(stale, "; "))
+    end
   end
 
   -- ---------------------------------------------------------------- remaining facts

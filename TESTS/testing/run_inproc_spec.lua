@@ -221,6 +221,56 @@ return function(H)
   local s_ok, s_err = inproc.write_json(scrubbed, root .. "/out/scrub.json", root)
   ok(s_ok, "escaped paths do not make the IR invalid: " .. tostring(s_err))
 
+  -- L2: a cosmetic privacy check never discards a verdict. Synthetic user-home paths in assertion
+  -- texts (a spec about an anonymizer) are redacted to a placeholder, however they are shaped
+  local synthetic = {
+    [[C:\Users\mbeispiel\Documents]],
+    "/mnt/c/Users/maria/y",
+    [[\\fs01\data\Users\bob]],
+    [[D:\Data\Users\bob\x]],
+    [[\Users\jdoe at the start]],
+    "https://kunde.example/Users/maria/a.txt",
+  }
+  local many = vim.deepcopy(report.result)
+  many.cases[1].assertions = {}
+  for i = 1, 99 do
+    local p = synthetic[(i % #synthetic) + 1]
+    many.cases[1].assertions[i] = {
+      ok = true,
+      kind = "ok",
+      msg = ("path %d: %s"):format(i, p),
+      expected = p,
+      actual = p,
+    }
+  end
+  many.cases[1].status = "pass"
+  many.summary = require("testing.core.result").summarize(many.cases)
+  local m_ir, m_text, m_err = inproc.sanitize(many, root)
+  ok(m_ir ~= nil, "99 synthetic user paths do not discard the verdict: " .. tostring(m_err))
+  assert(m_ir and m_text, "sanitize returned nothing")
+  eq(m_ir.warnings, nil, "the redaction removed them all: no warning left")
+  ok(not m_text:find("mbeispiel", 1, true), "the synthetic user name is gone")
+  ok(not m_text:find("bob", 1, true), "also from the mid-path and UNC shapes")
+  has(m_ir.cases[1].assertions[1].msg, "path 1: ", "the text around the path stays readable")
+  ok(
+    m_ir.cases[1].assertions[1].msg:find("<HOME>", 1, true)
+      or m_ir.cases[1].assertions[1].msg:find("<USER-PATH>", 1, true),
+    "and the path is a placeholder"
+  )
+  eq(m_ir.cases[1].status, "pass", "the verdict is kept")
+
+  -- what redaction cannot reach (the id of a case is the project's own word) becomes a warning in
+  -- the IR; the verdict and the file stay, and the warning does not repeat the leaked text
+  local named = vim.deepcopy(report.result)
+  named.cases[1].id = named.cases[1].id .. [[ reads C:\Users\mbeispiel\x]]
+  local w_file = root .. "/out/warned.json"
+  local w_ok, w_err = inproc.write_json(named, w_file, root)
+  ok(w_ok, "a leak in a name is no reason to refuse the IR: " .. tostring(w_err))
+  local w_ir = assert(require("lib.nvim.json").decode(table.concat(vim.fn.readfile(w_file), "\n")))
+  ok(type(w_ir.warnings) == "table" and #w_ir.warnings >= 1, "the IR carries a warning")
+  ok(not table.concat(w_ir.warnings, " "):find("mbeispiel", 1, true), "which names no leaked text")
+  eq(#w_ir.cases, #report.result.cases, "and every case stays")
+
   -- F4: redaction in the kernel: env dumps, e-mail shapes, user and host words; structure intact
   local rr = require("testing.core.result")
   local res = rr.new({ root = "/p" })
@@ -529,5 +579,26 @@ return function(H)
     "call site is the spec: " .. tostring(a1.file)
   )
   eq(a1.line, 5, "a tail call loses its frame: the line is the call of the helper")
+  vim.fn.delete(root, "rf")
+
+  -- a busted file that registers no case (platform dependent specs): red by default, a skip with a
+  -- warning under assertions = "warn", and a skip is never green under --strict
+  root = new_root("nocase")
+  write(
+    root .. "/TESTS/platform_spec.lua",
+    "describe('p', function()\n"
+      .. "  if vim.fn.has('nonexistent_platform') == 1 then\n"
+      .. "    it('only there', function() assert.is_true(true) end)\n"
+      .. "  end\n"
+      .. "end)\n"
+  )
+  report = run_root(root, { assertions = "error" })
+  eq(report.exit_code, 1, 'no case registered, assertions = "error": red')
+  report = run_root(root, { assertions = "warn" })
+  eq(report.exit_code, 0, 'no case registered, assertions = "warn": not red')
+  eq(report.result.summary.skip, 1, "but one skip is recorded")
+  eq(report.result.cases[1].reason, "no case registered on this platform", "with the reason")
+  report = run_root(root, { assertions = "warn", strict = true })
+  eq(report.exit_code, 1, "under --strict that skip is never green")
   vim.fn.delete(root, "rf")
 end

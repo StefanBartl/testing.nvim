@@ -253,6 +253,16 @@ return function(H)
   eq(cases[1].status, "fail", "which fails: a spec that runs nothing proves nothing")
   has(cases[1].notes[1], "registered no", "and says why")
 
+  cases = run("busted_empty", { assertions = "error" })
+  eq(cases[1].status, "fail", 'assertions = "error" keeps it red')
+
+  cases = run("busted_empty", { assertions = "warn" })
+  eq(#cases, 1, 'assertions = "warn": still exactly one case, never silent')
+  eq(cases[1].status, "skip", "which is a skip, not a pass (never green under --strict)")
+  eq(cases[1].reason, "no case registered on this platform", "with the reason")
+  eq(cases[1].notes[1], busted.NO_CASE_WARNING, "and a warning note the terminal lists")
+  eq(#cases[1].assertions, 0, "and it asserts nothing")
+
   -- a file that does not even load
   local broken = vim.fn.tempname() .. "_broken.lua"
   vim.fn.writefile({ "describe('x', function(" }, broken)

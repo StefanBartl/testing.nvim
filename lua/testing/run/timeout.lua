@@ -25,6 +25,18 @@
 
 local M = {}
 
+-- Everything the count hook touches is bound HERE, at load time. A spec may stub `vim.uv.hrtime`,
+-- `os.clock` or `error` (a spec of the code under test that fakes time is common); the guard must
+-- never read such a stub, or a faked clock turns into a bogus timeout (and a verdict that depends on
+-- the instruction count between two hook calls). The hook calls nothing through `vim.uv`.
+local hrtime = vim.uv.hrtime
+local sethook = debug.sethook
+local gethook = debug.gethook
+local error_ = error
+local ipairs_ = ipairs
+local fmt = string.format
+local huge = math.huge
+
 ---Prefix of every error this module raises; the driver recognizes a timeout case by it.
 ---@type string
 M.MARKER = "testing: timeout:"
@@ -61,17 +73,14 @@ local active = {}
 local saved
 
 local function hrtime_ms()
-  return vim.uv.hrtime() / 1e6
+  return hrtime() / 1e6
 end
 
 ---@param g Testing.Timeout.Guard
 ---@param what string
 ---@param ms integer
 local function raise(g, what, ms)
-  error(
-    ("%s %s exceeded %d ms (in-process best effort): %s"):format(M.MARKER, what, ms, g.label),
-    0
-  )
+  error_(fmt("%s %s exceeded %d ms (in-process best effort): %s", M.MARKER, what, ms, g.label), 0)
 end
 
 ---Check every active guard; raises when a deadline has passed. Called by the hook and the wait wrapper.
@@ -95,10 +104,10 @@ end
 ---@return number|nil
 local function remaining()
   local best
-  for _, g in ipairs(active) do
+  for _, g in ipairs_(active) do
     local now = g.clock()
-    for _, d in ipairs({ g.file_deadline or math.huge, g.case_deadline or math.huge }) do
-      if d ~= math.huge then
+    for _, d in ipairs_({ g.file_deadline or huge, g.case_deadline or huge }) do
+      if d ~= huge then
         local left = d - now
         if best == nil or left < best then
           best = left
@@ -134,7 +143,7 @@ local function wrap_wait(real)
 end
 
 local function install()
-  local hook, mask, count = debug.gethook()
+  local hook, mask, count = gethook()
   saved = {
     hook = hook,
     mask = mask,
@@ -145,7 +154,7 @@ local function install()
   if jit then
     jit.off()
   end
-  debug.sethook(check, "", M.HOOK_COUNT)
+  sethook(check, "", M.HOOK_COUNT)
   vim.wait = wrap_wait(saved.wait)
 end
 
@@ -155,9 +164,9 @@ local function uninstall()
   if not s then
     return
   end
-  debug.sethook()
+  sethook()
   if s.hook then
-    debug.sethook(s.hook, s.mask or "", s.count or 0)
+    sethook(s.hook, s.mask or "", s.count or 0)
   end
   vim.wait = s.wait
   if s.jit_was_on and jit then
@@ -169,7 +178,7 @@ end
 ---@field label? string
 ---@field file_ms? integer Deadline of the whole file, from now.
 ---@field case_ms? integer Window of one case, from now (re-armed with `arm_case`).
----@field clock? fun(): number Monotonic milliseconds (default `vim.uv.hrtime`).
+---@field clock? fun(): number Monotonic milliseconds (default: `uv.hrtime`, bound at load time).
 
 ---Start guarding. The caller MUST `stop` the guard (also after an error).
 ---@param opts? Testing.Timeout.Opts

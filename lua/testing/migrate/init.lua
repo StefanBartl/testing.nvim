@@ -71,7 +71,12 @@ end
 ---@return Testing.Migrate.Report report
 function M.run(root, opts)
   local report = M.analyze(root, opts)
-  return M.plan(report, { owner = opts and opts.owner, format = opts and opts.format }), report
+  return M.plan(report, {
+    owner = opts and opts.owner,
+    format = opts and opts.format,
+    branch_exists = opts and opts.branch_exists,
+  }),
+    report
 end
 
 ---@class Testing.Migrate.Parsed
@@ -137,7 +142,10 @@ function M.main(argv, opts)
         .. "\nusage: testing migrate [dry-run|apply] [<path>] [--json] [--markdown] [--check] [--fleet-root=<dir>]\n"
   end
   local root = parsed.root or opts.cwd or vim.fn.getcwd()
-  local plan = M.run(root, { fleet_root = parsed.fleet_root })
+  local plan = M.run(root, {
+    fleet_root = parsed.fleet_root,
+    branch_exists = opts.branch_exists or require("testing.migrate.branches").exists,
+  })
   local code = 0
   local tail = ""
   if plan.error then

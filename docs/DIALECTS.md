@@ -98,7 +98,7 @@ state set by an earlier `it` of its `describe` body keeps working.
 | `pending(reason)` inside an `it` | ends the body at once; the case is `skip` (never green) |
 | `pending(name, fn)` outside a body, `it(name)` without a function | a skipped case |
 | A raise outside any `it` (describe body, top level, load error) | an `error` case of its own |
-| A file that registers no case | a failing case: a spec that runs nothing proves nothing |
+| A file that registers no case | a failing case (`assertions = "error"`, the default): a spec that runs nothing proves nothing. Under `assertions = "warn"` it is **one `skip` case** with the reason `no case registered on this platform` and a warning note; the terminal lists such files after the report. A spec that registers its cases per platform (`if windows then it(...) end`) has none on the others, which is not a failure. A skip is never silent and never green under `--strict` (exit 1). |
 
 Supported luassert: `equal`/`equals`, `same`, `True`/`False` (`is_true`, `is_false`), `truthy`,
 `falsy`, `nil` (`is_nil`, `is_not_nil`), `table`, `string`, `function`, `boolean`, `number`,

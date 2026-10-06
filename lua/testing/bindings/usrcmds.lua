@@ -172,7 +172,10 @@ function M.migrate(ctx)
     mode, root = nil, mode
   end
   local dir = M.resolve_root(root)
-  local plan = migrate.run(dir, { fleet_root = ctx.flags["fleet-root"] })
+  local plan = migrate.run(dir, {
+    fleet_root = ctx.flags["fleet-root"],
+    branch_exists = require("testing.migrate.branches").exists,
+  })
   local applied
   local lines = vim.split(migrate.render(plan, { format = "text" }), "\n", { plain = true })
   local level = "info"

@@ -42,6 +42,9 @@ local M = {}
 ---Owner of the GitHub repositories the generated CI checks the dependencies out of.
 M.DEFAULT_OWNER = "StefanBartl"
 
+---Branch the generated CI checks the dependencies out of: it only moves once their own CI is green.
+M.DEFAULT_REF = "ci-verified"
+
 ---Dependencies of the generated project when `opts.deps` is not given.
 ---@type string[]
 M.DEFAULT_DEPS = { "lib.nvim" }
@@ -182,17 +185,33 @@ end
 ---@param names string[] Runner first, then the project's dependencies.
 ---@param owner string
 ---@param dir string Template directory.
+---@param prefix? string
+---@param ref? string Branch to check out (default `ci-verified`).
 ---@return string|nil block
 ---@return string|nil err
-local function dep_steps(names, owner, dir, prefix)
+local function dep_steps(names, owner, dir, prefix, ref)
   local tpl, err = read_template(dir, "ci_dep_step.yml.tpl")
   if not tpl then
     return nil, err
   end
   local steps = {}
   for _, name in ipairs(names) do
-    local text, rerr =
-      render.render(tpl, { NAME = name, REPO = owner .. "/" .. name, PREFIX = prefix or ".deps/" })
+    local branch = ref or M.DEFAULT_REF
+    local note = branch == M.DEFAULT_REF
+        and "Checked out from the branch that only moves once the dependency's own CI is green."
+      or ("%s has no %s branch: checked out from %s (switch to %s once it exists)."):format(
+        name,
+        M.DEFAULT_REF,
+        branch,
+        M.DEFAULT_REF
+      )
+    local text, rerr = render.render(tpl, {
+      NAME = name,
+      REPO = owner .. "/" .. name,
+      PREFIX = prefix or ".deps/",
+      REF = branch,
+      NOTE = note,
+    })
     if not text then
       return nil, rerr
     end
@@ -248,9 +267,10 @@ end
 ---@param name string Directory name of the dependency; must pass `testing.deps.is_valid_name`.
 ---@param owner? string GitHub owner (default `M.DEFAULT_OWNER`).
 ---@param prefix? string Directory prefix of `path:` (default `.deps/`; "" = a sibling of the workspace root).
+---@param ref? string Branch to check out: `ci-verified` (default), or `main` for a repository that has no such branch yet.
 ---@return string|nil text No trailing newline.
 ---@return string|nil err
-function M.dep_step(name, owner, prefix)
+function M.dep_step(name, owner, prefix, ref)
   if owner == nil then
     owner = M.DEFAULT_OWNER
   end
@@ -271,7 +291,10 @@ function M.dep_step(name, owner, prefix)
   then
     return nil, "invalid path prefix"
   end
-  return dep_steps({ name }, owner, M.template_dir(), prefix)
+  if ref ~= nil and (type(ref) ~= "string" or ref:match("^[%w][%w._/%-]*$") == nil) then
+    return nil, "invalid ref"
+  end
+  return dep_steps({ name }, owner, M.template_dir(), prefix, ref)
 end
 
 ---Path relative to the root, for the report.

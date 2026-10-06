@@ -207,4 +207,36 @@ return function(H)
   g:stop()
   g:stop()
   restored("after a double stop")
+
+  -- a spec that stubs `vim.uv.hrtime` (first call 0, then far in the future) must not make the
+  -- guard fire: the default clock is bound at load time and the hook never reads `vim.uv`
+  do
+    local real_hrtime = vim.uv.hrtime
+    local real_count = timeout.HOOK_COUNT
+    local stub_first = true
+    timeout.HOOK_COUNT = 100
+    vim.uv.hrtime = function()
+      if stub_first then
+        stub_first = false
+        return 0
+      end
+      return 1e12
+    end
+    g = timeout.start({ file_ms = 60000, case_ms = 60000, label = "stubbed clock" })
+    pok, perr = pcall(function()
+      local x = 0
+      for i = 1, 200000 do
+        x = x + i
+      end
+      g:arm_case()
+      return x
+    end)
+    vim.uv.hrtime = real_hrtime
+    timeout.HOOK_COUNT = real_count
+    local fired_stub = g:stop()
+    ok(pok, "a stubbed vim.uv.hrtime does not raise a timeout (got " .. tostring(perr) .. ")")
+    eq(fired_stub, false, "and the file deadline did not fire")
+    ok(vim.uv.hrtime == real_hrtime, "the stub was removed again")
+    restored("after a stubbed clock")
+  end
 end

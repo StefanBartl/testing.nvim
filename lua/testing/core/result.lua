@@ -30,6 +30,10 @@ end
 ---@type table<string, string>
 M.PLACEHOLDERS = { repo = "<REPO>", home = "<HOME>", tmp = "<TMP>", state = "<STATE>" }
 
+---Placeholder of a free-text token that holds a `Users/<name>` path shape (see `redact_string`).
+---Not a path root: `normalize` does not know it.
+M.USER_PATH = "<USER-PATH>"
+
 ---Message of the synthetic assertion a case without assertions receives.
 ---@type string
 local NO_ASSERTIONS_MSG = "case made no assertions (a case without assertions proves nothing)"
@@ -444,6 +448,10 @@ local function redact_string(s, r, ci)
   s = s:gsub("%a:[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", M.PLACEHOLDERS.home)
   s = s:gsub("([^%w])[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", "%1" .. M.PLACEHOLDERS.home)
   s = s:gsub("/home/[^/%s\"']+", M.PLACEHOLDERS.home)
+  -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`, a
+  -- path at the start of the text, a URL path, a synthetic path a spec asserts about): the whole
+  -- token goes, whatever the spec meant by it. A cosmetic check must never need to reject an IR.
+  s = s:gsub("[^%s\"'<>]*[\\/][Uu]sers[\\/][^%s\"'<>]+", M.USER_PATH)
   s = s:gsub("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+", "<EMAIL>")
   for _, w in ipairs(r.words or {}) do
     if type(w.text) == "string" and #w.text >= 3 then
@@ -560,7 +568,7 @@ end
 ---@param value any
 ---@param path string
 ---@param opts Testing.Result.ValidateOpts
----@param problems string[]
+---@param problems string[] Where the findings go (the leak sink, see `opts.leak_warnings`).
 ---@param depth integer
 local function scan_leaks(value, path, opts, problems, depth)
   if depth > MAX_DEPTH or #problems >= MAX_PROBLEMS then
@@ -579,7 +587,9 @@ local function scan_leaks(value, path, opts, problems, depth)
       -- Whole word, case-insensitive: the user name `bartl` is a leak in `by bartl` but not in the
       -- public handle `StefanBartl/lib.nvim`.
       if bad ~= "" and replace_word(value, bad, "", true) ~= value then
-        problems[#problems + 1] = ("%s: contains forbidden text %q"):format(path, bad)
+        problems[#problems + 1] = opts.leak_warnings
+            and ("%s: contains a forbidden word (a user or host name)"):format(path)
+          or ("%s: contains forbidden text %q"):format(path, bad)
       end
     end
     -- like `forbid`: a test title or file name is the project's own word (`https://a:b@gw.example.com`
@@ -815,7 +825,7 @@ function M.validate(result, opts)
     end
   end
 
-  scan_leaks(result, "result", opts, problems, 0)
+  scan_leaks(result, "result", opts, opts.leak_warnings or problems, 0)
   if #problems >= MAX_PROBLEMS then
     for i = #problems, MAX_PROBLEMS + 1, -1 do
       problems[i] = nil

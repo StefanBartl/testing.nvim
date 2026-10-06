@@ -123,12 +123,14 @@
 ---@class Testing.Migrate.PlanOpts
 ---@field owner? string GitHub owner of the fleet repositories the CI checks out (default `StefanBartl`).
 ---@field format? Testing.Migrate.FormatOpts Seam for the stylua call (default: the `stylua` on PATH).
+---@field branch_exists? fun(owner: string, repo: string): boolean|nil, string|nil Does `<owner>/<repo>` have a `ci-verified` branch? `false`: the checkout step pins `main` and a note says so; `nil, why`: unknown, the step keeps `ci-verified` and a note says so. Without it nothing is asked (the command line passes `testing.migrate.branches.exists`).
 
 ---@class Testing.Migrate.RenderOpts
 ---@field format? "markdown"|"text" Default markdown.
 
 ---@class Testing.Migrate.MainOpts
 ---@field is_dirty? fun(root: string): boolean|nil, string|nil Seam for specs (default: git).
+---@field branch_exists? fun(owner: string, repo: string): boolean|nil, string|nil Seam for specs (default: `git ls-remote` through `testing.migrate.branches`).
 ---@field cwd? string Root when the arguments name none (default: the working directory).
 
 ---@class Testing.Migrate.ApplyOpts

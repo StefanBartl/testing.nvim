@@ -33,6 +33,7 @@ local M = {}
 ---@field discover? fun(root: string, opts: table): table Seam for specs (default `testing.discover.discover`).
 ---@field owner? string GitHub owner of the fleet (default `StefanBartl`).
 ---@field format? Testing.Migrate.FormatOpts Seam for the stylua call of the plan (`M.run` hands it on).
+---@field branch_exists? fun(owner: string, repo: string): boolean|nil, string|nil Seam of the plan (`M.run` hands it on): does the repository have a `ci-verified` branch?
 ---@field scan_cache? table Shared between calls: the `require` scans of the fleet repositories (a bulk run reads each once).
 
 ---@param p string

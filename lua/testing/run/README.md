@@ -87,6 +87,10 @@ note. It is never part of the verdict: a failing write is a note.
 * a **count hook** raises `testing: timeout: ...` every 10000 VM instructions once a deadline passed
   (LuaJIT does not call hooks from compiled traces, so the JIT is switched off while a guard is
   active and restored afterwards): stops `while true do end` and retry loops;
+The hook and the clock are bound when the module loads (`vim.uv.hrtime`, `debug.sethook`, `error`,
+`ipairs`, `string.format`): a spec that stubs `vim.uv.hrtime` or `os.clock` to fake time never reaches
+the guard, and the hook calls nothing through the spec-visible `vim.uv` table.
+
 * a **`vim.wait` wrapper** clamps the wait to the time left and raises when it ran out: stops waiting
   for a condition that never comes.
 

@@ -131,6 +131,15 @@ local function describe_error(err)
   return err:match("^[^\n]*") or err, err
 end
 
+---Reason of the skip case of a file that registered no case (policy `warn`).
+---@type string
+M.NO_CASE_REASON = "no case registered on this platform"
+
+---Note on that skip case; the terminal lists every case that carries it.
+---@type string
+M.NO_CASE_WARNING =
+  "warning: no case registered on this platform (the file registered no it()/pending() case)"
+
 ---Run one busted spec file, case by case.
 ---@param a Testing.Assert.Context Full context (the shim opens a case per `it`).
 ---@param spec { path: string, rel: string } Absolute path and project-relative path.
@@ -443,7 +452,16 @@ function M.run_file(a, spec, opts)
     -- a spec file that registers no case runs nothing: a failing case says so
     a.begin_case({ file = rel, name = vim.fs.basename(rel) })
     local case = a.current() --[[@as Testing.Result.Case]]
-    case.notes[#case.notes + 1] = "the file registered no it()/pending() case"
+    if opts.assertions == "warn" then
+      -- a spec that registers its cases per platform (`if windows then it(...)`) has none on the
+      -- others: under `assertions = "warn"` that is a skip with a warning (never silent, never green
+      -- under `--strict`), not a failure
+      case.status = "skip"
+      case.reason = M.NO_CASE_REASON
+      case.notes[#case.notes + 1] = M.NO_CASE_WARNING
+    else
+      case.notes[#case.notes + 1] = "the file registered no it()/pending() case"
+    end
     emit(a.end_case())
   end
   return cases, list

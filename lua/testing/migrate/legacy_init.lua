@@ -149,6 +149,32 @@ function M.split(src)
       kind, reason = "drop", "comment about the old runner"
     elseif code_text:lower():find("plenary", 1, true) then
       kind, reason = "drop", "starts or locates the old runner (the runner is testing.nvim now)"
+      -- A block that also holds other statements (`vim.o.swapfile = false` right below the lines that
+      -- start the old runner) keeps those: only when what is left still compiles on its own.
+      local rest = {}
+      for _, l in ipairs(b) do
+        local low = l:lower()
+        if
+          not (
+            low:find("plenary", 1, true)
+            or low:find("add_dep", 1, true)
+            or low:find("prepend_env", 1, true)
+          )
+        then
+          rest[#rest + 1] = l
+        end
+      end
+      local rest_code = false
+      for _, l in ipairs(rest) do
+        rest_code = rest_code or (not is_comment(l) and not l:match("^%s*$"))
+      end
+      if rest_code and loadstring(table.concat(rest, "\n")) then
+        b = rest
+        kind, reason = "carry", ""
+      end
+    elseif code_text:find("prepend_env", 1, true) then
+      kind, reason =
+        "drop", "runtimepath from environment variables (replaced by the lookup of the new file)"
     elseif code_text:find("add_dep", 1, true) then
       kind, reason = "drop", "dependency lookup (replaced by the lookup of the new file)"
     elseif code_text:find("os.exit", 1, true) and code_text:lower():find("not found", 1, true) then
@@ -176,8 +202,9 @@ end
 ---The carried blocks as one commented section for the new file.
 ---@param blocks Testing.Migrate.InitBlock[]
 ---@param from string Project-relative path of the old file.
+---@param fate? string What happens to that file (default `removed by the migration`).
 ---@return string|nil section Nil when nothing is carried. Ends with a newline.
-function M.section(blocks, from)
+function M.section(blocks, from, fate)
   local out = {}
   for _, b in ipairs(blocks) do
     if b.kind == "carry" then
@@ -191,7 +218,10 @@ function M.section(blocks, from)
     return nil
   end
   local head = {
-    ("-- Carried over from %s (removed by the migration): what the suite needs"):format(from),
+    ("-- Carried over from %s (%s): what the suite needs"):format(
+      from,
+      fate or "removed by the migration"
+    ),
     "-- besides the runtimepath. Review each block; the diff of the removed file shows all of it.",
     "",
   }

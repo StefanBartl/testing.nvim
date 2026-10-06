@@ -275,7 +275,9 @@ fails; a file whose dialect cannot be told is an error case with the reason
 The Result-IR (`schema_version` 1) is deterministic JSON: run, cases, summary.
 Statuses: pass, fail, error, skip, xfail, xpass, timeout, crash. Paths become
 <REPO>, <HOME>, <TMP>, <STATE>; with --json the free text is redacted (user and
-host name, environment pairs, e-mail addresses) and validated after writing.
+host name, environment pairs, e-mail addresses, `Users/<name>` path shapes) and validated
+after writing. A privacy finding that redaction cannot remove becomes a top-level `warnings`
+list; it never discards the verdict.
 `effects` are not collected yet; every case says so.
 
 Reporters read the IR only and treat everything from the code under test as

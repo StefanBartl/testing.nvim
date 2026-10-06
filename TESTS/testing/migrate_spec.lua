@@ -101,6 +101,13 @@ return function(H)
   -- a telescope extension directory must not make `require("telescope.pickers")` a fleet module
   write(fleet_dir .. "/ext.nvim/lua/telescope/_extensions/ext.lua", "return {}\n")
 
+  -- the command line asks GitHub whether a dependency has a ci-verified branch: never in a spec
+  local offline = {
+    branch_exists = function()
+      return true
+    end,
+  }
+
   local PLENARY_MINIT = [=[
 -- Minimal init for the plenary.nvim test suite:
 --   nvim --headless -u TESTS/minimal_init.lua -c "PlenaryBustedDirectory TESTS/ { minimal_init = 'TESTS/minimal_init.lua' }"
@@ -485,26 +492,19 @@ jobs:
   )
 
   local minit = op_by_path(plan, "TESTS/minimal_init.lua")
-  eq(minit.action, "modify", "the existing minimal_init is edited, not replaced")
-  eq(
-    minit.removed,
-    { 'add_dep("PLENARY_DIR", "plenary.nvim", "plenary")', 'vim.cmd("runtime plugin/plenary.vim")' },
-    "only self-contained plenary calls are removed"
-  )
-  has(minit.after, "local function add_dep", "everything else is kept")
-  has(minit.after, "local plenary = vim.env.PLENARY_PATH", "a statement that is not a call stays")
-  has(
-    minit.after,
-    "-- Minimal init for the plenary.nvim test suite",
-    "comments stay (reworded by hand)"
-  )
-  ok(loadstring(minit.after) ~= nil, "the edited minimal_init still compiles")
-  ok(
-    vim.iter(plan.notes):any(function(n)
-      return n:find("keeps", 1, true) and n:find("line 13", 1, true)
-    end),
-    "the line that stays is reported with its line number"
-  )
+  eq(minit.action, "modify", "the existing minimal_init is replaced by the gate")
+  has(minit.after, 'local DEPS = { "testing.nvim", "lib.nvim" }', "the runner and the dependency")
+  has(minit.after, "os.exit(1)", "a missing dependency is fatal")
+  has(minit.after, "stdpath('data')/lazy/<name>", "the four places are named")
+  lacks(minit.after:lower(), "plenary", "nothing of the old runner is left")
+  lacks(minit.after, "add_dep", "nor its dependency lookup")
+  lacks(minit.after, "getcwd", "nor its runtimepath statement")
+  has(minit.after, "vim.o.swapfile = false", "what else the old file set up is carried over")
+  has(minit.after, "-- Carried over from TESTS/minimal_init.lua", "as a commented block")
+  ok(loadstring(minit.after) ~= nil, "the new minimal_init compiles")
+  ok(not vim.iter(plan.notes):any(function(n)
+    return n:find("keeps", 1, true) ~= nil
+  end), "no plenary line is left to report")
 
   local wfop = op_by_path(plan, ".github/workflows/ci.yml")
   local new_ci = wfop.after
@@ -618,7 +618,7 @@ jobs:
   eq(plan3.ops, {}, "no operation at all")
   eq(report3.test_sh.migrated, true, "scripts/test.sh is recognised as migrated")
   eq(report3.dot_testing, true, ".testing.lua is recognised")
-  local code_empty, out_empty = migrate.main({ pl, "--fleet-root", fleet_dir })
+  local code_empty, out_empty = migrate.main({ pl, "--fleet-root", fleet_dir }, offline)
   eq(code_empty, 0, "main on a migrated repository exits 0")
   has(out_empty, "Nothing to do", "and says so")
   local again = migrate.apply(plan3, { apply = true })
@@ -715,7 +715,11 @@ jobs:
   local keep_ci = op_by_path(keep_plan, ".github/workflows/ci.yml").after
   has(keep_ci, "repository: nvim-lua/plenary.nvim", "the plenary checkout stays")
   has(keep_ci, "PLENARY_PATH", "and its environment")
-  eq(op_by_path(keep_plan, "TESTS/minimal_init.lua"), nil, "minimal_init keeps its plenary lines")
+  has(
+    op_by_path(keep_plan, "TESTS/minimal_init.lua").after,
+    '"plenary.nvim"',
+    "the gate resolves plenary.nvim as a dependency"
+  )
   local keep_cfg = assert(loadstring(op_by_path(keep_plan, ".testing.lua").after))()
   ok(vim.tbl_contains(keep_cfg.deps, "plenary.nvim"), "plenary.nvim is in deps")
 
@@ -1005,26 +1009,26 @@ jobs:
   eq((migrate.main({ "apply", "--check" })), 2, "apply and --check exclude each other")
   eq((migrate.main({ tmp .. "/nowhere" })), 3, "an unreadable root exits 3")
   local fresh = mk_plenary("fresh.nvim")
-  local c2, o2 = migrate.main({ fresh, "--fleet-root=" .. fleet_dir })
+  local c2, o2 = migrate.main({ fresh, "--fleet-root=" .. fleet_dir }, offline)
   eq(c2, 0, "a dry run exits 0")
   has(o2, "operation(s) planned", "and shows the plan")
   eq(
-    (migrate.main({ "dry-run", fresh, "--check", "--fleet-root", fleet_dir })),
+    (migrate.main({ "dry-run", fresh, "--check", "--fleet-root", fleet_dir }, offline)),
     1,
     "--check exits 1 while there is work"
   )
-  local c3, o3 = migrate.main({ fresh, "--json", "--fleet-root", fleet_dir })
+  local c3, o3 = migrate.main({ fresh, "--json", "--fleet-root", fleet_dir }, offline)
   eq(c3, 0, "--json exits 0")
   eq(vim.json.decode(o3).name, "fresh.nvim", "and prints the JSON plan")
-  local c4, o4 = migrate.main({ "apply", fresh, "--fleet-root", fleet_dir })
+  local c4, o4 = migrate.main({ "apply", fresh, "--fleet-root", fleet_dir }, offline)
   eq(c4, 2, "apply without git is refused (exit 2)")
   has(o4, "refused:", "with the reason")
   gitify(fresh)
-  local c5, o5 = migrate.main({ "apply", fresh, "--fleet-root", fleet_dir })
+  local c5, o5 = migrate.main({ "apply", fresh, "--fleet-root", fleet_dir }, offline)
   eq(c5, 0, "apply in a clean repository succeeds")
   has(o5, "written: .testing.lua", "and lists what it wrote")
   eq(
-    (migrate.main({ fresh, "--check", "--fleet-root", fleet_dir })),
+    (migrate.main({ fresh, "--check", "--fleet-root", fleet_dir }, offline)),
     0,
     "--check exits 0 once migrated"
   )

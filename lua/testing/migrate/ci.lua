@@ -662,8 +662,9 @@ function M.edit(src, ctx)
         end
       end
 
-      -- (b) PLENARY* environment lines of the step
-      if ctx.drop_plenary then
+      -- (b) environment lines of the step the runner makes superfluous: PLENARY* when plenary goes,
+      -- and LIB_NVIM_PATH when it points to the sibling checkout `scripts/test.sh` finds by itself
+      do
         local env_at
         for i = step.dash, step.last do
           if lines[i]:match("^ +env:%s*$") and indent_of(lines[i]) == fi then
@@ -671,15 +672,20 @@ function M.edit(src, ctx)
           end
         end
         if env_at then
-          local kept, dropped = 0, {}
+          local kept, dropped, dropped_plenary, dropped_lib = 0, {}, false, false
           for i = env_at + 1, step.last do
             local l = lines[i]
             if structural(l) and indent_of(l) <= fi then
               break
             end
             if structural(l) then
-              if l:match("^ +PLENARY[%w_]*:") then
+              local lib_value = l:match("^ +LIB_NVIM_PATH:%s*(.-)%s*$")
+              if ctx.drop_plenary and l:match("^ +PLENARY[%w_]*:") then
                 dropped[#dropped + 1] = i
+                dropped_plenary = true
+              elseif lib_value and lib_value:match("/lib%.nvim[\"']?$") then
+                dropped[#dropped + 1] = i
+                dropped_lib = true
               else
                 kept = kept + 1
               end
@@ -693,7 +699,15 @@ function M.edit(src, ctx)
                 add(i, i, {})
               end
             end
-            changed("job %s: the PLENARY* environment of the run step is removed", job.id)
+            if dropped_plenary then
+              changed("job %s: the PLENARY* environment of the run step is removed", job.id)
+            end
+            if dropped_lib then
+              changed(
+                "job %s: LIB_NVIM_PATH is removed from the run step (scripts/test.sh finds lib.nvim itself)",
+                job.id
+              )
+            end
           end
         end
       end
@@ -715,6 +729,37 @@ function M.edit(src, ctx)
           "job %s: the run step gets `shell: bash` (bash syntax, Windows defaults to pwsh)",
           job.id
         )
+      end
+
+      -- (c2) names that still say plenary: the job and the run step (the runner is not plenary any more)
+      do
+        local key_indent
+        for i = job.first + 1, job.last do
+          local l = lines[i]
+          if structural(l) then
+            key_indent = key_indent or indent_of(l)
+            if indent_of(l) == key_indent then
+              if l:match("^ +steps:") then
+                break
+              end
+              local pre, value = l:match("^( +name:%s*)(.-)%s*$")
+              if pre and value:lower():find("plenary", 1, true) then
+                local neutral = vim.trim((value:gsub("[Pp][Ll][Ee][Nn][Aa][Rr][Yy]%s*", "")))
+                if neutral == "" or neutral == '""' or neutral == "''" then
+                  neutral = "tests"
+                end
+                add(i, i, { pre .. neutral })
+                changed("job %s: the job name no longer says plenary", job.id)
+              end
+            end
+          end
+        end
+        local sname, sline = field(doc, step, "name")
+        if sname and sline and sname:lower():find("plenary", 1, true) then
+          local pre = lines[sline]:match("^(.-name:%s*)") or ""
+          add(sline, sline, { pre .. "Run the specs" })
+          changed("job %s: the run step name no longer says plenary", job.id)
+        end
       end
 
       -- (d) checkouts: testing.nvim and the fleet dependencies the job does not mention yet
@@ -741,7 +786,10 @@ function M.edit(src, ctx)
       end
       if #blocks > 0 then
         local new = {}
-        for _, b in ipairs(blocks) do
+        for k, b in ipairs(blocks) do
+          if k > 1 then
+            new[#new + 1] = ""
+          end
           vim.list_extend(new, reindent(b, step.indent))
         end
         add(step.first, step.first - 1, new)

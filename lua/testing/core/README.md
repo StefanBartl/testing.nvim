@@ -56,7 +56,9 @@ Shape (the contract; reporters, cache, UI and adapters know nothing else):
   summary against a recount, status/assertion consistency (a `pass` needs at least one assertion and
   none failed), and that no user-home path (`/Users/x`, `C:\Users\x`, `/home/x`) and none of
   `opts.forbid` (e.g. the user name, case-insensitive) survived. Works on the in-memory table and
-  on a decoded JSON file. At most 100 problems are returned.
+  on a decoded JSON file. At most 100 problems are returned. With `opts.leak_warnings` (a table) the
+  leak checks (user-home path, forbidden word, e-mail) fill that table instead of failing the result;
+  `testing.run.inproc.sanitize` uses it, so a cosmetic privacy finding becomes `warnings` in the IR.
 
 ## Collecting assertions
 
