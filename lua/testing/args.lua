@@ -61,6 +61,7 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
 ---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
 ---@field env_allow string[] `--env-allow <name>`, repeatable: environment names a child may inherit
+---@field first_run boolean `--first-run`: do not disable lib.nvim's first-run float (default false)
 ---@field timings boolean false after `--no-timings`
 ---@field given table<string, boolean> Canonical names (`json`, `maxfail`, ...) of the options the user passed.
 
@@ -321,6 +322,14 @@ local OPTIONS = {
     end,
   },
   {
+    name = "first_run",
+    long = "first-run",
+    kind = "flag",
+    field = "first_run",
+    const = true,
+    help = "keep lib.nvim's one-time first-run float enabled (a suite that tests it, such as lib.nvim's own)",
+  },
+  {
     name = "timings",
     long = "no-timings",
     kind = "flag",
@@ -390,6 +399,7 @@ local function new_args()
     strict = false,
     rtp = {},
     env_allow = {},
+    first_run = false,
     timings = true,
     given = {},
   }

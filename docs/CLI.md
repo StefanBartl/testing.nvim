@@ -65,6 +65,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--jobs <n>` | Child editors running at once (default 1, `.testing.lua` `jobs`). The report, the printed child output and the exit code are the same for any `n`: results are merged in file order. |
 | `--host <c\|l>` | How a child starts. `c` (default): like plenary's host, the spec runs from a `-c` command (`v:vim_did_enter` is 0, `expand('<cword>')` works). `l`: `nvim -l`. A `script` prefers `l` unless this is given. |
 | `--env-allow <name>` | An environment variable (or `PREFIX*`) a child may inherit, on top of the allowlist; repeatable. See [child editors](../lua/testing/child/README.md). |
+| `--first-run` | Keep lib.nvim's one-time "missing tools" float enabled. By default the runner switches it off in every editor it starts (`disable_first_run`); lib.nvim's own suite tests that float and needs this flag. |
 
 #### What happens to a child
 

@@ -70,7 +70,7 @@ function M.of(plan)
     host = (one_of(args.host or cfg.host, { "c", "l" }) or "c") --[[@as "c"|"l"]],
     host_given = args.host ~= nil,
     filetype = cfg.filetype ~= false,
-    disable_first_run = cfg.disable_first_run ~= false,
+    disable_first_run = cfg.disable_first_run ~= false and not args.first_run,
     assertions = (one_of(cfg.assertions, { "error", "warn" }) or "error") --[[@as "error"|"warn"]],
     env_allow = allow,
   }

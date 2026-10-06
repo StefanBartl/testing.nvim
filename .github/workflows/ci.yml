@@ -121,7 +121,8 @@ jobs:
           exec > >(tee -a "$RUNNER_TEMP/lib-suite-output.log") 2>&1
           # The specs read the working directory as "this repository": run from the lib.nvim root.
           cd .deps/lib.nvim
-          nvim -n -i NONE --headless -u NONE -l "$DRIVER" . --rtp "$RTP_EXTRA" --json "$IR_FILE"
+          # --first-run: lib.nvim's own deps_spec tests the first-run float, the default would switch it off
+          nvim -n -i NONE --headless -u NONE -l "$DRIVER" . --first-run --rtp "$RTP_EXTRA" --json "$IR_FILE"
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

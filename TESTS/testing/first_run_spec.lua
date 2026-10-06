@@ -42,6 +42,15 @@ return function(H)
     false,
     "options.of: the config switches it off"
   )
+  -- --first-run keeps lib.nvim's float (a suite that tests it, such as lib.nvim's own deps_spec)
+  eq(
+    options.of({ args = { first_run = true } }).disable_first_run,
+    false,
+    "options.of: --first-run keeps the first-run float enabled"
+  )
+  local parsed = require("testing.args").parse({ "--first-run", "." })
+  eq(parsed and parsed.first_run, true, "args: --first-run is parsed")
+  eq(require("testing.args").parse({ "." }).first_run, false, "args: off by default")
 
   -- ===================================================================
   -- 2. apply_first_run_default: sets when unset, restores, never overrides the user
