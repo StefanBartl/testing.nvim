@@ -395,6 +395,9 @@ return function(H)
   eq(vim.fn.glob(rroot .. "/out/*.atomic-tmp*", false, true), {}, "no temp file left")
   has(r.out, "FAIL  TESTS/calc_spec.lua", "the terminal report is still printed")
 
+  -- CI sets GITHUB_STEP_SUMMARY for the real job: the runs below must never append to it
+  local real_summary = vim.env.GITHUB_STEP_SUMMARY
+  vim.env.GITHUB_STEP_SUMMARY = nil
   r = go({ rroot, "--github" })
   has(r.out, "::error", "--github: annotations on stdout")
   has(r.out, "FAIL  TESTS/calc_spec.lua", "next to the terminal report")
@@ -415,6 +418,7 @@ return function(H)
   eq(pdec.schema_version, 1, "a decodable IR")
   ok(require("testing.core.result").validate(pdec), "that validates")
   r = go({ rroot, "--reporter", "github" })
+  vim.env.GITHUB_STEP_SUMMARY = real_summary
   has(r.out, "::error", "--reporter github")
 
   -- =====================================================================
