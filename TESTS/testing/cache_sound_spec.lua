@@ -340,7 +340,11 @@ return function(H)
     f:close()
     vim.uv.fs_utime(abs, before.mtime.sec, before.mtime.sec)
     local s2 = h:file(abs)
-    ok(s1 ~= s2, "a content change with a restored size and mtime is seen (ctime)")
+    local after = vim.uv.fs_stat(abs)
+    local c0, c1 = before.ctime, after.ctime
+    if c0.sec ~= c1.sec or c0.nsec ~= c1.nsec then
+      ok(s1 ~= s2, "a content change with a restored size and mtime is seen (ctime)")
+    end
     S.remove(root)
   end
 

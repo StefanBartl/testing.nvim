@@ -122,8 +122,12 @@ return function(H)
     eq(result.cases[2].assertions[1].file, "LICENSE", "IR: the assertion carries file")
     local valid, problems = require("testing.core.result").validate(result)
     ok(valid, "IR validates: " .. vim.inspect(problems))
+    -- CI sets GITHUB_STEP_SUMMARY for the real job: the github reporter must never append to it from here
+    local real_summary = vim.env.GITHUB_STEP_SUMMARY
+    vim.env.GITHUB_STEP_SUMMARY = nil
     local outputs, errors =
       require("testing.report").run_reporters(result, { reporters = { "junit", "github" } })
+    vim.env.GITHUB_STEP_SUMMARY = real_summary
     eq(errors, {}, "the reporters render the conformance result")
     has(table.concat(outputs[1].lines, "\n"), "<testcase", "JUnit has cases")
     has(table.concat(outputs[2].lines, "\n"), "NEW-06", "the GitHub annotation names the rule")
