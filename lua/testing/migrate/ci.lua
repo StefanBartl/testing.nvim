@@ -832,6 +832,12 @@ function M.edit(src, ctx)
     for _ = e.from, e.to do
       table.remove(out, e.from)
     end
+    -- a removed step must not leave two blank lines between its neighbours
+    if #e.new == 0 and e.to >= e.from and e.from > 1 then
+      if out[e.from] ~= nil and blank(out[e.from]) and blank(out[e.from - 1]) then
+        table.remove(out, e.from)
+      end
+    end
     for k = #e.new, 1, -1 do
       table.insert(out, e.from, e.new[k])
     end

@@ -71,7 +71,7 @@ end
 ---@return Testing.Migrate.Report report
 function M.run(root, opts)
   local report = M.analyze(root, opts)
-  return M.plan(report, { owner = opts and opts.owner }), report
+  return M.plan(report, { owner = opts and opts.owner, format = opts and opts.format }), report
 end
 
 ---@class Testing.Migrate.Parsed
@@ -147,6 +147,9 @@ function M.main(argv, opts)
     local lines = {}
     for _, p in ipairs(res.applied) do
       lines[#lines + 1] = "written: " .. require("testing.migrate.text").show(p, 200)
+    end
+    for _, p in ipairs(res.deleted or {}) do
+      lines[#lines + 1] = "deleted: " .. require("testing.migrate.text").show(p, 200)
     end
     for _, e in ipairs(res.errors) do
       lines[#lines + 1] = "refused: " .. e

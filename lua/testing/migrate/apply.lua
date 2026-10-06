@@ -8,7 +8,7 @@
 ---     state git cannot report: a migration must be one reviewable commit;
 ---   * every operation is validated BEFORE the first byte is written: the path stays below the root
 ---     (also after resolving symlinks), no symlink is followed or replaced, a `create` target does not
----     exist, and a `modify` target still has exactly the text the plan was made from;
+---     exist, and a `modify` / `delete` target still has exactly the text the plan was made from;
 ---   * files are written atomically (`lib.nvim.fs.write.atomic`); scripts get mode 0755;
 ---   * the specs, `TESTS/harness.lua` and `TESTS/run.lua` are never in a plan, so they cannot be written.
 ---
@@ -68,7 +68,7 @@ end
 function M.apply(plan, opts)
   opts = opts or {}
   ---@type Testing.Migrate.ApplyResult
-  local result = { applied = {}, errors = {} }
+  local result = { applied = {}, deleted = {}, errors = {} }
   local function fail(msg)
     result.errors[#result.errors + 1] = msg
   end
@@ -145,14 +145,14 @@ function M.apply(plan, opts)
           fail(("%s: is a symbolic link, not replaced"):format(shown))
         elseif op.action == "create" and st then
           fail(("%s: exists now, the plan was made for a repository without it"):format(shown))
-        elseif op.action == "modify" then
+        elseif op.action == "modify" or op.action == "delete" then
           local current = st and text.read(abs) or nil
           if current == nil then
             fail(("%s: cannot be read or is gone"):format(shown))
           elseif current ~= op.before then
             fail(("%s: changed since the plan was made: plan again"):format(shown))
           end
-        elseif type(op.after) ~= "string" then
+        elseif op.action ~= "delete" and type(op.after) ~= "string" then
           fail(("%s: the plan has no new text"):format(shown))
         end
       end
@@ -165,16 +165,25 @@ function M.apply(plan, opts)
     local write = require("lib.nvim.fs.write.atomic")
     for _, op in ipairs(plan.ops) do
       local abs = root .. "/" .. op.path
-      local written, werr = write(abs, op.after, { mkdirp = true })
-      if not written then
-        fail(("%s: %s"):format(text.show(op.path, 200), tostring(werr)))
-        return
+      if op.action == "delete" then
+        local removed, rerr = uv.fs_unlink(abs)
+        if not removed then
+          fail(("%s: %s"):format(text.show(op.path, 200), tostring(rerr)))
+          return
+        end
+        result.deleted[#result.deleted + 1] = op.path
+      else
+        local written, werr = write(abs, op.after, { mkdirp = true })
+        if not written then
+          fail(("%s: %s"):format(text.show(op.path, 200), tostring(werr)))
+          return
+        end
+        if op.exec then
+          -- Best effort: a file system without modes keeps what it has.
+          pcall(uv.fs_chmod, abs, tonumber("755", 8))
+        end
+        result.applied[#result.applied + 1] = op.path
       end
-      if op.exec then
-        -- Best effort: a file system without modes keeps what it has.
-        pcall(uv.fs_chmod, abs, tonumber("755", 8))
-      end
-      result.applied[#result.applied + 1] = op.path
     end
   end)
   if not ok then

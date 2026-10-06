@@ -8,11 +8,20 @@
 ---   * `.testing.lua`           created when absent (never touched when present): `plugin`, `roots`,
 ---                              `dialect` (the project's own harness `h` for `return function(H)` specs on
 ---                              it, `script` for self-running scripts), `spec_pattern`, `deps`,
----                              `isolated`, `host`, `assertions`;
+---                              `isolated`, `host`. `assertions` and `timeouts` are NOT set: they are
+---                              notes ("set it when a run asks for it"), a measurement decides;
 ---   * `scripts/test.sh`        created, or replaced when it still starts plenary / the old runner;
----   * `TESTS/minimal_init.lua` created when absent; otherwise only the plenary statements are removed
----                              (self-contained call lines only, the rest of the file is kept as is);
----   * `.github/workflows/*`    edited line by line (`testing.migrate.ci`).
+---   * `TESTS/minimal_init.lua` created when absent (then with what `scripts/minimal_init.lua` set up
+---                              besides the old runner, as a commented block, and that old file is
+---                              DELETED); otherwise only the plenary statements are removed (self-contained
+---                              call lines only, the rest of the file is kept as is);
+---   * `.github/workflows/*`    edited line by line (`testing.migrate.ci`); a reference to the deleted
+---                              `scripts/minimal_init.lua` points to the new file.
+---
+--- The Lua files the plan CREATES are formatted with the `stylua.toml` of the repository
+--- (`testing.migrate.format`); without `stylua` on PATH they stay in the template's style and a note says
+--- so. Notes also list the lines of README / TESTS README / `.luacheckrc` that still talk about the old
+--- runner (to reword by hand), and count (never change) such comments in the specs.
 ---
 --- Idempotent by construction: each operation tests for its own result, so the plan of a migrated
 --- repository is empty (`plan.empty`). Specs, `TESTS/harness.lua` and `TESTS/run.lua` are never in the
@@ -22,6 +31,8 @@ local render = require("testing.scaffold.render")
 local scaffold = require("testing.scaffold")
 local text = require("testing.migrate.text")
 local ci = require("testing.migrate.ci")
+local format = require("testing.migrate.format")
+local legacy_init = require("testing.migrate.legacy_init")
 
 local M = {}
 
@@ -171,23 +182,13 @@ local function render_config(c)
     "deps = " .. lua_list(c.deps) .. ","
   )
   add(
-    '"none" = all specs in one nvim, "file" = one nvim per spec file (what plenary did).',
+    '"none" = all specs in one nvim, "file" = one nvim per spec file\n  -- (nothing leaks from one file into the next).',
     "isolated = " .. q(c.isolated) .. ","
   )
   if c.host then
     add(
-      '"c" = child started like plenary\'s host (-c based), "l" = `nvim -l` like the old runner.',
+      '"c" = child started from a -c command (v:vim_did_enter is 0, <cword> works),\n  -- "l" = `nvim -l`.',
       "host = " .. q(c.host) .. ","
-    )
-  end
-  add(
-    '"warn" = a case without assertions passes with a recorded warning; "error" = it fails.\n  -- Switch to "error" once the empty cases are fixed.',
-    "assertions = " .. q(c.assertions) .. ","
-  )
-  if c.timeouts then
-    add(
-      "Limits per case in milliseconds (plenary had none; one case of the fleet needs 21 s).",
-      ("timeouts = { case_ms = %d },"):format(c.timeouts.case_ms)
     )
   end
   if c.env_allow then
@@ -261,18 +262,18 @@ local function edit_minit(src, report)
 end
 
 ---@param before string|nil
----@param after string
+---@param after string|nil Nil: the file is deleted.
 ---@param path string
 ---@param extra table
 ---@return Testing.Migrate.Op
 local function make_op(before, after, path, extra)
   local op = {
     path = path,
-    action = before == nil and "create" or "modify",
+    action = after == nil and "delete" or (before == nil and "create" or "modify"),
     before = before,
     after = after,
     diff = text.unified(before, after, path),
-    removed = before and text.removed_lines(before, after) or {},
+    removed = before and text.removed_lines(before, after or "") or {},
   }
   for k, v in pairs(extra) do
     op[k] = v
@@ -301,6 +302,17 @@ function M.plan(report, opts)
   end
   local function risk(msg)
     plan.risks[#plan.risks + 1] = msg
+  end
+  ---A Lua file the plan creates, formatted for the stylua configuration of the repository.
+  ---@param src string
+  ---@param rel string
+  ---@return string
+  local function formatted(src, rel)
+    local out, hint = format.lua(src, rel, report.root, opts.format)
+    if hint then
+      note(hint)
+    end
+    return out
   end
   if report.error then
     plan.error = report.error
@@ -339,8 +351,6 @@ function M.plan(report, opts)
     deps = dep_names,
     isolated = report.policy.isolated,
     host = report.policy.host,
-    assertions = report.policy.assertions,
-    timeouts = report.policy.timeouts,
     env_allow = report.env and #report.env.allow > 0 and report.env.allow or nil,
   }
   local has_script = false
@@ -405,23 +415,18 @@ function M.plan(report, opts)
   end
   if not report.dot_testing then
     plan.config = conf
-    local after = render_config(conf)
+    local after = formatted(render_config(conf), ".testing.lua")
     plan.ops[#plan.ops + 1] = make_op(nil, after, ".testing.lua", {
       kind = "config",
-      reason = "the project configuration for testing.nvim (dialects, dependencies, isolation, assertion policy)",
+      reason = "the project configuration for testing.nvim (dialects, dependencies, isolation)",
     })
   else
     note(".testing.lua exists and is kept as it is (the migration never overwrites it)")
     -- Read as text, never executed: the keys the migration would have set that the file does not name.
     local existing = report.texts[".testing.lua"] or ""
     local missing = {}
-    if not existing:find("assertions", 1, true) then
-      missing[#missing + 1] = ('assertions = "%s" (cases without assertions pass under the old runner)'):format(
-        report.policy.assertions
-      )
-    end
     if not existing:find("isolated", 1, true) and report.policy.isolated == "file" then
-      missing[#missing + 1] = 'isolated = "file" (plenary ran one nvim per spec file)'
+      missing[#missing + 1] = 'isolated = "file" (the old runner ran one nvim per spec file)'
     end
     for _, d in ipairs(dep_names) do
       if not existing:find(d, 1, true) then
@@ -430,6 +435,21 @@ function M.plan(report, opts)
     end
     if #missing > 0 then
       note(".testing.lua does not name: " .. table.concat(missing, "; "))
+    end
+  end
+
+  -- Measured, not guessed: a zero-assertion case or a slow case shows in the first run, so these are hints.
+  do
+    local existing = report.dot_testing and (report.texts[".testing.lua"] or "") or ""
+    if not existing:find("assertions", 1, true) then
+      note(
+        '`assertions` is not set (default "error": a case without assertions FAILS). The old runner let such cases pass: set `assertions = "warn"` in .testing.lua only if the first run reports cases without assertions, and fix them later'
+      )
+    end
+    if report.policy.timeouts and not existing:find("timeouts", 1, true) then
+      note(
+        "`timeouts` is not set (default case_ms 10000). The old runner had no limit per case: set `timeouts = { case_ms = <ms> }` in .testing.lua only if a run reports a case that timed out"
+      )
     end
   end
 
@@ -466,15 +486,74 @@ function M.plan(report, opts)
   end
 
   -- ---------------------------------------------------------------- TESTS/minimal_init.lua
+  local legacy = report.legacy_init
+  local retire = legacy ~= nil and legacy.legacy == true
+  local retired_init = false
   if not report.minimal_init.exists then
     local plugin_for_app = scaffold.sanitize_plugin(conf.plugin) or "plugin"
     local vars = scaffold.build_vars(plugin_for_app, dep_names, owner)
     local after = vars and scaffold.render_template("minimal_init.lua.tpl", vars)
     if after then
+      local carried = 0
+      if retire then
+        ---@cast legacy -?
+        local base = after
+        local section = legacy_init.section(legacy.blocks, legacy.rel)
+        local tail = "return { root = root, deps = found }"
+        local at = after:find(tail, 1, true)
+        if section and at then
+          after = after:sub(1, at - 1) .. section .. "\n" .. after:sub(at)
+          for _, b in ipairs(legacy.blocks) do
+            carried = carried + (b.kind == "carry" and 1 or 0)
+          end
+          -- a carried statement must neither shadow what the template defines nor break the file
+          local clash
+          for _, name in ipairs({
+            "this",
+            "root",
+            "DEPS",
+            "MARKERS",
+            "env_name",
+            "valid",
+            "found",
+            "failures",
+          }) do
+            if
+              ("\n" .. section):find("\nlocal%s+" .. name .. "[%s=,]")
+              or ("\n" .. section):find("\nlocal%s+function%s+" .. name .. "%f[^%w_]")
+            then
+              clash = name
+            end
+          end
+          if clash then
+            risk(
+              ("%s defines a local `%s` that the new TESTS/minimal_init.lua uses itself: rename it in the carried block"):format(
+                legacy.rel,
+                clash
+              )
+            )
+          end
+          if not loadstring(after) or after:lower():find("plenary", 1, true) then
+            after, carried = base, 0
+            risk(
+              ("what %s sets up could not be carried over safely (the result would not compile or still names the old runner): copy it into TESTS/minimal_init.lua by hand, the removed file is in the diff"):format(
+                legacy.rel
+              )
+            )
+          end
+        end
+      end
+      after = formatted(after, "TESTS/minimal_init.lua")
       plan.ops[#plan.ops + 1] = make_op(nil, after, "TESTS/minimal_init.lua", {
         kind = "minit",
-        reason = "runtimepath for isolated child runs (`minit` of .testing.lua); fails with all four searched places when a dependency is missing",
+        reason = retire
+            and ("runtimepath for isolated child runs (`minit` of .testing.lua), plus %d block(s) carried over from %s"):format(
+              carried,
+              legacy and legacy.rel or ""
+            )
+          or "runtimepath for isolated child runs (`minit` of .testing.lua); fails with all four searched places when a dependency is missing",
       })
+      retired_init = retire
     end
   elseif not report.plenary.keep_ci and #report.minimal_init.plenary_lines > 0 then
     local before = report.texts["TESTS/minimal_init.lua"] or ""
@@ -487,6 +566,39 @@ function M.plan(report, opts)
     end
     for _, k in ipairs(kept) do
       note("TESTS/minimal_init.lua keeps: " .. k)
+    end
+  end
+  if legacy then
+    if retired_init then
+      local dropped, carried = {}, 0
+      for _, b in ipairs(legacy.blocks) do
+        if b.kind == "carry" then
+          carried = carried + 1
+        else
+          dropped[#dropped + 1] = b.reason
+        end
+      end
+      plan.ops[#plan.ops + 1] = make_op(report.texts[legacy.rel], nil, legacy.rel, {
+        kind = "minit",
+        reason = ("the old runner's init script: its runtimepath and dependency lookup are in TESTS/minimal_init.lua now, %d block(s) of its own state were carried over, %d replaced (%s)"):format(
+          carried,
+          #dropped,
+          #dropped > 0 and table.concat(dropped, "; ") or "none"
+        ),
+      })
+    elseif retire then
+      note(
+        ("%s and TESTS/minimal_init.lua both exist: %s stays; merge by hand what it sets up besides the old runner (swapfile/shada, clipboard, options, environment) into TESTS/minimal_init.lua and delete it"):format(
+          legacy.rel,
+          legacy.rel
+        )
+      )
+    else
+      note(
+        ("%s does not mention the old runner and no workflow or script starts it: it stays as it is"):format(
+          legacy.rel
+        )
+      )
     end
   end
   do
@@ -543,6 +655,16 @@ function M.plan(report, opts)
   for _, rel in ipairs(rels) do
     local src = report.texts[rel] or ""
     local edit = ci.edit(src, ctx)
+    local runner_edit = edit.text ~= nil
+    if retired_init then
+      -- what the workflow still says about the init script that is deleted points to the new one
+      local base = edit.text or src
+      local moved = base:gsub("scripts/minimal_init%.lua", "TESTS/minimal_init.lua")
+      if moved ~= base then
+        edit.text = moved
+        edit.changes[#edit.changes + 1] = "scripts/minimal_init.lua -> TESTS/minimal_init.lua"
+      end
+    end
     wrapped = wrapped or edit.wrapped
     for _, d in ipairs(edit.added_deps) do
       added[d] = true
@@ -551,14 +673,15 @@ function M.plan(report, opts)
       note(("%s: %s"):format(rel, n))
     end
     if edit.text then
-      any_runner = true
+      any_runner = any_runner or runner_edit
       local op = make_op(src, edit.text, rel, {
         kind = "ci",
         reason = table.concat(edit.changes, "; "),
         changes = edit.changes,
       })
       plan.ops[#plan.ops + 1] = op
-    else
+    end
+    if not runner_edit then
       for _, wf in ipairs(report.ci.workflows) do
         if wf.rel == rel then
           for _, job in ipairs(wf.jobs) do
@@ -626,6 +749,43 @@ function M.plan(report, opts)
     note(
       "optional dependencies (only used behind pcall, not in `deps`): " .. table.concat(names, ", ")
     )
+  end
+
+  if
+    retired_init and (report.texts["TESTS/run.lua"] or ""):find("scripts/minimal_init.lua", 1, true)
+  then
+    note(
+      "TESTS/run.lua (the old runner, kept) names scripts/minimal_init.lua, which is deleted: point it to TESTS/minimal_init.lua"
+    )
+  end
+
+  -- ---------------------------------------------------------------- prose that still talks about the old runner
+  local cleanup = report.cleanup
+  if cleanup then
+    for _, f in ipairs(cleanup.files) do
+      local parts = {}
+      for _, l in ipairs(f.lines) do
+        parts[#parts + 1] = ("%d: %s"):format(l.lnum, text.show(vim.trim(l.text), 90))
+      end
+      note(
+        ("cleanup hint, %s (reword what is about running the tests; line: text): %s"):format(
+          text.show(f.rel, 100),
+          table.concat(parts, " | ")
+        )
+      )
+    end
+    if cleanup.specs.total > 0 then
+      local parts = {}
+      for _, l in ipairs(cleanup.specs.samples) do
+        parts[#parts + 1] = ("%s:%d"):format(text.show(l.rel, 100), l.lnum)
+      end
+      note(
+        ("%d line(s) in spec files mention plenary (first: %s): the migration never changes specs, this is only reported"):format(
+          cleanup.specs.total,
+          table.concat(parts, ", ")
+        )
+      )
+    end
   end
 
   plan.empty = #plan.ops == 0

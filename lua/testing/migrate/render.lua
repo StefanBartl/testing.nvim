@@ -111,11 +111,9 @@ function M.render(plan, opts)
     end
     if a.policy then
       bullet(
-        ("policy: isolated=%s%s, assertions=%s (%s)"):format(
+        ("policy: isolated=%s%s; `assertions` and `timeouts` stay at their defaults (see the notes: set them when a run asks for it)"):format(
           sh(a.policy.isolated),
-          a.policy.host and (", host=" .. sh(a.policy.host)) or "",
-          sh(a.policy.assertions),
-          sh(a.policy.assertions_reason)
+          a.policy.host and (", host=" .. sh(a.policy.host)) or ""
         )
       )
     end

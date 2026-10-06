@@ -65,6 +65,8 @@
 ---@field dot_testing boolean `.testing.lua` exists.
 ---@field test_sh { exists: boolean, migrated: boolean, plenary: boolean }
 ---@field minimal_init { exists: boolean, plenary_lines: Testing.Migrate.PlenaryLine[] }
+---@field legacy_init? { rel: string, legacy: boolean, blocks: Testing.Migrate.InitBlock[] } `scripts/minimal_init.lua` when it exists; `legacy`: it belongs to the old runner (mentions it, or a workflow / script starts it).
+---@field cleanup { files: Testing.Migrate.CleanupFile[], specs: { total: integer, samples: { rel: string, lnum: integer, text: string }[] } } Prose that still talks about the old runner.
 ---@field makefile? { plenary: boolean }
 ---@field ci { workflows: Testing.Migrate.CiWorkflow[] }
 ---@field runner { plenary_dirs: string[], scripts_invoked: string[], scripts_no_suffix?: string[], unmappable?: string[], runner_dirs?: string[] }
@@ -81,10 +83,10 @@
 
 ---@class Testing.Migrate.Op
 ---@field path string Relative to the root, forward slashes.
----@field action "create"|"modify"
+---@field action "create"|"modify"|"delete"
 ---@field kind "config"|"script"|"minit"|"ci"
 ---@field before? string Text that was read (nil for a create).
----@field after string Complete new text.
+---@field after? string Complete new text (nil for a delete).
 ---@field diff string Unified diff, `a/<path>` to `b/<path>`.
 ---@field removed string[] Lines of `before` that are gone in `after`.
 ---@field exec? boolean Mode 0755.
@@ -120,6 +122,7 @@
 
 ---@class Testing.Migrate.PlanOpts
 ---@field owner? string GitHub owner of the fleet repositories the CI checks out (default `StefanBartl`).
+---@field format? Testing.Migrate.FormatOpts Seam for the stylua call (default: the `stylua` on PATH).
 
 ---@class Testing.Migrate.RenderOpts
 ---@field format? "markdown"|"text" Default markdown.
@@ -134,6 +137,7 @@
 
 ---@class Testing.Migrate.ApplyResult
 ---@field applied string[] Paths written.
+---@field deleted string[] Paths deleted.
 ---@field errors string[] Why nothing (or not everything) was written.
 
 return {}

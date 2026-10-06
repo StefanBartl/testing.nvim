@@ -452,7 +452,11 @@ jobs:
   eq(cfg.deps, { "lib.nvim" }, "dependencies")
   eq(cfg.isolated, "file", "isolation")
   eq(cfg.host, "c", "host")
-  eq(cfg.assertions, "warn", "assertion policy of an existing repository")
+  eq(cfg.assertions, nil, "no assertion policy is set: a run decides, the plan only hints")
+  eq(cfg.timeouts, nil, "no case limit is set: a run decides, the plan only hints")
+  local hint_text = table.concat(plan.notes, "\n")
+  has(hint_text, "`assertions` is not set", "the assertion policy is a hint")
+  has(hint_text, "`timeouts` is not set", "the case limit is a hint")
   eq(cfg.dialect, "auto", "busted specs are sniffed")
   local validated, problems = require("testing.config.project").validate(cfg)
   eq(problems, {}, "the generated .testing.lua passes the config validator")
@@ -1319,7 +1323,8 @@ jobs:
     'env_allow = { "REPOS_DIR" }',
     "env_allow is proposed from what the specs read"
   )
-  has(ev_conf.after, "timeouts = { case_ms = 30000 }", "a generous case limit (plenary had none)")
+  lacks(ev_conf.after, "timeouts", "no case limit is written without a measurement")
+  lacks(ev_conf.after, "assertions", "no assertion policy is written without a measurement")
   has(ev_conf.after, 'isolated = "file"', "plenary-style specs get a process per file")
 
   vim.fn.delete(tmp, "rf")

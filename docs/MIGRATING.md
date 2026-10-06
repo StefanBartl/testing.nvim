@@ -26,9 +26,10 @@ nvim -n -i NONE --headless -u NONE -l <testing.nvim>/scripts/testing.lua migrate
 ```
 
 or, inside Neovim: `:Testing migrate` (shows the plan in a viewer) and `:Testing migrate apply`.
-Read the plan first. It is complete: the new `.testing.lua`, the new `scripts/test.sh`, the edit of
-your `TESTS/minimal_init.lua` and of your CI workflow as unified diffs, the lines that disappear, the
-dependencies it found, and a list of **notes** (manual work) and **risks**.
+Read the plan first. It is complete: the new `.testing.lua`, the new `scripts/test.sh`, the new (or
+edited) `TESTS/minimal_init.lua`, the deletion of the old init script, and the edit of your CI workflow
+as unified diffs, the lines that disappear, the dependencies it found, and a list of **notes** (manual
+work) and **risks**.
 
 ```
 testing migrate [dry-run|apply] [<path>] [--json] [--markdown] [--check] [--fleet-root=<dir>]
@@ -50,13 +51,32 @@ The commit is yours: `apply` leaves ordinary modifications in the working tree. 
 
 | File | What happens |
 | --- | --- |
-| `.testing.lua` | **Created** when absent (an existing one is never touched, it is only compared: the plan lists the keys it does not name). Keys: `plugin`, `roots` (only when the old runner was pointed at another directory), `dialect`, `spec_pattern` (only for scripts without the `_spec` suffix), `deps`, `isolated`, `host`, `assertions`, `timeouts` (`case_ms = 30000` for busted repositories: plenary had no limit per case), `env_allow` (the environment variables the specs read that a child editor would not inherit: `REPOS_DIR`, `MAGICK_*` when a spec runs ImageMagick; credential-like names are reported as a risk and never proposed). |
+| `.testing.lua` | **Created** when absent (an existing one is never touched, it is only compared: the plan lists the keys it does not name). Keys: `plugin`, `roots` (only when the old runner was pointed at another directory), `dialect`, `spec_pattern` (only for scripts without the `_spec` suffix), `deps`, `isolated`, `host`, `env_allow` (the environment variables the specs read that a child editor would not inherit: `REPOS_DIR`, `MAGICK_*` when a spec runs ImageMagick; credential-like names are reported as a risk and never proposed). **`assertions` and `timeouts` are not written**: only a run shows whether a case has no assertion or one is slow, so the plan has a note ("set it when the run asks for it"), see below. The text is formatted with the repository's own `stylua.toml` (see below). |
 | `scripts/test.sh` | **Created**, or **replaced** when it starts plenary / the old runner (the diff shows every removed line). It resolves testing.nvim and each dependency in the four places of [CONFIG.md](CONFIG.md#dependencies), exits `1` naming all of them when one is missing, and passes the sentinel line your old runner printed with `--sentinel`. |
-| `TESTS/minimal_init.lua` | **Created** when absent. When it exists, only the plenary statements that are complete calls on one line (`add_dep("PLENARY_DIR", ...)`, `vim.cmd("runtime plugin/plenary.vim")`) are removed; everything else is kept. A plenary line that is not a self-contained call stays and is listed as a note. The result is compiled before it is offered. |
+| `TESTS/minimal_init.lua` | **Created** when absent: the runtimepath and dependency lookup of the template, followed by what your old `scripts/minimal_init.lua` set up besides the old runner (no swapfile / shada, a fake clipboard, options, extra runtimepath entries, environment variables) as a visible, commented block, formatted with the repository's `stylua.toml`. When it exists, only the plenary statements that are complete calls on one line (`add_dep("PLENARY_DIR", ...)`, `vim.cmd("runtime plugin/plenary.vim")`) are removed; everything else is kept. A plenary line that is not a self-contained call stays and is listed as a note. The result is compiled before it is offered. |
+| `scripts/minimal_init.lua` | **Deleted** when it belongs to the old runner (it names plenary, or a workflow / script starts it). The plan shows every line of it as a removal and says per block what happened: header, runtimepath of the repository, dependency lookup and everything that starts or locates plenary are replaced by the new file; the rest is carried over. A reference to it in a workflow is changed to `TESTS/minimal_init.lua`. When `TESTS/minimal_init.lua` exists already, nothing is deleted and a note asks you to merge by hand. An init script that does not mention the old runner and that nothing starts stays. |
 | `.github/workflows/*.yml` | Edited **line by line** (comments, key order and every other step are not touched): the old runner call becomes `bash scripts/test.sh --json "$RUNNER_TEMP/testing-ir.json"`; a testing.nvim checkout (and one for every fleet dependency the job lacks) from `ci-verified` is added in the layout your existing checkouts use (`.deps/<name>`, or a sibling); an artifact step uploads the JSON when the job fails; the plenary checkout and its `PLENARY*` environment are removed; `shell: bash` is added to the step on Windows jobs. Job names, matrix and `timeout-minutes` stay. |
 | the specs, `TESTS/harness.lua`, `TESTS/run.lua` | **Never touched.** The old runner stays so that you can compare both verdicts; delete `TESTS/run.lua` when they agree. |
 
 Running it a second time produces an empty plan. That is how you know it is done.
+
+### Formatting of the created Lua files
+
+`.testing.lua` and `TESTS/minimal_init.lua` are run through `stylua` with the `stylua.toml` (or
+`.stylua.toml`) of the repository, so `stylua --check .` stays green whatever the width (`column_width =
+130`) or the indentation (tabs). The call is `stylua --config-path <repo>/stylua.toml --stdin-filepath
+<repo>/<file> -` with the repository as working directory; no shell, the text goes in on stdin. Without a
+`stylua.toml` nothing is formatted. Without `stylua` on `PATH` (or when it fails) the files stay in the
+template's style (width 100, two spaces) and a note names the file and the configured width: run `stylua
+<file>` before you commit. The generated files never contain the word "plenary" (case-insensitive).
+
+### Notes that point at prose
+
+The migration never edits prose. It lists, with line numbers, the lines of `README.md` (and other
+top-level `*.md`), `TESTS/*.md`, `docs/*.md`, `.luacheckrc` and `Makefile` that mention plenary (or the
+init script that is deleted), as `cleanup hint, <file>` notes: reword what is about running the tests. A
+mention of plenary in a comment of a spec file is only counted (with the first positions); specs are
+never changed.
 
 ### Plenary stays when something else needs it
 
@@ -92,9 +112,12 @@ dependency is missing:
 
 ## What you decide afterwards
 
-* **`assertions = "warn"`.** Under plenary a test with no assertion passes. testing.nvim fails such a
-  case by default ("a case without assertions proves nothing"). The migration writes `"warn"`, so the
-  verdict stays what it was and the empty cases are listed. Fix them, then switch to `"error"`.
+* **`assertions = "warn"`, only when the run asks for it.** Under plenary a test with no assertion
+  passes. testing.nvim fails such a case by default ("a case without assertions proves nothing"). The
+  plan does not set the key (counting the empty cases needs a run); it has a note instead. If the first
+  `scripts/test.sh` reports cases without assertions, put `assertions = "warn"` into `.testing.lua`,
+  fix the cases, then remove the line again. The same goes for `timeouts = { case_ms = <ms> }`: plenary
+  had no limit per case, the default here is 10 s; set it only when a run reports a case that timed out.
 * **`isolated`.** Plenary ran one Neovim per spec file. Busted specs get `isolated = "file"` with
   `host = "c"` (the child starts like plenary's host: `vim.v.vim_did_enter` is `0`, `filetype plugin
   indent on` is active). Everything else shares one process like the old hand-written runners.

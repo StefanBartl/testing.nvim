@@ -54,16 +54,27 @@ env_name_of() {
   printf '%s_DIR' "$(printf '%s' "$1" | tr 'a-z' 'A-Z' | tr -c 'A-Z0-9' '_')"
 }
 
+# A path as shown in an error message: one separator style on every platform (Git Bash would
+# otherwise print /e/repos/x next to C:\Users\x\AppData\Local).
+show_path() {
+  if command -v cygpath >/dev/null 2>&1 && cygpath -m -- "$1" 2>/dev/null; then
+    return 0
+  fi
+  printf '%s' "${1//\\//}"
+}
+
 # resolve <name>: sets RESOLVED, or exits 1 naming all four places.
 resolve() {
   local name="$1" marker envname override
   marker="$(marker_of "$name")"
   envname="$(env_name_of "$name")"
   override="${!envname:-}"
-  local p1="${override:-unset}"
-  local p2="$ROOT/.deps/$name"
-  local p3="$ROOT/../$name"
-  local p4="$DATA/lazy/$name"
+  local p1="unset"
+  [[ -n "$override" ]] && p1="$(show_path "$override")"
+  local p2 p3 p4
+  p2="$(show_path "$ROOT/.deps/$name")"
+  p3="$(show_path "$ROOT/../$name")"
+  p4="$(show_path "$DATA/lazy/$name")"
 
   if [[ -n "$override" ]]; then
     # An override that is set decides alone: it is never skipped for another checkout.
@@ -73,7 +84,7 @@ resolve() {
     fi
   else
     local dir
-    for dir in "$p2" "$p3" "$p4"; do
+    for dir in "$ROOT/.deps/$name" "$ROOT/../$name" "$DATA/lazy/$name"; do
       if [[ -d "$dir/$marker" ]]; then
         RESOLVED="$dir"
         return 0

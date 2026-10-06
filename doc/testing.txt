@@ -287,9 +287,12 @@ XML for any input). A reporter that fails is exit code 3.
 13. Migrating from busted or plenary                             *testing-migrating*
 
 Specs stay unchanged. `testing migrate` reads the repository and prints the
-plan (a `.testing.lua`, `scripts/test.sh`, `TESTS/minimal_init.lua`, the CI
-workflow as diffs, notes and risks); `testing migrate apply` writes it into a
-clean git working tree. Or by hand: check out lib.nvim where the runner finds
+plan (a `.testing.lua`, `scripts/test.sh`, `TESTS/minimal_init.lua` with the
+state of the old `scripts/minimal_init.lua` carried over (that file is deleted),
+the CI workflow as diffs, notes and risks); the created Lua files follow the
+repository's `stylua.toml` (stylua on PATH; otherwise a note). `assertions` and
+`timeouts` are notes, not written keys. `testing migrate apply` writes the plan
+into a clean git working tree. Or by hand: check out lib.nvim where the runner finds
 it, run the runner from the plugin root, read what it says about spec
 locations, unknown dialects and unsupported luassert features, then point
 scripts/test.sh and CI at the runner and remove the old one. See

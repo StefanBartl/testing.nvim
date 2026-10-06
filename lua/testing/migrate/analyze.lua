@@ -32,6 +32,7 @@ local M = {}
 ---@field fleet_root? string Directory with the `*.nvim` repositories (default: the parent of `root`).
 ---@field discover? fun(root: string, opts: table): table Seam for specs (default `testing.discover.discover`).
 ---@field owner? string GitHub owner of the fleet (default `StefanBartl`).
+---@field format? Testing.Migrate.FormatOpts Seam for the stylua call of the plan (`M.run` hands it on).
 ---@field scan_cache? table Shared between calls: the `require` scans of the fleet repositories (a bulk run reads each once).
 
 ---@param p string
@@ -313,6 +314,72 @@ function M.asserts_absence(src, name)
     end
   end
   return false
+end
+
+---@class Testing.Migrate.CleanupLine
+---@field lnum integer
+---@field text string
+
+---@class Testing.Migrate.CleanupFile
+---@field rel string
+---@field lines Testing.Migrate.CleanupLine[] At most 12 per file.
+
+---Lines of the documentation and the lint configuration that talk about the old runner (or name the init
+---script that goes away), so the person who migrates can reword exactly those. Read-only: the migration
+---never edits prose. Comments of the spec files are only counted and sampled, never proposed for a change.
+---@param root string
+---@param spec_files Testing.Migrate.SpecFile[]
+---@param init_goes boolean `scripts/minimal_init.lua` is removed by the plan.
+---@return { files: Testing.Migrate.CleanupFile[], specs: { total: integer, samples: { rel: string, lnum: integer, text: string }[] } }
+function M.cleanup_hints(root, spec_files, init_goes)
+  local rels = {}
+  local function add(dir, pat, prefix)
+    for _, n in ipairs(list_files(root .. (dir ~= "" and ("/" .. dir) or ""), pat)) do
+      if not n:upper():find("^CHANGELOG") then
+        rels[#rels + 1] = prefix .. n
+      end
+    end
+  end
+  add("", "%.md$", "")
+  add("TESTS", "%.md$", "TESTS/")
+  add("docs", "%.md$", "docs/")
+  rels[#rels + 1] = ".luacheckrc"
+  rels[#rels + 1] = "Makefile"
+  local files = {}
+  for i, rel in ipairs(rels) do
+    local src = i <= 60 and text.read(root .. "/" .. rel) or nil
+    if src then
+      local lines = {}
+      for lnum, l in ipairs((text.lines(src))) do
+        if
+          l:lower():find("plenary", 1, true)
+          or (init_goes and l:find("scripts/minimal_init.lua", 1, true))
+        then
+          if #lines < 12 then
+            lines[#lines + 1] = { lnum = lnum, text = text.show(l, 160) }
+          end
+        end
+      end
+      if #lines > 0 then
+        files[#files + 1] = { rel = rel, lines = lines }
+      end
+    end
+  end
+  local total, samples = 0, {}
+  for i, f in ipairs(spec_files) do
+    local src = i <= 400 and text.is_safe_rel(f.rel) and text.read(root .. "/" .. f.rel) or nil
+    if src then
+      for lnum, l in ipairs((text.lines(src))) do
+        if l:lower():find("plenary", 1, true) then
+          total = total + 1
+          if #samples < 5 then
+            samples[#samples + 1] = { rel = f.rel, lnum = lnum, text = text.show(l, 160) }
+          end
+        end
+      end
+    end
+  end
+  return { files = files, specs = { total = total, samples = samples } }
 end
 
 ---Run `discover` behind the adapter.
@@ -622,6 +689,21 @@ function M.analyze(root, opts)
   report.ci = { workflows = workflows }
   local ci_text = table.concat(sources, "\n")
 
+  -- the old init script of the repository (`scripts/minimal_init.lua`): what it sets up besides the old runner
+  -- must reach the new `TESTS/minimal_init.lua`
+  local legacy_src = text.read(root .. "/scripts/minimal_init.lua")
+  if legacy_src then
+    report.texts["scripts/minimal_init.lua"] = legacy_src
+    local plenary = legacy_src:lower():find("plenary", 1, true) ~= nil
+    local referenced = ci_text:find("scripts/minimal_init.lua", 1, true) ~= nil
+    report.legacy_init = {
+      rel = "scripts/minimal_init.lua",
+      -- only a script of the old runner is removed; an init nobody starts and nothing names stays
+      legacy = plenary or referenced,
+      blocks = require("testing.migrate.legacy_init").split(legacy_src),
+    }
+  end
+
   -- how the old runner was started
   local roots_hint = runner_dirs(ci_text, root)
   local scripts_invoked = invoked_scripts(ci_text .. "\n" .. (run_text or ""))
@@ -678,6 +760,12 @@ function M.analyze(root, opts)
   if #beyond > 0 and not plenary_hard then
     risk("plenary modules are required optionally (pcall): the CI keeps its plenary checkout")
   end
+
+  report.cleanup = M.cleanup_hints(
+    root,
+    specs.files,
+    report.legacy_init ~= nil and report.legacy_init.legacy == true
+  )
 
   -- ---------------------------------------------------------------- dependencies
   local idx = fleet.index(opts.fleet_root and norm(opts.fleet_root) or vim.fs.dirname(root))

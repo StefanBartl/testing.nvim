@@ -95,7 +95,7 @@ end
 
 ---Unified diff of two texts. An empty string when they are equal.
 ---@param before string|nil Nil: the file does not exist yet (header `/dev/null`).
----@param after string
+---@param after string|nil Nil: the file is deleted (header `/dev/null`).
 ---@param path string Project-relative path for the headers.
 ---@return string
 function M.unified(before, after, path)
@@ -103,6 +103,7 @@ function M.unified(before, after, path)
     return ""
   end
   local a = before or ""
+  local b = after or ""
   -- vim.diff works on lines; make both end in a newline so the last line is compared as a line.
   local function nl(t)
     if t ~= "" and t:sub(-1) ~= "\n" then
@@ -113,10 +114,11 @@ function M.unified(before, after, path)
   -- `vim.diff` is the name before 0.12, `vim.text.diff` after it
   ---@diagnostic disable-next-line: deprecated
   local diff = (vim.text and vim.text.diff) or vim.diff
-  local body = diff(nl(a), nl(after), { result_type = "unified", ctxlen = 3 })
+  local body = diff(nl(a), nl(b), { result_type = "unified", ctxlen = 3 })
   local shown = M.show(path, 300)
   local from = before == nil and "/dev/null" or ("a/" .. shown)
-  local header = ("--- %s\n+++ b/%s\n"):format(from, shown)
+  local to = after == nil and "/dev/null" or ("b/" .. shown)
+  local header = ("--- %s\n+++ %s\n"):format(from, to)
   return header .. tostring(body)
 end
 
