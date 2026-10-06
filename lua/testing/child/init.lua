@@ -32,8 +32,10 @@
 ---   * the run's dependencies are on the child's runtimepath (`rtp`, `rtp_prepend` of the job).
 ---
 --- KILLING. A timeout kills the whole process TREE: a spec that spawned helpers (language servers,
---- `nvim --headless` workers) must not leave them behind. Windows: `taskkill /PID <pid> /T /F` (an argv
---- call; killing the root first would hide the tree from `/T`). POSIX: the child is started
+--- `nvim --headless` workers) must not leave them behind. Windows: the process table is read first
+--- (one `powershell.exe` call, constant argv), then `taskkill /PID <pid> /T /F` (its exit code is
+--- checked: a failure kills the root at once), then every descendant of the snapshot is ended by pid
+--- (a double-hop orphan, whose parent died before the snapshot, escapes: see README.md "Killing"). POSIX: the child is started
 --- detached (own process group); the root is frozen (SIGSTOP), its descendants are read from one
 --- `ps` call, the group and every descendant get SIGKILL (a `jobstart`ed helper has a process group of
 --- its own, the group kill alone would miss it). If the OS call fails the root is killed
@@ -48,6 +50,9 @@ local env_mod = require("testing.child.env")
 local M = {}
 
 local is_windows = vim.fn.has("win32") == 1
+
+---The platform switch of the kill path (a spec flips it to drive the Windows branch from anywhere).
+M.platform = { windows = is_windows }
 
 ---Directory of this checkout's boot file.
 ---@return string
@@ -70,7 +75,7 @@ M.HOST_C_COMMAND =
 ---@class Testing.Child.Spec
 ---@field entry table The discovered file (`path`, `rel`, `dialect`, ...); serialized into the job.
 ---@field root string Project root: the working directory and the base of `entry.rel`.
----@field kind? "cases"|"script" Default "cases".
+---@field kind? "cases"|"script"|"list" Default "cases"; "list" only lists the cases of the file (`testing.child.runner.list`).
 ---@field host? "c"|"l" Default "c".
 ---@field rtp_prepend? string[] Directories put first on the child's runtimepath.
 ---@field rtp? string[] Directories appended to the child's runtimepath.
@@ -529,15 +534,38 @@ function M.abandon(h)
   end
 end
 
----POSIX: the pids of everything below `pid` (children, grandchildren, ...) whatever their process
----group. `jobstart` puts every job in a session of its own (measured on Linux: its PGID and SID are its
----own pid), so a spec's `jobstart`ed helper is NOT in the child's group and the group kill misses it.
----One `ps` call; an empty list when it cannot be run (then only the group dies, as before).
+---The command that prints one `<pid> <ppid>` pair per line for every process. Constant argv, no
+---shell, no user text. Windows has no `ps`: one PowerShell call (about a second; `wmic` is gone from
+---current Windows), used on the timeout path only.
+---@return string[]
+local function process_table_argv()
+  if M.platform.windows then
+    return {
+      "powershell.exe",
+      "-NoProfile",
+      "-NonInteractive",
+      "-NoLogo",
+      "-Command",
+      "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId"
+        .. " | ForEach-Object { '{0} {1}' -f $_.ProcessId,$_.ParentProcessId }",
+    }
+  end
+  return { "ps", "-A", "-o", "pid=", "-o", "ppid=" }
+end
+
+---The pids of everything below `pid` (children, grandchildren, ...) whatever their process group,
+---read from the process table. POSIX: `jobstart` puts every job in a session of its own (measured on
+---Linux: its PGID and SID are its own pid), so a spec's `jobstart`ed helper is NOT in the child's
+---group and the group kill misses it. Windows: the tree is read BEFORE anything is killed, so the
+---descendants can be ended one by one even when `taskkill /T` cannot find them. An empty list when
+---the table cannot be read (then only the group / `taskkill /T` acts, as before).
 ---@param pid integer
 ---@return integer[]
 local function descendants(pid)
   local ok, res = pcall(function()
-    return vim.system({ "ps", "-A", "-o", "pid=", "-o", "ppid=" }, { text = true }):wait(3000)
+    return vim
+      .system(process_table_argv(), { text = true })
+      :wait(M.platform.windows and 8000 or 3000)
   end)
   if not ok or type(res) ~= "table" or res.code ~= 0 or type(res.stdout) ~= "string" then
     return {}
@@ -576,17 +604,26 @@ function M.kill_tree(h)
       pcall(vim.uv.process_kill, h.uv_handle, 9)
     end
   end
-  if is_windows then
+  if M.platform.windows then
     if first then
-      local ok = pcall(
-        vim.system,
-        { "taskkill", "/PID", tostring(h.pid), "/T", "/F" },
-        { text = true },
-        function() end
-      )
-      if ok then
-        return
+      -- the tree is read first (a descendant whose parent dies with the root would be invisible to
+      -- `/T`), then `taskkill /T` takes the tree and what it left is ended pid by pid
+      local below = descendants(h.pid)
+      local ok, res = pcall(function()
+        return vim
+          .system({ "taskkill", "/PID", tostring(h.pid), "/T", "/F" }, { text = true })
+          :wait(5000)
+      end)
+      if not ok or type(res) ~= "table" or res.code ~= 0 then
+        -- access denied, no such process, a timeout: do not wait for a later call
+        root_kill()
       end
+      for _, pid in ipairs(below) do
+        pcall(function()
+          vim.system({ "taskkill", "/PID", tostring(pid), "/F" }, { text = true }):wait(3000)
+        end)
+      end
+      return
     end
     root_kill()
   else

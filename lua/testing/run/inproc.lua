@@ -339,6 +339,8 @@ local function run_files(opts, holder)
       end
 
       local heavy_done = false
+      ---@type Testing.Timeout.Guard|nil
+      local file_guard
 
       ---Is this case selected? For busted this is also THE moment a case starts (an `it` body runs
       ---right where it is registered, right after the dialect asked), so the guard window of a case
@@ -354,8 +356,19 @@ local function run_files(opts, holder)
         end
         local selected = selector.case_ok(id, rel)
         if selected and gsess and is_busted then
-          gsess:open({ id = id, file = rel }, { heavy = not heavy_done })
+          local first = not heavy_done
           heavy_done = true
+          if file_guard then
+            -- the snapshot belongs to the runner, not to the spec: it must not be cut off by a deadline
+            -- the spec has just exceeded (a timed-out case left it persistent), and its time is not the
+            -- next case's
+            file_guard:suspend(function()
+              gsess:open({ id = id, file = rel }, { heavy = first })
+            end)
+            file_guard:arm_case()
+          else
+            gsess:open({ id = id, file = rel }, { heavy = first })
+          end
         end
         return selected
       end
@@ -375,6 +388,7 @@ local function run_files(opts, holder)
           file_ms = timeouts.file_ms,
           case_ms = is_busted and timeouts.case_ms or nil,
         })
+        file_guard = guard
         local seen_in_file = 0
         ---@type Testing.Result.Case[]|nil
         local cases

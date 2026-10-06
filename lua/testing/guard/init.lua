@@ -59,6 +59,20 @@ end
 ---@type table<Testing.Guard.Handle, true>
 local LIVE = {}
 
+---Labels of the patches that no uninstall could put back, since the last `take_unrestored` (the warm
+---pool asks after every file: a member whose `vim.system` is still a stub on top of a guard's wrapper
+---is not clean).
+---@type string[]
+local LEFT = {}
+
+---The labels of the patches that could not be undone since the last call (and forget them).
+---@return string[]
+function M.take_unrestored()
+  local out = LEFT
+  LEFT = {}
+  return out
+end
+
 ---Number of guard layers that are installed (and not yet uninstalled) in this editor.
 ---@return integer
 function M.live_count()
@@ -519,23 +533,40 @@ function Handle:clock()
   return g and g.clock or nil
 end
 
----Undo everything: patches, hooks. Idempotent. Returns the labels of patches that could not be
----undone because something else wrapped over them.
+---Undo everything: patches, hooks. Idempotent. The guards are torn down in the REVERSE of the
+---install order (`config.ORDER`); a teardown that raises is reported (never swallowed) and does not
+---stop the others, and the patches are undone and the handle marked uninstalled whatever happened.
+---Returns the labels of what could not be undone: a patch somebody wrapped over (a spec that stubbed
+---`vim.system` on top of the guard's wrapper and never put it back) or a teardown that failed.
 ---@return string[]
 function Handle:uninstall()
   if not self.installed then
     return self.patcher.unrestored
   end
   self.active = false
-  for _, g in pairs(self.guards) do
-    if g.uninstall then
-      pcall(g.uninstall, g)
+  local unrestored = self.patcher.unrestored
+  for i = #config.ORDER, 1, -1 do
+    local name = config.ORDER[i]
+    local g = self.guards[name]
+    if g and g.uninstall then
+      local ok, err = pcall(g.uninstall, g)
+      if not ok then
+        local why = ("the %s guard failed to uninstall: %s"):format(name, tostring(err))
+        unrestored[#unrestored + 1] = why
+        self.notes[#self.notes + 1] = why
+      end
     end
   end
-  self.patcher:restore()
+  local rok, rerr = pcall(self.patcher.restore, self.patcher)
+  if not rok then
+    unrestored[#unrestored + 1] = "restoring the patches failed: " .. tostring(rerr)
+  end
   self.installed = false
   LIVE[self] = nil
-  return self.patcher.unrestored
+  for _, label in ipairs(unrestored) do
+    LEFT[#LEFT + 1] = label
+  end
+  return unrestored
 end
 
 return M

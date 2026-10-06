@@ -139,3 +139,15 @@ Windows a grandchild that broke away from its parent's job and whose parent is a
 found by `/T`, and a helper left behind by a child that ended normally is not killed at all (POSIX: the
 process group is killed once the child is gone). It cannot hold the run any more, but it can keep
 the child's sandbox directory from being deleted.
+
+**Windows, in detail.** There is no job object from Lua (the editor's LuaJIT has `ffi`, but a job with
+`KILL_ON_JOB_CLOSE` would also forbid the `CREATE_BREAKAWAY_FROM_JOB` that `detached` spawns of a spec
+use, and could not be verified on Linux/macOS CI; it was not built). Instead the kill reads the process
+table FIRST (one `powershell.exe` call, constant argv, no shell; `wmic` is gone from current Windows;
+about a second, on the timeout path only), takes the tree with `taskkill /PID <pid> /T /F`, **checks its
+exit code** (a failure kills the root at once instead of "on a later call"), and then ends every
+descendant that was in the snapshot pid by pid. **Remaining limit:** a process whose parent already
+died before the snapshot (a double hop: the spec starts A detached, A starts B detached and exits) is
+reparented to nobody and escapes, on Windows and on POSIX alike; so does a descendant started after the
+snapshot by a process that survives the kill. Such an orphan holds the inherited stdout of the runner
+(`testing ... | grep` waits for it) until it ends.

@@ -66,14 +66,141 @@ end
 
 local MASK = "<REDACTED>"
 
----Remove secrets from free text: `Authorization` headers, `name=secret` pairs and flags, URL user
----info and secret query keys, well-known token shapes (GitHub, OpenAI-style, AWS access keys).
+---Query keys that carry a secret although the name has no secret word (`?key=`, `&sig=`).
+local QUERY_SECRETS = {
+  key = true,
+  sig = true,
+  sas = true,
+  jwt = true,
+  signature = true,
+  ["x-amz-signature"] = true,
+  ["x-amz-credential"] = true,
+  ["x-amz-security-token"] = true,
+}
+
+---Header names whose whole value is secret.
+---@param name string
+---@return boolean
+local function secret_header(name)
+  local low = name:lower()
+  return low == "cookie"
+    or low == "set-cookie"
+    or low == "authorization"
+    or low == "proxy-authorization"
+    or (
+      low:find("^x%-") ~= nil
+      and (
+        secret_name(low)
+        or low:find("key", 1, true) ~= nil
+        or low:find("sid", 1, true) ~= nil
+        or low:find("session", 1, true) ~= nil
+        or low:find("signature", 1, true) ~= nil
+      )
+    )
+end
+
+---Authorization schemes whose word stays readable (`Authorization: token <REDACTED>`).
+local AUTH_SCHEMES = {
+  bearer = true,
+  basic = true,
+  token = true,
+  digest = true,
+  negotiate = true,
+  ntlm = true,
+  bot = true,
+}
+
+---Does the lower-cased command line contain `word` as a whole word (`curl`, `curl.exe`)?
+---@param low string
+---@param word string
+---@return boolean
+local function has_word(low, word)
+  return low:find("%f[%w_]" .. word .. "%f[^%w_]") ~= nil
+end
+
+---Mask the value of the given flags (`-u admin:pw`, `-u "a:b"`, `--user=a:b`).
+---@param s string
+---@param flags string[]
+---@param attached? boolean also `-phunter2`
+---@return string
+local function mask_flags(s, flags, attached)
+  s = " " .. s
+  for _, f in ipairs(flags) do
+    local e = f:gsub("%p", "%%%0")
+    s = s:gsub("(%s" .. e .. "[%s=]%s*)([\"'])[^\"']*%2", "%1" .. MASK)
+    s = s:gsub("(%s" .. e .. "[%s=]%s*)([^%s\"'][^%s]*)", function(head, value)
+      if value ~= MASK then
+        return head .. MASK
+      end
+    end)
+    if attached then
+      s = s:gsub("(%s" .. e .. ")([^%s%-=\"'][^%s]*)", function(head, value)
+        if value ~= MASK then
+          return head .. MASK
+        end
+      end)
+    end
+  end
+  return (s:sub(2))
+end
+
+---Secrets that sit in the argv of well-known tools; the flag meaning depends on the tool (`ssh -p`
+---is a port, `sshpass -p` a password), so the command word is checked first.
+---@param s string
+---@return string
+local function redact_command_flags(s)
+  local low = s:lower()
+  if has_word(low, "curl") then
+    s = mask_flags(s, { "-u", "--user", "-U", "--proxy-user", "-b", "--cookie" })
+  end
+  if has_word(low, "sshpass") then
+    s = mask_flags(s, { "-p" }, true)
+  end
+  if (has_word(low, "docker") or has_word(low, "podman")) and has_word(low, "login") then
+    s = mask_flags(s, { "-p" })
+  end
+  if low:find("mysql", 1, true) or low:find("mariadb", 1, true) then
+    s = (" " .. s):gsub("(%s%-p)([^%s%-=\"'][^%s]*)", "%1" .. MASK):sub(2)
+  end
+  return s
+end
+
+---Remove secrets from free text: `Authorization` / `Cookie` / `X-*-Token` headers, `name=secret`
+---pairs and flags, URL user info and secret query keys, JSON `"password": "..."` members, the
+---credential flags of curl / sshpass / docker login / mysql, well-known token shapes (GitHub, Slack,
+---OpenAI-style, AWS access keys, JWT). Best effort: a secret in a position no rule knows stays.
 ---@param s string
 ---@return string
 function M.redact_secrets(s)
   if type(s) ~= "string" or s == "" then
     return s
   end
+  s = redact_command_flags(s)
+  -- headers whose value is secret as a whole: the rest of the quoted / of the line
+  s = s:gsub("([%w%-]+)(:[ \t]*)([^\"'\r\n]*)", function(name, sep, value)
+    if value == "" or value:find(MASK, 1, true) or not secret_header(name) then
+      return nil
+    end
+    if name:lower():find("authorization", 1, true) then
+      local scheme = value:match("^(%a+)%s+.+$")
+      if scheme and AUTH_SCHEMES[scheme:lower()] then
+        return name .. sep .. scheme .. " " .. MASK
+      end
+    end
+    return name .. sep .. MASK
+  end)
+  -- JSON members: "password": "x" (also with escaped quotes)
+  s = s:gsub('(\\?"([%w_%-]+)\\?"%s*:%s*\\?")([^"\\]*)', function(head, name, value)
+    if value ~= MASK and secret_name(name) then
+      return head .. MASK
+    end
+  end)
+  -- secret query keys: ?key=..&sig=..
+  s = s:gsub("([?&])([%w_%-%.]+)(=)([^%s&\"']+)", function(sep, name, eq, value)
+    if value ~= MASK and (QUERY_SECRETS[name:lower()] or secret_name(name)) then
+      return sep .. name .. eq .. MASK
+    end
+  end)
   -- `Bearer xyz` / `Basic xyz` (headers, curl -H)
   for _, scheme in ipairs({ "[Bb][Ee][Aa][Rr][Ee][Rr]", "[Bb][Aa][Ss][Ii][Cc]" }) do
     s = s:gsub("(" .. scheme .. "%s+)([%w%-%._~%+/=]+)", function(head, token)
@@ -116,6 +243,9 @@ function M.redact_secrets(s)
   s = s:gsub("sk%-[%w_%-]+", function(t)
     return #t >= 19 and MASK or t
   end)
+  s = s:gsub("xox[abprs]%-[%w%-]+", MASK)
+  s = s:gsub("xapp%-[%w%-]+", MASK)
+  s = s:gsub("eyJ[%w_%-]+%.[%w_%-]+%.[%w_%-]+", MASK)
   s = s:gsub("AKIA[%u%d]+", function(t)
     return #t == 20 and MASK or t
   end)

@@ -32,18 +32,13 @@ local M = {}
 ---@field err? string The driver or the fragment failed.
 ---@field report? Testing.Inproc.Report
 
----Run the file of `job` and write its records.
----@param job table The job (see `testing.child.boot`): `entry`, `root`, `fragment`, `selector`, `lf_ids`, `timeouts`, `assertions`, `seed`, `guard`.
----@param ctx? Testing.Child.RunnerCtx
----@return Testing.Child.RunnerResult
-function M.run(job, ctx)
-  ctx = ctx or {}
-  local inproc = require("testing.run.inproc")
+---The selector and the `--lf` map of a job (what the parent's selection options said).
+---@param job table
+---@return Testing.Select.Selector selector
+---@return table<string, table<string, true>>|nil lf
+local function build_selector(job)
   local select_mod = require("testing.run.select")
-  local project = require("testing.run.project")
-
-  local entry = job.entry or {}
-  local rel = entry.rel
+  local rel = (job.entry or {}).rel
   local sel = job.selector or {}
   local header_cache
   local selector = select_mod.new({
@@ -57,7 +52,6 @@ function M.run(job, ctx)
       return header_cache
     end,
   })
-
   local lf
   if job.lf_ids then
     local ids = {}
@@ -66,6 +60,48 @@ function M.run(job, ctx)
     end
     lf = { [rel] = ids }
   end
+  return selector, lf
+end
+
+---List what the file of `job` would run (`kind = "list"`): the describe bodies run HERE, in a
+---throwaway editor with the sanitized environment and the sandbox, no `it` body does. The items go
+---into the fragment as one `list` record. This is how `isolated = "case"` learns the case ids
+---without running the spec's top-level code in the parent editor.
+---@param job table
+---@return Testing.Child.RunnerResult
+function M.list(job)
+  local inproc = require("testing.run.inproc")
+  local entry = job.entry or {}
+  local selector, lf = build_selector(job)
+  local ok, items = pcall(inproc.list, {
+    root = job.root,
+    files = { entry },
+    selector = selector,
+    lf = lf,
+    timeouts = job.timeouts or {},
+  })
+  if not ok then
+    return { ok = false, err = "the listing failed: " .. tostring(items) }
+  end
+  local wok, werr = fragment.append(job.fragment, { k = "list", items = items })
+  if not wok then
+    return { ok = false, err = "cannot write the fragment: " .. tostring(werr) }
+  end
+  return { ok = true }
+end
+
+---Run the file of `job` and write its records.
+---@param job table The job (see `testing.child.boot`): `entry`, `root`, `fragment`, `selector`, `lf_ids`, `timeouts`, `assertions`, `seed`, `guard`.
+---@param ctx? Testing.Child.RunnerCtx
+---@return Testing.Child.RunnerResult
+function M.run(job, ctx)
+  ctx = ctx or {}
+  local inproc = require("testing.run.inproc")
+  local project = require("testing.run.project")
+
+  local entry = job.entry or {}
+  local rel = entry.rel
+  local selector, lf = build_selector(job)
 
   local prompts = ctx.prompts
   local noted = prompts and #prompts or 0

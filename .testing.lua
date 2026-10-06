@@ -28,7 +28,7 @@ return {
     process_net = "error",
   },
   -- What the specs of this repository start ON PURPOSE (their subject is the process driver): real child
-  -- editors (`nvim`), the process-tree kill of the driver (`taskkill`), `git` for the run header,
+  -- editors (`nvim`), the process-tree kill of the driver (`taskkill`, `powershell` for the Windows process table), `git` for the run header,
   -- `stylua` for the migrate writer and `bash` for the generated test script.
   guard_allow = {
     -- `does-not-exist*`: specs of the start-failure path start an executable that is not there
@@ -36,6 +36,7 @@ return {
       "nvim",
       "git",
       "taskkill",
+      "powershell",
       "stylua",
       "bash",
       "ps",

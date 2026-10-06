@@ -765,6 +765,20 @@ function M.finish()
         live
       )
     end
+    -- a patch of the guard layer that could not be put back: the file stubbed (or replaced) the very
+    -- function the guard had wrapped, on top of the wrapper, and never restored it
+    local uok, left = pcall(function()
+      local g = package.loaded["testing.guard"]
+      return g and g.take_unrestored and g.take_unrestored() or {}
+    end)
+    if uok then
+      for _, label in ipairs(left) do
+        answer.leaks[#answer.leaks + 1] = ("guard patch not restored: %s (%s replaced or wrapped it and did not put it back)"):format(
+          tostring(label),
+          tostring(rel or "the file")
+        )
+      end
+    end
     local sok, problems = pcall(M.structure)
     for _, p in ipairs(sok and problems or { "structure check failed: " .. tostring(problems) }) do
       answer.leaks[#answer.leaks + 1] = p

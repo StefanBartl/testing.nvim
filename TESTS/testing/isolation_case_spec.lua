@@ -96,10 +96,12 @@ end)
   )
 
   -- a child per case is exact
-  local calls = {}
+  local calls, lists = {}, {}
   local spy_child = setmetatable({
     build = function(spec)
-      calls[#calls + 1] = spec
+      -- the listing child (`kind = "list"`) is not a case child
+      local into = spec.kind == "list" and lists or calls
+      into[#into + 1] = spec
       return real_child.build(spec)
     end,
   }, { __index = real_child })
@@ -117,6 +119,7 @@ end)
     "one file, three cases"
   )
   eq(#calls, 3, "three children were started")
+  eq(#lists, 1, "and one throwaway child listed the cases of the file")
   for i, spec in ipairs(calls) do
     eq(spec.lf_ids, { ORDER_IDS[i] }, "child " .. i .. " is told to run exactly its case")
     eq(spec.entry.rel, "TESTS/a_order_spec.lua", "of the file")

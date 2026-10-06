@@ -52,8 +52,13 @@ only what it could not restore.
 
 ### `case`
 
-For busted files. The cases of a file are **listed** first in the runner's editor (the describe blocks
-run, no `it` body does, exactly like `--list`, under a silent restore); every listed id then gets a
+For busted files. The cases of a file are **listed** first in a **throwaway child** (the describe blocks
+run, no `it` body does, exactly like `--list`; `kind = "list"` of the child job): the top-level code of a
+spec therefore sees the same sanitized environment and sandbox as in every other child, writes and loops
+stay out of the runner, and a load-time hang is cut off by the file timeout (the file is then one `error`
+case). The listing child runs **without the guard layer** (no case window exists to judge); the process
+boundary is its protection. Selection (`--filter`, `--tags`, `--lf`) is applied in that child. Every
+listed id then gets a
 child that runs only that id. The describe blocks and hooks run again in each child, so a case sees
 exactly what the top of its file gives it, never what an earlier case left behind. The results are
 merged in listing order (= source order) whatever `--jobs` says, so the IR is the same for every

@@ -308,21 +308,46 @@ end
 ---Why a warm-pool member was thrown away after a file that ran fine (`finding.id = pool.discarded`).
 M.LEAK_REASON = "the reset left state behind"
 
----Most trace files kept in the trace directory (the oldest go first).
+---Most trace files kept in ONE run's trace directory (the oldest go first).
 M.KEEP_TRACES = 40
 
----The directory the trace artifacts of a run are written to: `<state>/testing-traces` (it survives the
----run, unlike the editor's own temp directory, so a CI job can upload it).
+---Run directories under the trace base are removed once their newest change is older than this
+---(seconds). A whole directory goes, never single files of a run that may still be going.
+M.KEEP_RUN_SECONDS = 7 * 24 * 3600
+
+---@type string|nil
+local run_id
+local trace_seq = 0
+
+---The id of this run: `<date>-<time>-<pid>`, fixed for the life of the editor. It names the
+---sub-directory the run's traces go to, so two runs (CI jobs, the fleet) never share a folder.
+---@return string
+function M.run_id()
+  if not run_id then
+    run_id = ("%s-%d"):format(os.date("!%Y%m%d-%H%M%S"), vim.fn.getpid())
+  end
+  return run_id
+end
+
+---The folder that holds one sub-directory per run: `<state>/testing-traces`.
+---@return string
+function M.trace_base()
+  return vim.fs.normalize(vim.fn.stdpath("state")) .. "/testing-traces"
+end
+
+---The directory the trace artifacts of THIS run are written to: `<state>/testing-traces/<run-id>/`
+---(it survives the run, unlike the editor's own temp directory, so a CI job can upload it). An
+---explicit `dir` is used as it is.
 ---@param dir? string
 ---@return string
 function M.trace_dir(dir)
   if dir and dir ~= "" then
     return (vim.fs.normalize(dir):gsub("/+$", ""))
   end
-  return vim.fs.normalize(vim.fn.stdpath("state")) .. "/testing-traces"
+  return M.trace_base() .. "/" .. M.run_id()
 end
 
----Remove the oldest files of the trace directory above `M.KEEP_TRACES`.
+---Remove the oldest files of one trace directory above `M.KEEP_TRACES`.
 ---@param dir string
 local function prune_traces(dir)
   local entries = {}
@@ -343,8 +368,39 @@ local function prune_traces(dir)
   end
 end
 
+---Remove whole run directories of the trace base whose newest change is older than
+---`M.KEEP_RUN_SECONDS`. Only directories named like a run id are touched, never this run's own, and
+---never anything younger: the artifacts of another run that is still going are safe.
+---@param base string
+---@param now? integer Seconds since the epoch (a spec passes its own).
+local function prune_runs(base, now)
+  now = now or os.time()
+  local mine = M.run_id()
+  for name, typ in vim.fs.dir(base) do
+    if
+      typ == "directory"
+      and name ~= mine
+      and name:match("^%d%d%d%d%d%d%d%d%-%d%d%d%d%d%d%-%d+$")
+    then
+      local st = vim.uv.fs_stat(base .. "/" .. name)
+      local newest = st and st.mtime.sec or 0
+      for fname in vim.fs.dir(base .. "/" .. name) do
+        local fst = vim.uv.fs_stat(base .. "/" .. name .. "/" .. fname)
+        if fst and fst.mtime.sec > newest then
+          newest = fst.mtime.sec
+        end
+      end
+      if now - newest > M.KEEP_RUN_SECONDS then
+        pcall(vim.fn.delete, base .. "/" .. name, "rf")
+      end
+    end
+  end
+end
+M._prune_runs = prune_runs
+
 ---@class Testing.Isolated.TraceInput
----@field dir? string Trace directory (default `M.trace_dir()`).
+---@field dir? string Trace directory (default `M.trace_dir()`: this run's folder below `M.trace_base()`).
+---@field base? string Folder with one sub-directory per run (default `M.trace_base()`; a spec's seam).
 ---@field root string Project root.
 ---@field rel string The spec file the child ran.
 ---@field reason string `timeout` | `crash`
@@ -367,6 +423,9 @@ function M.write_trace(input)
   end
   tr:event("end", input.describe)
   local dir = M.trace_dir(input.dir)
+  if input.base and (not input.dir or input.dir == "") then
+    dir = input.base .. "/" .. M.run_id()
+  end
   local stem = input.rel:gsub("[^%w_%-]", "_")
   local h = input.h
   local snap = tr:snapshot({
@@ -382,12 +441,16 @@ function M.write_trace(input)
     },
     stderr = input.err,
   })
-  local path = ("%s/%s-%d.trace.json"):format(dir, stem, h.pid or 0)
+  trace_seq = trace_seq + 1
+  local path = ("%s/%s-%d-%d.trace.json"):format(dir, stem, h.pid or 0, trace_seq)
   local artifact, err = trace_mod.write(snap, { path = path, root = input.root })
   if not artifact then
     error(err, 0)
   end
   pcall(prune_traces, dir)
+  if not input.dir or input.dir == "" then
+    pcall(prune_runs, input.base or M.trace_base())
+  end
   return artifact
 end
 
@@ -1379,45 +1442,100 @@ function M.run(opts)
   }
 end
 
----The case ids of a busted file, for `isolated = "case"`: the describe blocks run in THIS editor (no
----`it` body does; the same walk as `--list`) under a silent soft-isolation restore, so that what a
----describe block does at load time does not stay behind in the runner. Selection (`--filter`, `--tags`,
----`--lf`) is applied here: only accepted ids get a child.
+---The case ids of a busted file, for `isolated = "case"`: the describe blocks run in a THROWAWAY
+---child (`kind = "list"`: no `it` body runs, the same walk as `--list`), with the sanitized
+---environment, the sandbox and the file timeout of every other child, so what a spec does at load
+---time (reads a secret from the environment, writes outside the sandbox, loops) neither sees the
+---runner's environment nor stays behind in the runner. Selection (`--filter`, `--tags`, `--lf`) is
+---applied in that child: only accepted ids get a case child. The guard layer is NOT installed for
+---the listing (no case window exists); the process boundary is the protection.
 ---@param opts Testing.Isolated.Opts
 ---@param o Testing.Run.Options
 ---@param root string
 ---@param entry Testing.Inproc.Entry
 ---@param accept fun(id: string): boolean
----@param selector Testing.Select.Selector
+---@param _selector Testing.Select.Selector (unused: the child builds its own from `opts.selector_spec`)
 ---@param timeouts Testing.Child.Timeouts
 ---@param lf_ids table<string, true>|nil
 ---@return string[]|nil ids Nil with an `err` when the file cannot be listed.
 ---@return string|nil err
-function M.list_case_ids(opts, o, root, entry, accept, selector, timeouts, lf_ids)
+function M.list_case_ids(opts, o, root, entry, accept, _selector, timeouts, lf_ids)
   if opts.list_cases then
     return opts.list_cases(entry, accept)
   end
-  local session = require("testing.isolation").new({ keep = o.soft_keep })
-  local frame = session:enter(entry.rel)
-  local ok, items = pcall(inproc.list, {
+  local child = opts.child or require("testing.child")
+  local lf_list
+  if lf_ids then
+    lf_list = vim.tbl_keys(lf_ids)
+    table.sort(lf_list)
+  end
+  local plan = child.build({
+    entry = serializable(entry),
     root = root,
-    files = {
-      entry --[[@as Testing.Discover.File]],
-    },
-    selector = selector,
-    lf = lf_ids and { [entry.rel] = lf_ids } or nil,
+    kind = "list",
+    minit = opts.minit,
+    host = options_mod.host_of(o, entry),
+    rtp_prepend = opts.rtp_prepend,
+    rtp = opts.rtp,
+    filetype = o.filetype,
+    disable_first_run = o.disable_first_run,
+    selector = opts.selector_spec,
+    lf_ids = lf_list,
     timeouts = timeouts,
+    seed = opts.seed,
+    env_allow = o.env_allow,
+    extra_env = opts.child_env,
+    nvim = opts.nvim,
+    base = opts.sandbox_base,
+    deterministic = o.determinism,
+    trace = false,
   })
-  session:leave(frame)
-  if not ok then
-    return nil, tostring(items)
+  local pok, perr = child.prepare(plan)
+  if not pok then
+    child.cleanup(plan)
+    return nil, tostring(perr)
+  end
+  local done = false
+  local handle, serr = child.spawn(plan, function()
+    done = true
+  end)
+  if not handle then
+    child.cleanup(plan)
+    return nil, tostring(serr)
+  end
+  local limit = (timeouts.file_ms or 60000) + (opts.grace_ms or M.GRACE_MS)
+  if not vim.wait(limit, function()
+    return done
+  end, 10) then
+    child.kill_tree(handle)
+    -- the process tree is going down; a stubborn process must not keep the run waiting
+    if not vim.wait(M.GRACE_MS, function()
+      return done
+    end, 10) then
+      child.abandon(handle)
+    end
+    child.cleanup(plan)
+    return nil, ("listing the cases timed out after %d ms"):format(limit)
+  end
+  local frag = require("testing.child.fragment").read(plan.fragment)
+  local exit = handle.exit or {}
+  local text = child.text(handle.out)
+  child.cleanup(plan)
+  if not frag.list then
+    return nil,
+      ("the listing child produced no list (%s)%s"):format(
+        child.describe_exit(exit),
+        text ~= "" and (": " .. tail(text, 400)) or ""
+      )
   end
   local ids = {}
-  for _, item in ipairs(items) do
-    if item.note then
-      return nil, item.note
+  for _, item in ipairs(frag.list) do
+    if type(item) == "table" then
+      if item.note then
+        return nil, tostring(item.note)
+      end
+      ids[#ids + 1] = item.id
     end
-    ids[#ids + 1] = item.id
   end
   return ids, nil
 end

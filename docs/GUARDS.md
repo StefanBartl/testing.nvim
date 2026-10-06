@@ -230,9 +230,13 @@ in guards.process_net.allow_exec)`. Mode `warn` lets everything through and only
 (`vim.system` calls `uv.spawn`, `vim.net.request` calls `vim.system`: a re-entrancy guard folds
 them). A command given as a **shell string** is judged by its first word only.
 
-Redaction (SEC-10 / SEC-22): `--token abc`, `--password=...`, `Authorization: Bearer ...`,
-URL user info and secret query keys, GitHub / OpenAI-style / AWS tokens never reach the ledger or a
-finding; the program is shown by file name, so the ledger reads the same on every machine.
+Redaction (SEC-10 / SEC-22): `--token abc`, `--password=...`, `Authorization: <scheme> ...`, `Cookie:` /
+`X-*-Token` / `X-*-Key` headers, URL user info and secret query keys (`?key=`, `&sig=`), JSON members
+(`"password": "..."`), the credential flags of `curl` (`-u`, `--user`, `-b`, `--cookie`), `sshpass -p`,
+`docker login -p`, `mysql -pSECRET`, and token shapes (GitHub, Slack, JWT, OpenAI-style, AWS) never reach
+the ledger or a finding; the program is shown by file name, so the ledger reads the same on every
+machine. This is **best effort**: a secret in a position no rule knows (a bare positional password of an
+unknown tool) is not recognized, and the rules err towards masking.
 
 ### clock (opt-in)
 
@@ -322,7 +326,17 @@ itself at the next idle moment).
   the next file would wrap the wrappers). The in-process driver uninstalls the layer it installed on
   every path out, also when its own report code raises.
 * Run `uninstall` before the editor is reused for anything else; check its result for patches
-  something else wrapped over.
+  something else wrapped over. The guards come down in the reverse install order; a teardown that
+  raises is named in the result (`the <guard> guard failed to uninstall: ...`), never swallowed, and a
+  slot that cannot be written back does not keep the others installed. `guard.take_unrestored()` returns
+  (and forgets) every label no uninstall could put back: a warm pool member asks it after each file, and a
+  spec that stubbed `io.open` or `vim.system` on top of a guard's wrapper without restoring it discards
+  the member with `guard patch not restored: <slot> (<file> ...)`.
+* The fs guard lets exactly the Windows null device through (`nul`, `//./nul`, `\\.\nul`, only on
+  Windows); a file named `nul` anywhere else is judged like any other write.
+* The snapshot at the start of a busted case runs with the deadlines of the in-process timeout guard
+  suspended, so a case deadline of the spec never cuts it off (`guard state: snapshot failed:
+  testing: timeout`); its time is not charged to the case.
 
 ## Allowlist proposals from the fleet runs
 

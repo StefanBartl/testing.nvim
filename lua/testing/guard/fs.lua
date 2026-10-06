@@ -177,8 +177,23 @@ function G:is_allowed(k)
       return true
     end
   end
-  local base = k:match("([^/]+)$")
-  return base == "nul"
+  return false
+end
+
+---Is `path` the Windows null device (`nul`, `//./nul`, `\\.\nul`)? Exactly that, and only on Windows: a file called
+---`nul` anywhere else (`/home/u/nul`, `C:/proj/nul`) is an ordinary file and judged like any other.
+---@param path any
+---@param is_win? boolean Default: this editor runs on Windows.
+---@return boolean
+function M.is_null_device(path, is_win)
+  if is_win == nil then
+    is_win = IS_WIN
+  end
+  if not is_win or type(path) ~= "string" then
+    return false
+  end
+  local low = path:lower()
+  return low == "nul" or low == "\\\\.\\nul" or low == "//./nul"
 end
 
 ---Judge one write attempt on `path`.
@@ -197,7 +212,7 @@ function G:note(op, path)
   local entry = self.cache[ckey]
   if entry == nil then
     local k, shown = resolve(path)
-    entry = { k = k, shown = shown, ok = k == nil or self:is_allowed(k) }
+    entry = { k = k, shown = shown, ok = k == nil or M.is_null_device(path) or self:is_allowed(k) }
     self.cache[ckey] = entry
   end
   if entry.ok then

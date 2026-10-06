@@ -363,9 +363,10 @@ end
     local handle = assert(childmod.spawn(plan, function()
       fired = fired + 1
     end))
+    -- abandoned while the process is still there (the Windows kill is synchronous and would end it first)
+    childmod.abandon(handle)
+    childmod.abandon(handle)
     childmod.kill_tree(handle)
-    childmod.abandon(handle)
-    childmod.abandon(handle)
     vim.wait(500, function()
       return fired > 0
     end, 10)

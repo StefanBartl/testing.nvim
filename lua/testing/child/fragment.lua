@@ -53,6 +53,7 @@ end
 ---@field cases Testing.Result.Case[] The final cases, in file order.
 ---@field progress Testing.Result.Case[] The cases streamed while the file ran, in file order.
 ---@field done? table The `done` record, nil when the child never got that far.
+---@field list? table[] The `list` record of a listing child (`kind = "list"`): the `Testing.Inproc.ListItem`s.
 ---@field bad_lines integer Lines that were not valid JSON records (a torn last line counts).
 ---@field missing boolean The file does not exist.
 
@@ -89,6 +90,8 @@ function M.read(path)
       frag.progress[#frag.progress + 1] = rec.case
     elseif rec.k == "done" then
       frag.done = rec
+    elseif rec.k == "list" and type(rec.items) == "table" then
+      frag.list = rec.items
     else
       frag.bad_lines = frag.bad_lines + 1
     end

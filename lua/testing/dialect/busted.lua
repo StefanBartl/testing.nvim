@@ -175,8 +175,19 @@ function M.run_file(a, spec, opts)
     return names
   end
 
+  local function is_timeout(message)
+    return require("testing.run.timeout").is_timeout(message)
+  end
+  -- A real case already carries the run's timeout: the persistent timeout error of the deadline also
+  -- fires in the rest of the describe body, and that second hit must not become a second timeout case
+  -- ("one hung file, two timeouts").
+  local timed_out = false
+
   ---@param case Testing.Result.Case
   local function emit(case)
+    if case.error and is_timeout(case.error.message) then
+      timed_out = true
+    end
     cases[#cases + 1] = case
     if opts.on_case then
       opts.on_case(case)
@@ -187,9 +198,12 @@ function M.run_file(a, spec, opts)
   ---@param name string
   ---@param err any
   local function error_case(name, err)
+    local message, traceback = describe_error(err)
+    if timed_out and is_timeout(message) then
+      return
+    end
     a.begin_case({ file = rel, describe = path_names(), name = name })
     local case = a.current() --[[@as Testing.Result.Case]]
-    local message, traceback = describe_error(err)
     case.status = "error"
     case.error = { message = message, traceback = traceback }
     emit(a.end_case())

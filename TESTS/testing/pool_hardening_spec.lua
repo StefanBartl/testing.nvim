@@ -206,5 +206,35 @@ end
     eq(rep.pool.spawned, 1, "one member for both files")
   end
 
+  -- 7. a stub layered on top of a function the guard layer wrapped (`io.open`, `vim.system`) and never
+  -- put back: the guard cannot undo its wrapper, the member is not clean, and the finding names the
+  -- slot and the file
+  do
+    local rep = run({
+      [A] = [==[
+return function(H)
+  local wrapped = io.open
+  rawset(io, "open", function(...) return wrapped(...) end)
+  H.ok(true, "a stubs io.open on top of the guard's wrapper")
+end
+]==],
+      [B] = "return function(H) H.ok(io.open ~= nil, 'b') end",
+    }, { A, B })
+    eq(S.statuses(rep), { A .. ":pass", B .. ":pass" }, "both pass")
+    eq(
+      rep.pool.discarded,
+      1,
+      "the member whose io.open is a stub on top of the wrapper is discarded"
+    )
+    local found = findings(rep, "pool")
+    ok(#found >= 1, "a finding says why")
+    has(
+      found[1].message,
+      "guard patch not restored: io.open",
+      "it names the slot the guard could not undo"
+    )
+    has(found[1].message, A, "and the file")
+  end
+
   S.cleanup()
 end

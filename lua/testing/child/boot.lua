@@ -6,8 +6,10 @@
 --- `$TESTING_CHILD_JOB`, so no user text is ever part of a command line (SEC-34/35). The job is a JSON
 --- table written by the parent:
 ---
----   kind        "cases" (a dialect runs the file, one record per case) or "script" (the file is a
----               self-running script: it is `dofile`d, its own `os.exit` or error is the verdict)
+---   kind        "cases" (a dialect runs the file, one record per case), "script" (the file is a
+---               self-running script: it is `dofile`d, its own `os.exit` or error is the verdict) or
+---               "list" (the describe bodies run and the case ids are written as ONE `list` record:
+---               what `isolated = "case"` needs, in a throwaway editor and not in the runner's)
 ---   entry       the discovered file (`path`, `rel`, `dialect`, `harness`, ...)
 ---   root        project root (also the working directory)
 ---   rtp_prepend / rtp   directories for the runtimepath (this checkout and lib.nvim first)
@@ -123,14 +125,19 @@ if job.kind == "script" then
   finish(0)
 end
 
--- kind == "cases"
+-- kind == "list" (the cases of a file for `isolated = "case"`) or "cases"
 local okm, runner = pcall(require, "testing.child.runner")
 if not okm then
   finish(3, "cannot load testing.child.runner: " .. tostring(runner))
   return
 end
 
-local ran = runner.run(job, { prompts = prompts })
+local ran
+if job.kind == "list" then
+  ran = runner.list(job)
+else
+  ran = runner.run(job, { prompts = prompts })
+end
 if not ran.ok then
   finish(3, ran.err)
 end

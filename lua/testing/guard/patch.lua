@@ -55,24 +55,33 @@ function Patcher:count()
   return #self.stack
 end
 
----Undo every patch, newest first. Idempotent.
+---Undo every patch, newest first. Idempotent. A slot that cannot be put back (somebody replaced our
+---wrapper, or the write itself raised) is named in `unrestored`; it never stops the others.
 ---@return string[] unrestored
 function Patcher:restore()
   for i = #self.stack, 1, -1 do
     local p = self.stack[i]
+    self.stack[i] = nil
     local cur_ok, cur = pcall(function()
       return p.tbl[p.key]
     end)
     if cur_ok and cur == p.wrapper then
-      if p.raw then
-        p.tbl[p.key] = p.orig
-      else
-        p.tbl[p.key] = nil
+      local wok, werr = pcall(function()
+        if p.raw then
+          p.tbl[p.key] = p.orig
+        else
+          p.tbl[p.key] = nil
+        end
+      end)
+      if not wok then
+        self.unrestored[#self.unrestored + 1] = ("%s (cannot be written back: %s)"):format(
+          p.label,
+          tostring(werr)
+        )
       end
     else
       self.unrestored[#self.unrestored + 1] = p.label
     end
-    self.stack[i] = nil
   end
   return self.unrestored
 end
