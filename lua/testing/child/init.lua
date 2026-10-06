@@ -73,6 +73,7 @@ M.HOST_C_COMMAND =
 ---@field rtp_prepend? string[] Directories put first on the child's runtimepath.
 ---@field rtp? string[] Directories appended to the child's runtimepath.
 ---@field filetype? boolean `filetype plugin indent on` (default true).
+---@field disable_first_run? boolean Set lib.nvim's first-run opt-out in the child before `minit` (default true).
 ---@field minit? string Absolute path of the project's minimal init, run in the child before the spec.
 ---@field assertions? "error"|"warn" What a case without assertions is (`testing.policy`).
 ---@field selector? { filter?: string[], tags?: string[], exclude_tags?: string[] }
@@ -169,6 +170,7 @@ function M.build(spec)
     rtp = spec.rtp or {},
     filetype = spec.filetype ~= false,
     minit = spec.minit,
+    disable_first_run = spec.disable_first_run ~= false,
     assertions = spec.assertions,
     fragment = fragment,
     selector = spec.selector or {},

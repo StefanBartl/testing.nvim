@@ -178,12 +178,19 @@ end
 ---@return string
 local function tests_text(root)
   local parts, total = {}, 0
+  -- `TESTS/run.lua` is the old runner: it goes away with the migration, so what it reads (the old
+  -- `LIB_NVIM_PATH` override, ...) must not be carried over into `.testing.lua`
   local dir = root .. "/TESTS"
   if not is_dir(dir) then
     return ""
   end
   for name, kind in vim.fs.dir(dir, { depth = 6 }) do
-    if kind == "file" and name:match("%.lua$") and total < 4 * 1024 * 1024 then
+    if
+      kind == "file"
+      and name:match("%.lua$")
+      and name ~= "run.lua"
+      and total < 4 * 1024 * 1024
+    then
       local src = text.read(dir .. "/" .. name)
       if src and #src <= 300 * 1024 then
         parts[#parts + 1] = src
@@ -212,6 +219,36 @@ local function strip_comments(src, marker)
     out[#out + 1] = line
   end
   return table.concat(out, "\n")
+end
+
+---@class Testing.Migrate.OrderHazard
+---@field differs boolean The list of `TESTS/run.lua` is not the order discovery gives without it.
+---@field first? string Spec that run.lua puts first although discovery orders it later.
+---@field second? string The spec it is run before.
+
+---Does the spec list of the old runner (`TESTS/run.lua`) order the files differently from discovery (alphabetical
+---per root)? Only then does deleting run.lua change the order the specs run in. A probe run in the other order
+---would need the specs to run (the planner is read-only and cheap), so this is a text-level hint.
+---@param listed string[] Names run.lua lists, in its order (`name_spec.lua`, relative to TESTS/).
+---@param files { rel: string }[] Discovered files in discovery order.
+---@return Testing.Migrate.OrderHazard
+function M.order_hazard(listed, files)
+  local pos = {}
+  for i, f in ipairs(files) do
+    pos[f.rel] = i
+  end
+  local prev_rel, prev_pos
+  for _, name in ipairs(listed or {}) do
+    local rel = "TESTS/" .. name
+    local p = pos[rel]
+    if p then
+      if prev_pos and p < prev_pos then
+        return { differs = true, first = prev_rel, second = rel }
+      end
+      prev_rel, prev_pos = rel, p
+    end
+  end
+  return { differs = false }
 end
 
 ---Environment variables the specs read and the child editors would not inherit (the allowlist of
@@ -635,6 +672,15 @@ function M.analyze(root, opts)
       ),
     fail_convention = harness_text ~= nil and harness_text:find("FAIL", 1, true) ~= nil,
   }
+  report.order = M.order_hazard(report.harness.listed, disc.files)
+  if report.order.differs then
+    risk(
+      ('TESTS/run.lua lists the specs in another order than alphabetical discovery would (%s runs before %s there): deleting run.lua makes the order alphabetical, and a repository whose specs depend on the order (shared state, a spec that must run last) then breaks silently under `isolated = "none"`; check by renaming run.lua once and running the specs, then keep run.lua or set `isolated = "file"` (one fresh process per spec file)'):format(
+        text.show(report.order.first, 60),
+        text.show(report.order.second, 60)
+      )
+    )
+  end
   if report.harness.collects_failures then
     risk(
       "TESTS/harness.lua collects failures itself (no `FAIL` error convention): a runner that only looks at raised errors can report green while the harness printed failures; verify the verdict against the old runner"

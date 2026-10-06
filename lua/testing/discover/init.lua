@@ -77,6 +77,8 @@ M.NEVER_SPECS = { ["harness.lua"] = true, ["run.lua"] = true, ["minimal_init.lua
 ---@field scan_lua_dir? boolean Look for busted-style `*_spec.lua` below `lua/` (default true).
 ---@field dialect? string|table<string, string> `"auto"`, one dialect name, or a map relative path or glob -> name (`*` = fallback).
 ---@field spec_pattern? string[] Lua patterns (against the relative path) that make a file a spec; default `M.DEFAULT_SPEC_PATTERN`.
+---@field case_insensitive? boolean Is the file system below the root case-insensitive? Default: probed (`M.is_case_insensitive`). Seam for specs.
+---@field realpath? fun(path: string): string|nil Seam for specs (default `vim.uv.fs_realpath`).
 
 ---@class Testing.Discover.File
 ---@field path string Absolute path, forward slashes.
@@ -491,6 +493,35 @@ local function spec_patterns_of(opts)
   return M.DEFAULT_SPEC_PATTERN
 end
 
+---Is the file system that holds `dir` case-insensitive? Probe: the same directory under a swapped-case spelling of
+---its last segment exists and is the very same directory (equal device and inode where the file system reports
+---them). Two directories that differ only in case (a case-sensitive file system) are different inodes, so they are
+---never merged. Nothing is ever lowercased blindly: the answer only decides whether paths are COMPARED case-folded.
+---@param dir string Existing directory.
+---@return boolean
+function M.is_case_insensitive(dir)
+  dir = slashes(dir):gsub("/+$", "")
+  local parent, base = dir:match("^(.*)/([^/]+)$")
+  if not base then
+    return false
+  end
+  local swapped = base:gsub("%a", function(c)
+    local lower = c:lower()
+    return c == lower and c:upper() or lower
+  end)
+  if swapped == base then
+    return false
+  end
+  local a, b = uv.fs_stat(dir), uv.fs_stat(parent .. "/" .. swapped)
+  if not (a and b) then
+    return false
+  end
+  if (a.ino or 0) ~= 0 and (b.ino or 0) ~= 0 and (a.ino ~= b.ino or a.dev ~= b.dev) then
+    return false
+  end
+  return true
+end
+
 -- =========================================================
 -- discover
 -- =========================================================
@@ -510,6 +541,18 @@ function M.discover(root, opts)
   local include_legacy = opts.include_legacy ~= false
   local override_for = override_resolver(opts)
   local patterns = spec_patterns_of(opts)
+  -- `TESTS/` and `tests/` are ONE directory on a case-insensitive file system (Windows, macOS, WSL /mnt/*:
+  -- `fs_realpath` there keeps the spelling it was given): compare real paths case-folded, and only then
+  local realpath = opts.realpath or uv.fs_realpath
+  local ci = opts.case_insensitive
+  if ci == nil then
+    ci = M.is_case_insensitive(root)
+  end
+  ---@param p string
+  ---@return string
+  local function fold(p)
+    return ci and p:lower() or p
+  end
   local root_set = {}
   for _, r in ipairs(roots) do
     root_set[slashes(r):gsub("/+$", ""):lower()] = true
@@ -569,7 +612,7 @@ function M.discover(root, opts)
   ---@return integer count
   local function add_dir(dir_rel, origin)
     local dir = root .. "/" .. dir_rel
-    local real = uv.fs_realpath(dir) or dir
+    local real = fold(realpath(dir) or dir)
     if seen_dir[real] then
       return 0
     end
@@ -612,8 +655,8 @@ function M.discover(root, opts)
       path = slashes(path)
       -- the same file under two spellings (`tests/` is `TESTS/` on a case-insensitive file system, a root
       -- `TESTS/sandbox` lies below the legacy `tests/`): the directory is compared by its real path
-      local dir_key = uv.fs_realpath(vim.fs.dirname(path)) or vim.fs.dirname(path)
-      local key = slashes(dir_key) .. "/" .. vim.fs.basename(path)
+      local dir_key = realpath(vim.fs.dirname(path)) or vim.fs.dirname(path)
+      local key = fold(slashes(dir_key) .. "/" .. vim.fs.basename(path))
       if not seen_path[key] then
         seen_path[key] = true
         local rel = rel_of(root, path)

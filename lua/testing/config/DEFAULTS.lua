@@ -38,6 +38,11 @@ local DEFAULTS = {
     host = "c",
     -- The host runs `filetype plugin indent on` (plenary's minimal init does).
     filetype = true,
+    -- Test-environment default: set `vim.g.lib_nvim_deps_disable_first_run = true` in every editor the
+    -- runner starts (child and in-process) before the project's `minit`, so lib.nvim's one-time
+    -- "missing tools" float (empty stdpath('cache')) cannot open windows/buffers inside a spec.
+    -- false = leave the variable alone.
+    disable_first_run = true,
     -- Environment names (or `PREFIX*`) a child may inherit on top of the built-in allowlist
     -- (`testing.child.env`): REPOS_DIR, MAGICK_*, ... A name starting with NVIM is never passed on.
     env_allow = {},

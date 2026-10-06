@@ -62,6 +62,7 @@
 ---@field specs Testing.Migrate.Specs
 ---@field findings Testing.Migrate.Finding[]
 ---@field harness Testing.Migrate.Harness
+---@field order Testing.Migrate.OrderHazard Does deleting `TESTS/run.lua` change the order the specs run in?
 ---@field dot_testing boolean `.testing.lua` exists.
 ---@field test_sh { exists: boolean, migrated: boolean, plenary: boolean }
 ---@field minimal_init { exists: boolean, plenary_lines: Testing.Migrate.PlenaryLine[] }

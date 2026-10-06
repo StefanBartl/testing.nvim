@@ -112,6 +112,7 @@ end
 ---@field active boolean False once the file ended: late calls pass straight through.
 ---@field in_assert integer Nesting of known assertion helpers (an assertion inside one is not recorded twice).
 ---@field depth integer Nesting of wrapped calls.
+---@field recorded integer Assertions recorded so far (passed or failed): a helper that wraps a callback is told apart from an assertion by it.
 ---@field base table<string, integer> Length of every collected list when the file started.
 ---@field attributed table<string, integer> Failures per list that the adapter recorded itself.
 ---@field base_fail integer Failure counters when the file started.
@@ -209,6 +210,7 @@ local function record(state, kind, ok, msg, file, line)
   end
   case.assertions[#case.assertions + 1] =
     { ok = ok, kind = kind, msg = msg, file = file, line = line }
+  state.recorded = state.recorded + 1
 end
 
 ---Text of an error without its `file:line:` prefix, and that position.
@@ -270,6 +272,7 @@ local function wrap(state, key, original)
     state.depth = state.depth + 1
     local printed_from = state.capture and #state.capture.lines or 0
     local pass_before = pass_counter_sum(state)
+    local recorded_before = state.recorded
     local fail_before = fail_counter_sum(state)
     local lists_before = {}
     for _, name in ipairs(resolved.lists) do
@@ -325,7 +328,11 @@ local function wrap(state, key, original)
           record(state, key, true, nil, file, line)
         end
       elseif entered_in_assert == 0 then
-        local counted = pass_counter_sum(state) > pass_before
+        -- the project's counter grew by more than the assertions recorded INSIDE this call: the helper is an
+        -- assertion itself. A helper that only runs a callback (`H.notifications(fn)`, `H.notices(fn)`) raises
+        -- the counter through the callback's own assertions, which are recorded one by one: counting the
+        -- helper too would double them (and learning it as an assertion would collapse them next time)
+        local counted = pass_counter_sum(state) - pass_before > state.recorded - recorded_before
         if counted then
           state.assertions[key] = true
         end
@@ -377,6 +384,7 @@ function M.new(a, harness, assertions, opts)
     active = true,
     in_assert = 0,
     depth = 0,
+    recorded = 0,
     base = {},
     attributed = {},
     base_fail = 0,

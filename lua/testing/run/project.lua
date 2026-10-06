@@ -305,7 +305,6 @@ end
 ---@param sv Testing.Run.Services
 ---@return integer exit_code
 function M.execute(plan, sv)
-  local out = sv.out
   local raw_err = sv.err
   -- every diagnostic line passes `util.clean`, one physical line at a time
   local function err(s)
@@ -313,13 +312,31 @@ function M.execute(plan, sv)
       raw_err(safe(line))
     end
   end
+  local options_mod = require("testing.run.options")
+  local run_opts = options_mod.of(plan)
+
+  -- the test-environment defaults go in before the minit and come out again on every exit path
+  local restore_first_run = options_mod.apply_first_run_default(run_opts.disable_first_run)
+  local ok, code = pcall(M.execute_run, plan, sv, run_opts, err)
+  restore_first_run()
+  if not ok then
+    error(code, 0)
+  end
+  return code
+end
+
+---The body of `M.execute`, split off so the editor's globals are restored on every exit path.
+---@param plan Testing.Cli.RunPlan
+---@param sv Testing.Run.Services
+---@param run_opts Testing.Run.Options
+---@param err fun(s: string)
+---@return integer exit_code
+function M.execute_run(plan, sv, run_opts, err)
+  local out = sv.out
   local args, root, cfg = plan.args, plan.root, plan.project
   local inproc = sv.inproc or require("testing.run.inproc")
   local select_mod = require("testing.run.select")
   local options_mod = require("testing.run.options")
-  local run_opts = options_mod.of(plan)
-
-  -- 1. minit
   local mok, merr = run_minit(root, cfg)
   if not mok then
     err("testing: " .. tostring(merr))

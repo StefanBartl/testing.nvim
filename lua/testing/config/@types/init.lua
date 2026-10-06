@@ -56,6 +56,7 @@
 ---@field jobs integer >= 1. Parallel child processes of an isolated run.
 ---@field host "c"|"l" Child host: `c` = started like plenary's (`--cmd`/`-c`), `l` = `nvim -l`.
 ---@field filetype boolean The host runs `filetype plugin indent on`.
+---@field disable_first_run boolean Set lib.nvim's first-run opt-out in every editor the runner starts, before `minit`.
 ---@field env_allow string[] Extra environment names (or `PREFIX*`) a child editor may inherit.
 ---@field minit string|false
 ---@field deps string[] Directory names, resolved by `testing.deps`.

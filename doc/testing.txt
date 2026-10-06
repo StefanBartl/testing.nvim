@@ -215,6 +215,10 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
   jobs         integer      Child editors at once. Default 1.
   host         string       "c" (default) or "l".
   filetype     boolean      Children run `filetype plugin indent on`.
+  disable_first_run boolean Set lib.nvim's first-run opt-out
+                            (vim.g.lib_nvim_deps_disable_first_run) in every
+                            editor the runner starts, before `minit`. Default
+                            true.
   env_allow    string[]     Environment names a child may inherit on top of
                             the allowlist (never NVIM*, never a bare "*").
   minit        false|string Minimal init, run before the specs.

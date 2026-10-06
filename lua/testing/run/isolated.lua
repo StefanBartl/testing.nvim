@@ -438,6 +438,7 @@ function M.run(opts)
       rtp_prepend = opts.rtp_prepend,
       rtp = opts.rtp,
       filetype = o.filetype,
+      disable_first_run = o.disable_first_run,
       selector = opts.selector_spec,
       lf_ids = slot.lf_ids,
       timeouts = timeouts,

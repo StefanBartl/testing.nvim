@@ -48,6 +48,7 @@ own state stays one coherent object. The rule is **never greener than the projec
 * An error that reads `[file:line: ]FAIL ...` is a failed assertion: it is recorded and the call
   returns `false`. Functions whose body mentions `FAIL` are assertions and count as passes when they
   return.
+* A helper that only **runs a callback** (`H.notifications(fn)`, `H.notices(fn)`) is not an assertion even though the assertions inside the callback raise the project's counter (`H.checks`): the callback's assertions are recorded one by one, the helper is counted only when the counter grew by more than the assertions recorded inside the call. The IR therefore follows the project's counter (fileops 52 of 52, emojis 929 of 929).
 * A collector (`H.check(name, fn)`: it catches the callback's error itself and appends to
   `H.failures`) is recorded as one assertion, failed when the harness collected a failure.
 * After the file ran, what the harness recorded and the adapter did not see is added as failures:

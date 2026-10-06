@@ -121,7 +121,14 @@ verdict.
 
 If the project still has a `TESTS/run.lua` (the old runner of the fleet), its spec list sets the
 order of those files and the last line it prints is the default sentinel. A spec listed there but
-missing on disk is a failing case. The file is never executed.
+missing on disk is a failing case. The file is never executed. Without `run.lua` the order is the
+discovery order (sorted by relative path): a project whose specs depend on the order of that list
+needs it kept, or `isolated = "file"`; `testing migrate` warns when the list is not alphabetical.
+
+Discovery compares directories by their real path, **case-folded on a case-insensitive file system**
+(detected by a probe: the same directory under a swapped-case spelling is the same inode), so `TESTS/`
+and `tests/` are one directory there (Windows, macOS, WSL `/mnt/*`) and a spec is never listed twice.
+On a case-sensitive file system nothing is folded.
 
 ## Environment
 

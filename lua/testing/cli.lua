@@ -103,11 +103,12 @@ local function doctor(plan, loaded, say)
 
   local run_opts = require("testing.run.options").of(plan)
   say(
-    ("child editors: isolated=%s jobs=%d host=%s filetype=%s env_allow=%s"):format(
+    ("child editors: isolated=%s jobs=%d host=%s filetype=%s disable_first_run=%s env_allow=%s"):format(
       run_opts.isolated,
       run_opts.jobs,
       run_opts.host,
       tostring(run_opts.filetype),
+      tostring(run_opts.disable_first_run),
       #run_opts.env_allow > 0 and table.concat(run_opts.env_allow, ",") or "-"
     )
   )

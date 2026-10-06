@@ -310,7 +310,7 @@ return function(H)
   local doc = go({ "doctor", root, "--jobs", "7", "--env-allow", "MY_X" })
   has(
     doc.out,
-    "child editors: isolated=file jobs=7 host=l filetype=false env_allow=MY_X",
+    "child editors: isolated=file jobs=7 host=l filetype=false disable_first_run=true env_allow=MY_X",
     "doctor names the effective child settings"
   )
 

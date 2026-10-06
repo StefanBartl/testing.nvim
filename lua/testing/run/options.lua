@@ -13,6 +13,9 @@
 ---   jobs          integer >= 1      `--jobs`; `jobs`. Children running at once (default 1).
 ---   host          "c" | "l"         `--host`; `host`. Default "c" (plenary-like `-c` startup).
 ---   filetype      boolean           `filetype`. `filetype plugin indent on` in the child (default true).
+---   disable_first_run boolean       `disable_first_run` (default true). Every editor the runner starts gets
+---                                   `vim.g.lib_nvim_deps_disable_first_run = true` before the project's
+---                                   minit (`M.apply_first_run_default`).
 ---   assertions    "error" | "warn"  `assertions`. "warn": a case that asserts nothing passes with a
 ---                                   recorded warning instead of failing (migration of old repos).
 ---   env_allow     string[]          `env_allow` + `--env-allow`: extra environment names a child may
@@ -30,6 +33,7 @@ local M = {}
 ---@field host "c"|"l"
 ---@field host_given boolean `--host` was passed (a `script` file otherwise prefers host `l`).
 ---@field filetype boolean
+---@field disable_first_run boolean
 ---@field assertions "error"|"warn"
 ---@field env_allow string[]
 
@@ -66,9 +70,29 @@ function M.of(plan)
     host = (one_of(args.host or cfg.host, { "c", "l" }) or "c") --[[@as "c"|"l"]],
     host_given = args.host ~= nil,
     filetype = cfg.filetype ~= false,
+    disable_first_run = cfg.disable_first_run ~= false,
     assertions = (one_of(cfg.assertions, { "error", "warn" }) or "error") --[[@as "error"|"warn"]],
     env_allow = allow,
   }
+end
+
+---Name of the lib.nvim global that suppresses the one-time "missing tools" float
+---(`lib.nvim.deps.first_run`, read on every `show_once` call).
+M.FIRST_RUN_GLOBAL = "lib_nvim_deps_disable_first_run"
+
+---Test-environment default for the editor this runs in: when `enabled` and the user has not decided
+---(variable unset), set lib.nvim's first-run opt-out. Returns a function that undoes it (a no-op when
+---nothing was set), so an editor that hosts a run is left as it was found.
+---@param enabled boolean
+---@return fun() restore
+function M.apply_first_run_default(enabled)
+  if not enabled or vim.g[M.FIRST_RUN_GLOBAL] ~= nil then
+    return function() end
+  end
+  vim.g[M.FIRST_RUN_GLOBAL] = true
+  return function()
+    vim.g[M.FIRST_RUN_GLOBAL] = nil
+  end
 end
 
 ---How one file runs.

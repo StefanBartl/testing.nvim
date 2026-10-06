@@ -18,7 +18,7 @@
 --- a table, lies outside the root) is an `error`, which the CLI maps to exit code 2.
 ---
 --- Keys: plugin, roots, spec_pattern, dialect, minit, deps, setup, timeouts, assertions (used by the
---- in-process driver), isolated, jobs, host, filetype, env_allow (used by the child driver) and the reserved
+--- in-process driver), isolated, jobs, host, filetype, env_allow, disable_first_run (used by the child driver and the in-process driver) and the reserved
 --- typed tables conformance, coverage, snapshots, backends (validated, not acted upon yet).
 ---
 --- Which key means what (defaults in `testing.config.DEFAULTS`, documented in docs/CONFIG.md):
@@ -34,6 +34,9 @@
 ---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
 ---                 `vim.v.vim_did_enter` is 0 while the specs run) or "l" (`nvim -l`)
 ---   filetype      true (default): the host runs `filetype plugin indent on` like plenary's minimal init
+---   disable_first_run  true (default): every editor the runner starts (child or this one) gets
+---                 `vim.g.lib_nvim_deps_disable_first_run = true` BEFORE the project's `minit` runs, so
+---                 lib.nvim's one-time "missing tools" float never opens in a spec; false = untouched
 ---   env_allow     environment names (or `PREFIX*`) a child may inherit on top of the built-in
 ---                 allowlist; `--env-allow` adds to them
 
@@ -174,6 +177,7 @@ local SCHEMA = {
     expect = '"c" (started like plenary: --cmd/-c) or "l" (nvim -l)',
   },
   filetype = { check = is_bool, expect = "true or false" },
+  disable_first_run = { check = is_bool, expect = "true or false" },
   env_allow = {
     check = list_of(function(v)
       return (require("testing.child.env").check_entry(v))

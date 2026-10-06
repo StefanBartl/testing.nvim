@@ -13,6 +13,7 @@
 ---   rtp_prepend / rtp   directories for the runtimepath (this checkout and lib.nvim first)
 ---   filetype    run `filetype plugin indent on` (what plenary's minimal init does)
 ---   assertions  "error" | "warn": what a case without assertions is (`testing.policy`)
+---   disable_first_run  set `vim.g.lib_nvim_deps_disable_first_run` before the minit (default true)
 ---   minit       absolute path of the project's minimal init, `dofile`d before the spec
 ---   fragment    where the result records go (`testing.child.fragment`)
 ---   selector    { filter, tags, exclude_tags }, lf_ids (list|nil), timeouts { case_ms, file_ms }
@@ -87,6 +88,12 @@ if job.filetype ~= false then
 else
   -- `-u NORC` enables it by default; the project asked for the bare editor
   vim.cmd("filetype plugin indent off")
+end
+
+-- test-environment default: lib.nvim's one-time "missing tools" float must not open inside a spec
+-- (a fresh sandbox cache is always "first run"); set before the minit, unless the job turned it off
+if job.disable_first_run ~= false and vim.g.lib_nvim_deps_disable_first_run == nil then
+  vim.g.lib_nvim_deps_disable_first_run = true
 end
 
 -- the project's own minimal init, as plenary's `-u minimal_init` would have run it
