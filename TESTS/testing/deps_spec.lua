@@ -1,5 +1,6 @@
 -- TESTS/testing/deps_spec.lua -- testing.deps: the four places in order, the override that decides
 -- alone, and a failure message that names all four.
+---@diagnostic disable: need-check-nil
 
 return function(H)
   local ok = H.ok

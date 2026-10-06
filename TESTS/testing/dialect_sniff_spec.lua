@@ -191,4 +191,106 @@ return function(H)
     "fixture h_fail: its helpers belong to a project harness"
   )
   eq(sniff.sniff(h_text).h_style, true, "and it says so")
+  -- ------------------------------------------------------------------ call forms, scripts, escapes (round 2)
+  local function d_of(text)
+    return sniff.sniff(text)
+  end
+  local function spec(body)
+    return "return function(H)\n" .. body .. "\nend\n"
+  end
+
+  -- scratch/tmpdir: the form of the call decides, a b/c key never falls to `a`
+  eq(d_of(spec('H.scratch("lua")')).dialect, "b", "scratch(ft) is dialect b")
+  eq(d_of(spec("H.scratch({ 'x' })")).dialect, "c", "scratch(lines) is dialect c")
+  eq(d_of(spec("H.scratch({ 'x' }, 'lua')")).dialect, "c", "scratch(lines, ft) is dialect c")
+  eq(
+    d_of(spec("H.scratch()")).dialect,
+    "b",
+    "scratch() tells nothing: both shims accept it, b is taken"
+  )
+  eq(d_of(spec("H.scratch(lines)")).dialect, "b", "scratch(variable) tells nothing either")
+  eq(d_of(spec("H.tmpdir()")).dialect, "b", "tmpdir() is dialect b")
+  eq(d_of(spec("H.tmpdir(function(dir) end)")).dialect, "c", "tmpdir(fn) is dialect c")
+  eq(
+    d_of(spec('H.scratch("lua")\n  H.tmpdir(function(dir) end)')).dialect,
+    "unknown",
+    "scratch(ft) with tmpdir(fn) mixes b and c"
+  )
+  local project_form = d_of(spec('H.scratch("lua", { "a" })'))
+  eq(
+    project_form.dialect,
+    "unknown",
+    "scratch(ft, lines) is the project's own form: no shim has it"
+  )
+  eq(project_form.h_style, true, "a project harness may run it")
+  eq(project_form.forms, { "scratch(ft, lines)" }, "and the form is named")
+  has(project_form.reason, "none of the fixed harness shims", "with the reason")
+  eq(
+    d_of(spec("H.scratch(nil, { 'a' })")).dialect,
+    "unknown",
+    "scratch(nil, lines) is the project form"
+  )
+  eq(
+    d_of(spec("H.scratch(ft, lines)")).dialect,
+    "unknown",
+    "scratch(var, var) is ambiguous: unknown"
+  )
+  eq(
+    d_of(spec('H.scratch("lua")\n  H.scratch("lua", { "a" })')).dialect,
+    "unknown",
+    "one project-form call makes the whole file unknown"
+  )
+  eq(
+    d_of(spec('H.tmpfile(".x")\n  H.scratch("lua")')).dialect,
+    "unknown",
+    "a-only helpers with scratch: mixed, never `a`"
+  )
+  -- a call with nested parentheses and a comma inside a string
+  eq(
+    d_of(spec('H.scratch(vim.split("a,b", ","))')).dialect,
+    "b",
+    "commas inside nested calls and strings are not argument separators"
+  )
+
+  -- the harness parameter handed on or indexed: the key list is incomplete
+  eq(d_of(spec("H.eq(1, 1, 'x')")).escapes, false, "only H.<key> uses: nothing escapes")
+  eq(d_of(spec("helper(H)")).escapes, true, "H passed on escapes")
+  eq(d_of(spec("local f = H[name]")).escapes, true, "H indexed dynamically escapes")
+  eq(d_of(spec("local alias = H\n  alias.eq(1, 1)")).escapes, true, "an alias of H escapes")
+  eq(d_of(spec("local eq = H.eq\n  eq(1, 1)")).escapes, false, "an alias of a key does not")
+
+  -- script: no framework, but the file ends the process itself
+  local script = d_of("local passed = 0\nprint('ok')\nos.exit(passed == 0 and 1 or 0)\n")
+  eq(script.dialect, "script", "os.exit at the top level: a self-running script")
+  has(script.evidence[1], "self-running script", "with its evidence")
+  eq(d_of("print('x')\nvim.cmd('cquit 1')\n").dialect, "script", "a cquit command is the same")
+  eq(
+    d_of("-- os.exit(1)\nlocal s = 'os.exit(1)'\nreturn s\n").dialect,
+    "unknown",
+    "in a comment or a string it is no evidence"
+  )
+  eq(d_of("local x = 1\nreturn x\n").dialect, "unknown", "no evidence at all stays unknown")
+  eq(
+    d_of('describe("x", function() os.exit(1) end)\n').dialect,
+    "busted",
+    "busted wins over a script"
+  )
+  eq(
+    d_of(spec("os.exit(1)")).dialect,
+    "a",
+    "a harness spec that happens to exit is still a harness spec"
+  )
+  eq(sniff.is_dialect("script"), true, "script is a dialect name")
+  eq(sniff.resolve("local x = 1\n", "script").dialect, "script", "an override can name it")
+  eq(sniff.resolve("local x = 1\n", "h").dialect, "h", "and h")
+
+  -- lua_text.strings
+  local strs = lua_text.strings("a = 'one' -- 'no'\nb = [[two]] c = \"th\\\"ree\" --[[ 'no' ]]")
+  eq(
+    vim.tbl_map(function(s)
+      return s.content
+    end, strs),
+    { "one", "two", 'th\\"ree' },
+    "strings(): quoted and long strings, comments skipped, escapes left raw"
+  )
 end

@@ -22,8 +22,25 @@ local DEFAULTS = {
     plugin = "",
     -- Spec roots relative to the project root. Legacy locations are discovered on top and reported.
     roots = { "TESTS" },
-    -- "auto" = sniff the dialect per file; or "testing", "a", "b", "c", "d", "busted".
+    -- Lua patterns (against the project-relative path) that make a file a spec.
+    spec_pattern = { "_spec%.lua$" },
+    -- "auto" = sniff the dialect per file; or "testing", "a", "b", "c", "d", "h" (the project's own
+    -- harness), "busted", "script" (a self-running script); or a table { [path or glob] = name, ["*"] = name }.
     dialect = "auto",
+    -- A case without assertions: "error" = failure, "warn" = pass with a warning.
+    assertions = "error",
+    -- "auto" = one child process per file for busted specs, one shared process otherwise;
+    -- or "none" / "file" for every dialect (resolve with config.project.isolated_for).
+    isolated = "auto",
+    -- Parallel child processes of an isolated run.
+    jobs = 1,
+    -- Host of a child process: "c" = started like plenary (--cmd/-c, vim_did_enter == 0), "l" = nvim -l.
+    host = "c",
+    -- The host runs `filetype plugin indent on` (plenary's minimal init does).
+    filetype = true,
+    -- Environment names (or `PREFIX*`) a child may inherit on top of the built-in allowlist
+    -- (`testing.child.env`): REPOS_DIR, MAGICK_*, ... A name starting with NVIM is never passed on.
+    env_allow = {},
     -- Minimal init of the project (used by isolated child runs); false = none.
     minit = "TESTS/minimal_init.lua",
     -- Dependencies (directory names) resolved by testing.deps: $<NAME>_DIR, .deps/, ../, stdpath('data')/lazy/.

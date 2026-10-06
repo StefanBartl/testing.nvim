@@ -147,7 +147,7 @@ end
 ---@return string|nil err
 local function normalize_deps(deps)
   if deps == nil then
-    return vim.deepcopy(M.DEFAULT_DEPS)
+    return (vim.deepcopy(M.DEFAULT_DEPS))
   end
   if type(deps) ~= "table" then
     return nil, "deps must be a list of directory names"
@@ -184,20 +184,94 @@ end
 ---@param dir string Template directory.
 ---@return string|nil block
 ---@return string|nil err
-local function dep_steps(names, owner, dir)
+local function dep_steps(names, owner, dir, prefix)
   local tpl, err = read_template(dir, "ci_dep_step.yml.tpl")
   if not tpl then
     return nil, err
   end
   local steps = {}
   for _, name in ipairs(names) do
-    local text, rerr = render.render(tpl, { NAME = name, REPO = owner .. "/" .. name })
+    local text, rerr =
+      render.render(tpl, { NAME = name, REPO = owner .. "/" .. name, PREFIX = prefix or ".deps/" })
     if not text then
       return nil, rerr
     end
     steps[#steps + 1] = (text:gsub("\n+$", ""))
   end
   return table.concat(steps, "\n")
+end
+
+---Template variables of one project: the values every template of `M.FILES` (and the migration
+---templates) is rendered with. The caller has already validated `plugin`, `deps` and `owner`.
+---@param plugin string Sanitized plugin name.
+---@param deps string[] Dependencies besides testing.nvim.
+---@param owner string GitHub owner of the dependency repositories.
+---@param extra? table<string, Testing.Scaffold.Value> Additional placeholders (e.g. `RUN_ARGS`).
+---@return table<string, Testing.Scaffold.Value>|nil vars
+---@return string|nil err
+function M.build_vars(plugin, deps, owner, extra)
+  local all = { "testing.nvim" }
+  vim.list_extend(all, deps)
+  local steps, err = dep_steps(all, owner, M.template_dir())
+  if not steps then
+    return nil, err
+  end
+  local vars = {
+    PLUGIN = plugin,
+    DEPS = deps,
+    ALL_DEPS = all,
+    DEP_STEPS = steps,
+    -- Extra arguments of `testing run .` baked into scripts/test.sh (empty: nothing).
+    RUN_ARGS = "",
+  }
+  for k, v in pairs(extra or {}) do
+    vars[k] = v
+  end
+  return vars
+end
+
+---Render one template file below `templates/` with `vars`.
+---@param template string File name below `templates/`.
+---@param vars table<string, Testing.Scaffold.Value>
+---@return string|nil text
+---@return string|nil err
+function M.render_template(template, vars)
+  local tpl, err = read_template(M.template_dir(), template)
+  if not tpl then
+    return nil, err
+  end
+  return render.render(tpl, vars)
+end
+
+---The `uses: actions/checkout` step (with its comment) that puts one dependency on `.deps/<name>`
+---from the `ci-verified` branch, at the indentation of a step below `steps:` (6 spaces).
+---@param name string Directory name of the dependency; must pass `testing.deps.is_valid_name`.
+---@param owner? string GitHub owner (default `M.DEFAULT_OWNER`).
+---@param prefix? string Directory prefix of `path:` (default `.deps/`; "" = a sibling of the workspace root).
+---@return string|nil text No trailing newline.
+---@return string|nil err
+function M.dep_step(name, owner, prefix)
+  if owner == nil then
+    owner = M.DEFAULT_OWNER
+  end
+  if not require("testing.deps").is_valid_name(name) then
+    return nil, ("invalid dependency name %s"):format(vim.inspect(name))
+  end
+  if not is_owner(owner) then
+    return nil, ("invalid owner %s"):format(vim.inspect(owner))
+  end
+  if
+    prefix ~= nil
+    and (
+      type(prefix) ~= "string"
+      or prefix:match("^[%w._/%-]*$") == nil
+      or prefix:find("..", 1, true)
+      or prefix:sub(1, 1) == "/"
+    )
+  then
+    return nil, "invalid path prefix"
+  end
+  return dep_steps({ name }, owner, M.template_dir(), prefix)
 end
 
 ---Path relative to the root, for the report.
@@ -302,6 +376,7 @@ function M.init(root, opts)
       end
     end
     result.plugin = plugin
+    ---@cast plugin string
 
     local deps, derr = normalize_deps(opts.deps)
     if not deps then
@@ -313,16 +388,14 @@ function M.init(root, opts)
       fail(("invalid owner %s"):format(vim.inspect(owner)))
       return
     end
+    ---@cast owner string
 
-    local all = { "testing.nvim" }
-    vim.list_extend(all, deps)
     local dir = M.template_dir()
-    local steps, serr = dep_steps(all, owner, dir)
-    if not steps then
-      fail(tostring(serr))
+    local vars, verr = M.build_vars(plugin, deps, owner)
+    if not vars then
+      fail(tostring(verr))
       return
     end
-    local vars = { PLUGIN = plugin, DEPS = deps, ALL_DEPS = all, DEP_STEPS = steps }
 
     -- Render everything first: a problem must not leave half a setup behind.
     ---@type { path: string, rel: string, text: string, spec: Testing.Scaffold.FileSpec }[]

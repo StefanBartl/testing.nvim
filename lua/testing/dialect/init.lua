@@ -14,13 +14,22 @@
 ---   d        one case per file, listening to the plugin's own `harness` module
 ---   h        one case per file, `return function(H)` on the project's own `harness.lua` (collecting)
 ---   busted   one case per `it`, ids `<rel>::<describe>::...::<it>`
+---   script   a self-running script (`nvim -l file`, own counters, exit code): it can only run in its
+---            own child process, so `run_file` answers a visible `error` case; the child driver
+---            (`testing.run`) runs it and reads the verdict with `testing.dialect.script`
+---
+--- Every dialect runs its cases under the assertion policy (`testing.policy`): `opts.assertions`
+--- ("error" default, or "warn") decides what a case without assertions is, and a case without
+--- assertions that printed a `skip ...` line is a `skip`.
 ---
 --- Helpers for the driver: `unrunnable` turns a file that cannot run (unknown dialect, listed but
 --- missing, unreadable) into a visible `error` case instead of dropping it.
 
+local policy = require("testing.policy")
+
 local M = {}
 
----@alias Testing.Dialect.Name "a"|"b"|"c"|"d"|"h"|"busted"
+---@alias Testing.Dialect.Name "a"|"b"|"c"|"d"|"h"|"busted"|"script"
 
 ---@class Testing.Dialect.Spec
 ---@field path string Absolute path.
@@ -33,31 +42,38 @@ local M = {}
 ---@field on_case? fun(case: Testing.Result.Case)
 ---@field select? fun(id: string): boolean busted only: run only the cases this accepts.
 ---@field dry? boolean busted only: run the describe bodies and list the case ids, run no `it`.
+---@field assertions? "error"|"warn" What a case without assertions is (`testing.policy`); default `error`.
 
 ---@alias Testing.Dialect.RunFile fun(a: Testing.Assert.Context, spec: Testing.Dialect.Spec, opts?: Testing.Dialect.RunOpts): Testing.Result.Case[], table[]|nil
 
 ---@type Testing.Dialect.Name[]
-M.NAMES = { "a", "b", "c", "d", "h", "busted" }
+M.NAMES = { "a", "b", "c", "d", "h", "busted", "script" }
+
+---Dialects that cannot run in the driver's own process (they end the process or own the exit code).
+---@type table<string, true>
+M.CHILD_ONLY = { script = true }
 
 ---@param builder fun(a: table): table
 ---@return Testing.Dialect.RunFile
 local function h_style(builder)
   return function(a, spec, opts)
-    local case = a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
-      -- One `H` per file, bound to this case: a late call (timer, `vim.schedule`) after the file
-      -- ended cannot land on the next file's case.
-      local H = builder(a.scope())
-      local run = dofile(spec.path)
-      if type(run) ~= "function" then
-        error(
-          ("%s must return `function(H)`, got %s"):format(
-            spec.rel,
-            run == nil and "nothing" or type(run)
-          ),
-          0
-        )
-      end
-      run(H)
+    local case = policy.guard(opts, function()
+      return a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
+        -- One `H` per file, bound to this case: a late call (timer, `vim.schedule`) after the file
+        -- ended cannot land on the next file's case.
+        local H = builder(a.scope())
+        local run = dofile(spec.path)
+        if type(run) ~= "function" then
+          error(
+            ("%s must return `function(H)`, got %s"):format(
+              spec.rel,
+              run == nil and "nothing" or type(run)
+            ),
+            0
+          )
+        end
+        run(H)
+      end)
     end)
     if opts and opts.on_case then
       opts.on_case(case)
@@ -82,6 +98,16 @@ local LOADERS = {
   end,
   h = function()
     return require("testing.dialect.harness_project").run_file
+  end,
+  script = function()
+    return function(a, spec, opts)
+      return M.unrunnable(
+        a,
+        spec,
+        "dialect script runs a self-running script: it needs its own child process (isolated run), not the driver's",
+        opts
+      )
+    end
   end,
   busted = function()
     return require("testing.dialect.busted").run_file

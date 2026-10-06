@@ -63,11 +63,12 @@ end
 ---@param s string
 ---@return string
 local function norm(s)
-  return vim.fs.normalize(vim.fn.fnamemodify(s, ":p")):gsub("/+$", "")
+  return (vim.fs.normalize(vim.fn.fnamemodify(s, ":p")):gsub("/+$", ""))
 end
 
 ---@param path string
----@return string|nil
+---@param marker string
+---@return "ok"|"missing"|"invalid"
 local function dir_state(path, marker)
   if vim.fn.isdirectory(path) ~= 1 then
     return "missing"
@@ -200,7 +201,10 @@ end
 ---@param prepend? boolean
 function M.add_to_rtp(dir, prepend)
   local want = norm(dir):lower()
-  for _, p in ipairs(vim.opt.rtp:get()) do
+  -- the option text split at commas: `vim.opt.rtp:get()` is typed as any scalar (a path with a comma is escaped
+  -- and does not matter for "is it on the runtimepath already")
+  local entries = vim.split(vim.o.runtimepath, ",", { plain = true })
+  for _, p in ipairs(entries) do
     if norm(p):lower() == want then
       return
     end

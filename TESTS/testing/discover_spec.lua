@@ -372,6 +372,306 @@ return function(H)
   eq(#findings(found, "broken_symlink"), 1, "the broken link is reported")
   eq(findings(found, "broken_symlink")[1].severity, "error", "as an error")
 
+  -- ------------------------------------------------------------------ spec_pattern (filetree-style names)
+  local ft = project()
+  roots[#roots + 1] = ft
+  write(ft .. "/TESTS/units.lua", "print('ok')\nos.exit(0)\n")
+  write(ft .. "/TESTS/smoke.lua", "print('ok')\nos.exit(0)\n")
+  write(ft .. "/TESTS/harness.lua", "return {}\n")
+  write(ft .. "/TESTS/run.lua", "print('run')\n")
+  write(ft .. "/TESTS/minimal_init.lua", "return {}\n")
+  write(ft .. "/TESTS/sub/menu.lua", "print('ok')\nos.exit(0)\n")
+  write(ft .. "/TESTS/real_spec.lua", A_SPEC)
+  found = discover.discover(ft)
+  eq(rels(found), { "TESTS/real_spec.lua" }, "default pattern: only *_spec.lua")
+  found = discover.discover(ft, { spec_pattern = { "^TESTS/[%w_]+%.lua$" } })
+  eq(
+    rels(found),
+    { "TESTS/real_spec.lua", "TESTS/smoke.lua", "TESTS/units.lua" },
+    "a pattern lists scripts without the suffix, never harness.lua / run.lua / minimal_init.lua, nothing below sub/"
+  )
+  eq(
+    vim.tbl_map(function(f)
+      return f.dialect
+    end, found.files),
+    { "a", "script", "script" },
+    "the scripts are classified `script`, the spec stays a"
+  )
+  -- run.lua / harness.lua only lose their spec status directly in a spec root: filetree.nvim has a
+  -- real spec TESTS/refs/run.lua
+  write(ft .. "/TESTS/refs/run.lua", "print('ok')\nos.exit(0)\n")
+  found = discover.discover(ft, { spec_pattern = { "^TESTS/refs/" } })
+  eq(
+    rels(found),
+    { "TESTS/refs/run.lua" },
+    "a run.lua below a spec root is a spec when a pattern names it"
+  )
+  found = discover.discover(ft, { spec_pattern = { "run%.lua$" } })
+  eq(rels(found), { "TESTS/refs/run.lua" }, "TESTS/run.lua (the old runner) stays out")
+  found = discover.discover(ft, { spec_pattern = { "^TESTS/sub/" } })
+  eq(
+    rels(found),
+    { "TESTS/sub/menu.lua" },
+    "patterns match the relative path, so a directory works"
+  )
+  found = discover.discover(ft, { spec_pattern = { "[" } })
+  eq(#found.files, 0, "a pattern that is no valid Lua pattern matches nothing and does not raise")
+  found = discover.discover(ft, { spec_pattern = { "units%.lua$", "_spec%.lua$" } })
+  eq(rels(found), { "TESTS/real_spec.lua", "TESTS/units.lua" }, "several patterns: any matches")
+  found = discover.discover(ft, { spec_pattern = {} })
+  eq(rels(found), { "TESTS/real_spec.lua" }, "an empty list falls back to the default")
+  -- legacy places keep the suffix, so scripts/ with a broad pattern does not list every script
+  write(ft .. "/scripts/build.lua", "return {}\n")
+  found = discover.discover(ft, { spec_pattern = { "%.lua$" } })
+  ok(
+    not vim.tbl_contains(rels(found), "scripts/build.lua"),
+    "a legacy place is searched for *_spec.lua only"
+  )
+
+  -- the same spec under two spellings of its directory (a case-insensitive file system: `tests/` is
+  -- `TESTS/`; a root `TESTS/sub` below the legacy `tests/`) is ONE spec, not two (sandbox.nvim ran 2 x 964
+  -- cases on Windows with the roots its old plenary call named)
+  local dup = project()
+  roots[#roots + 1] = dup
+  write(dup .. "/TESTS/sub/x_spec.lua", A_SPEC)
+  found = discover.discover(dup, { roots = { "TESTS/sub" }, legacy = { "tests", "TESTS" } })
+  eq(rels(found), { "TESTS/sub/x_spec.lua" }, "one spec under any spelling of its directory")
+
+  -- ------------------------------------------------------------------ dialect table with globs
+  local gl = project()
+  roots[#roots + 1] = gl
+  for _, rel in ipairs({
+    "TESTS/a_spec.lua",
+    "TESTS/hover/x_spec.lua",
+    "TESTS/hover/deep/y_spec.lua",
+    "TESTS/hover/z.lua",
+    "TESTS/other/w_spec.lua",
+  }) do
+    write(gl .. "/" .. rel, A_SPEC)
+  end
+  local function dialects(result)
+    local out = {}
+    for _, f in ipairs(result.files) do
+      out[f.rel] = f.dialect
+    end
+    return out
+  end
+  found = discover.discover(gl, {
+    dialect = {
+      ["TESTS/hover/**"] = "busted",
+      ["TESTS/hover/deep/*_spec.lua"] = "c",
+      ["TESTS/a_spec.lua"] = "b",
+      ["*"] = "d",
+    },
+  })
+  eq(dialects(found), {
+    ["TESTS/a_spec.lua"] = "b",
+    ["TESTS/hover/x_spec.lua"] = "busted",
+    ["TESTS/hover/deep/y_spec.lua"] = "c",
+    ["TESTS/other/w_spec.lua"] = "d",
+  }, "literal path > the glob with the most literal characters > ** glob > *")
+  found = discover.discover(gl, { dialect = { ["TESTS/*/x_spec.lua"] = "h", ["*"] = "auto" } })
+  eq(
+    dialects(found)["TESTS/hover/x_spec.lua"],
+    "h",
+    "* stays within one segment and matches hover/"
+  )
+  eq(dialects(found)["TESTS/hover/deep/y_spec.lua"], "a", "but not across a second one")
+  found = discover.discover(gl, { dialect = { ["TESTS/hov?r/*"] = "busted" } })
+  eq(dialects(found)["TESTS/hover/x_spec.lua"], "busted", "? is one character")
+  eq(dialects(found)["TESTS/other/w_spec.lua"], "a", "files without a matching key are sniffed")
+  -- the matcher itself: whole-string, `*` stays in a segment, `**` crosses, `?` is one non-slash character
+  local gm = discover.glob_match
+  eq(gm("a.b/*.lua", "a.b/x.lua"), true, "the dot is literal and * matches a name")
+  eq(gm("a.b/*.lua", "aXb/x.lua"), false, "the dot is not a wildcard")
+  eq(gm("a.b/*.lua", "a.b/d/x.lua"), false, "* does not cross a slash")
+  eq(gm("**", "any/thing/at/all.lua"), true, "** is anything")
+  eq(gm("TESTS/**/x_spec.lua", "TESTS/a/b/x_spec.lua"), true, "** crosses segments")
+  eq(gm("TESTS/*/x_spec.lua", "TESTS/a/b/x_spec.lua"), false, "* does not")
+  eq(gm("TESTS/hov?r/*", "TESTS/hov/x"), false, "? is exactly one character")
+  eq(gm("TESTS/hov?r/*", "TESTS/hov//x"), false, "and never a slash")
+  eq(gm("a*", "a"), true, "* may be empty")
+  eq(gm("a*b", "acb/b"), false, "the whole string must match")
+  eq(gm("100%*", "100%x"), true, "Lua magic characters are literal")
+  -- SEC-30/32: a hostile key must not make the matcher backtrack (the Lua-pattern translation of this
+  -- key did not return within a minute); the matcher returns at once
+  local hostile = string.rep("**a", 12) .. "**b"
+  local t0 = vim.uv.hrtime()
+  eq(gm(hostile, string.rep("a", 40)), false, "a key of repeated ** does not match")
+  eq(gm(hostile, string.rep("a", 40) .. "b"), true, "and matches when it should")
+  local took = (vim.uv.hrtime() - t0) / 1e6
+  ok(took < 500, "the hostile glob is matched in " .. math.floor(took) .. " ms (< 500)")
+  local viaconfig = discover.discover(gl, { dialect = { [hostile] = "busted", ["*"] = "a" } })
+  eq(
+    dialects(viaconfig)["TESTS/a_spec.lua"],
+    "a",
+    "discovery with the hostile key returns and falls back to *"
+  )
+  found = discover.discover(gl, { dialect = "script" })
+  eq(dialects(found)["TESTS/a_spec.lua"], "script", "script is a valid override")
+
+  -- ------------------------------------------------------------------ project harness choice (dialect h)
+  -- the fixture harnesses carry what the real ones of the fleet carry
+  local STRICT = table.concat({
+    "local H = {}",
+    "function H.eq(a, b, msg)",
+    '  if a ~= b then error("FAIL " .. msg, 2) end',
+    "end",
+    "function H.ok(v, msg)",
+    '  if not v then error("FAIL " .. msg, 2) end',
+    "end",
+    "function H.scratch(ft)",
+    "  return 1",
+    "end",
+    "function H.write_file(path, lines)",
+    "end",
+    "return H",
+  }, "\n")
+  local function with_harness(text, specs)
+    local dir = project()
+    roots[#roots + 1] = dir
+    write(dir .. "/TESTS/harness.lua", text)
+    for name, body in pairs(specs) do
+      write(dir .. "/TESTS/" .. name, body)
+    end
+    return dir
+  end
+  local ph = with_harness(STRICT, {
+    ["only_eq_spec.lua"] = 'return function(H)\n  H.eq(1, 1, "x")\n  H.ok(true, "y")\nend\n',
+    ["scratch_spec.lua"] = 'return function(H)\n  H.scratch("lua")\n  H.eq(1, 1, "x")\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(
+    dialects(found),
+    { ["TESTS/only_eq_spec.lua"] = "a", ["TESTS/scratch_spec.lua"] = "b" },
+    "a harness with the shims' signatures and a strict eq: the shims run the files"
+  )
+  eq(#findings(found, "project_harness"), 0, "and nothing is reported")
+  has(
+    table.concat(found.files[2].evidence, "\n"),
+    "equivalent to the dialect-b shim",
+    "the evidence says why"
+  )
+
+  local DEEP = STRICT:gsub("if a ~= b then", "if not vim.deep_equal(a, b) then")
+  ph = with_harness(DEEP, {
+    ["only_eq_spec.lua"] = 'return function(H)\n  H.eq({}, {}, "x")\nend\n',
+    ["only_ok_spec.lua"] = 'return function(H)\n  H.ok(true, "x")\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(
+    dialects(found),
+    { ["TESTS/only_eq_spec.lua"] = "h", ["TESTS/only_ok_spec.lua"] = "a" },
+    "a deep eq: a file that uses eq runs on the project's harness, one that only uses ok does not need to"
+  )
+  eq(found.files[1].sniffed, "a", "what the sniffer said is kept")
+  eq(found.files[1].harness, ph .. "/TESTS/harness.lua", "and the harness is named")
+  eq(#findings(found, "project_harness"), 1, "one finding per harness")
+  has(findings(found, "project_harness")[1].message, "deep comparison", "naming the reason")
+
+  local OTHER_SIGNATURE =
+    STRICT:gsub("function H.write_file%(path, lines%)", "function H.write_file(path, content)")
+  ph = with_harness(OTHER_SIGNATURE, {
+    ["w_spec.lua"] = 'return function(H)\n  H.write_file("p", { "a" })\n  H.eq(1, 1, "x")\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(
+    found.files[1].dialect,
+    "h",
+    "write_file(path, content) is not the shim's write_file(path, lines): h"
+  )
+  has(findings(found, "project_harness")[1].message, "write_file", "and the helper is named")
+
+  ph = with_harness(STRICT, {
+    ["esc_spec.lua"] = 'return function(H)\n  local function helper(h) h.eq(1, 1, "x") end\n  helper(H)\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(found.files[1].dialect, "h", "an H that is handed on cannot be proven: h")
+
+  ph = with_harness(STRICT, {
+    ["tmpfile_spec.lua"] = 'return function(H)\n  H.eq(H.tmpfile(".x") ~= nil, true, "x")\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(
+    found.files[1].dialect,
+    "a",
+    "a helper the project harness lacks but the shim has: the shim keeps the file"
+  )
+  has(
+    table.concat(found.files[1].evidence, "\n"),
+    "defines no `tmpfile`",
+    "and the evidence says so"
+  )
+
+  -- an explicit dialect is never second-guessed
+  ph = with_harness(DEEP, {
+    ["only_eq_spec.lua"] = 'return function(H)\n  H.eq({}, {}, "x")\nend\n',
+  })
+  found = discover.discover(ph, { dialect = "a" })
+  eq(found.files[1].dialect, "a", "an override to a stays a")
+  eq(found.files[1].source, "override", "and says so")
+  found = discover.discover(ph, { dialect = "h" })
+  eq(found.files[1].dialect, "h", "an override to h is h")
+  eq(found.files[1].harness, ph .. "/TESTS/harness.lua", "with the harness found")
+
+  -- a harness whose functions cannot be read from its text has no `eq` to compare: the shim keeps the file
+  ph = with_harness("return { eq = function() end, ok = function() end }\n", {
+    ["x_spec.lua"] = 'return function(H)\n  H.eq(1, 1, "x")\nend\n',
+  })
+  found = discover.discover(ph)
+  eq(found.files[1].dialect, "a", "an unparsable harness: the shim keeps the file")
+
+  -- ------------------------------------------------------------------ sentinel of the project's runner
+  ---@param code string
+  ---@return string|nil
+  local function sentinel(code)
+    return discover.find_sentinel(require("testing.discover.lua_text").strip_comments(code))
+  end
+  eq(sentinel('print("\\nLIB_TESTS_OK")'), "LIB_TESTS_OK", "double quotes with a leading newline")
+  eq(sentinel("print('\\nCOLOR_MY_ASCII_TESTS_OK')"), "COLOR_MY_ASCII_TESTS_OK", "single quotes")
+  eq(sentinel('  print("EMOJIS_TESTS_OK")'), "EMOJIS_TESTS_OK", "print without a newline")
+  eq(
+    sentinel('say(("\\nTASKS_TESTS_OK (%d spec(s))"):format(ran))'),
+    "TASKS_TESTS_OK",
+    "say() with a suffix"
+  )
+  eq(
+    sentinel('io.stdout:write("\\nRUNNER_TESTS_OK (", n, ")\\n")'),
+    "RUNNER_TESTS_OK",
+    "io.stdout:write"
+  )
+  eq(sentinel("print([[\nLONG_OK\n]])"), "LONG_OK", "a long string")
+  eq(sentinel('print("DONE_OK")'), "DONE_OK", "a short XXX_OK token")
+  eq(sentinel('print("TESTS_OK")'), "TESTS_OK", "TESTS_OK alone")
+  eq(sentinel('print("OK")'), nil, "OK alone is no sentinel")
+  eq(sentinel('print("not_OK") print("Mixed_OK")'), nil, "lower-case words are no sentinel")
+  eq(
+    sentinel("-- print('OLD_TESTS_OK')\nprint('NEW_TESTS_OK')"),
+    "NEW_TESTS_OK",
+    "a commented sentinel is ignored"
+  )
+  eq(
+    sentinel('local ok = "FIRST_OK"\nprint("\\nREAL_TESTS_OK")\nlocal x = "LATER_OK"'),
+    "REAL_TESTS_OK",
+    "a token on a printing line wins over other tokens"
+  )
+  eq(
+    sentinel('local OK_TOKEN = "ONLY_OK"\nreturn OK_TOKEN'),
+    "ONLY_OK",
+    "without a printing line the last token is taken"
+  )
+  eq(sentinel("print('FAILED_NOT')"), nil, "no token, no sentinel")
+  eq(sentinel('print("A_OK_B")'), nil, "the token must end at _OK")
+  local sr = project()
+  roots[#roots + 1] = sr
+  write(sr .. "/TESTS/run.lua", "print('\\nSINGLE_TESTS_OK')\n")
+  write(sr .. "/TESTS/x_spec.lua", A_SPEC)
+  eq(
+    discover.discover(sr).runner.sentinel,
+    "SINGLE_TESTS_OK",
+    "runner_hints finds the single-quoted form"
+  )
+
   for _, dir in ipairs(roots) do
     vim.fn.delete(dir, "rf")
   end

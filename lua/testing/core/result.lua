@@ -573,7 +573,13 @@ local function scan_leaks(value, path, opts, problems, depth)
         problems[#problems + 1] = ("%s: contains forbidden text %q"):format(path, bad)
       end
     end
-    if not opts.allow_emails and value:find("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+") then
+    -- like `forbid`: a test title or file name is the project's own word (`https://a:b@gw.example.com`
+    -- in the name of a case about URL parsing), only free text can leak an address
+    if
+      not opts.allow_emails
+      and (free_text or not opts.forbid_free_text_only)
+      and value:find("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+")
+    then
       problems[#problems + 1] = ("%s: contains an e-mail address"):format(path)
     end
     if not opts.allow_abs_paths then

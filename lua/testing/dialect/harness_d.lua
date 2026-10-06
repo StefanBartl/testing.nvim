@@ -221,11 +221,13 @@ end
 ---Run a dialect-D spec file as one case.
 ---@param a Testing.Assert.Context
 ---@param spec { path: string, rel: string, tests_dir?: string }
----@param opts? { on_case?: fun(case: Testing.Result.Case) }
+---@param opts? { on_case?: fun(case: Testing.Result.Case), assertions?: "error"|"warn" }
 ---@return Testing.Result.Case[] cases
 function M.run_file(a, spec, opts)
-  local case = a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
-    M.run_body(a, spec)
+  local case = require("testing.policy").guard(opts, function()
+    return a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
+      M.run_body(a, spec)
+    end)
   end)
   if opts and opts.on_case then
     opts.on_case(case)

@@ -103,4 +103,4 @@ done
 # Throwaway app name: the run gets its own stdpath("config"/"data"/"state"), never the developer's.
 export NVIM_APPNAME="${NVIM_APPNAME:-@@PLUGIN@@-tests}"
 
-exec nvim -n -i NONE --headless -u NONE -l "$DRIVER" run . "$@"
+exec nvim -n -i NONE --headless -u NONE -l "$DRIVER" run .@@RUN_ARGS|raw@@ "$@"

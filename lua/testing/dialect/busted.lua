@@ -20,6 +20,9 @@
 ---     does; a file or block that raises outside any `it` becomes an `error` case of its own, a file
 ---     that registers no case at all becomes a failing case (a spec that runs nothing proves nothing).
 ---
+--- Policy: an `it` without assertions follows `opts.assertions` (`testing.policy`: error, or pass with a
+--- warning) and, when it printed a `skip ...` line before returning, is a `skip`.
+---
 --- `pending(reason)` inside an `it` ends the body at once and the case as `skip` (never green); the
 --- plenary form `pending(name, fn)` outside a body registers a skipped case; `it(name)` without a
 --- function is the same. (plenary only printed "Pending" and carried on; busted aborts: the skip
@@ -33,6 +36,7 @@
 --- `opts.dry` runs the describe bodies only and returns the case ids that WOULD run (`list`).
 
 local luassert = require("testing.dialect.luassert")
+local policy = require("testing.policy")
 local result = require("testing.core.result")
 
 local M = {}
@@ -86,6 +90,7 @@ local GLOBALS = {
 ---@field on_case? fun(case: Testing.Result.Case) Called after every case (progress output).
 ---@field select? fun(id: string): boolean Run only the cases this accepts.
 ---@field dry? boolean Only run the describe bodies; `list` of the return value holds the case ids.
+---@field assertions? "error"|"warn" What an `it` without assertions is (`testing.policy`); default `error`.
 
 ---@class Testing.Busted.Listing
 ---@field id string
@@ -273,51 +278,53 @@ function M.run_file(a, spec, opts)
       return
     end
     local broken = top().broken
-    local case = a.run_case({
-      file = rel,
-      describe = path_names(),
-      name = name,
-      param = param,
-      line = line,
-    }, function()
-      if broken then
-        error("a setup() of an enclosing block failed: " .. broken, 0)
-      end
-      in_case = true
-      scope = a.scope()
-      local current = a.current() --[[@as Testing.Result.Case]]
-      local ok, err = xpcall(function()
-        hooks_run("before")
-        fn()
-      end, with_traceback)
-      -- after_each hooks run in every case, in plenary's order (outermost block first)
-      for _, frame in ipairs(frames) do
-        for _, hook in ipairs(frame.after) do
-          local done, herr = xpcall(hook, with_traceback)
-          if not done and ok then
-            ok, err = false, herr
+    local case = policy.guard(opts, function()
+      return a.run_case({
+        file = rel,
+        describe = path_names(),
+        name = name,
+        param = param,
+        line = line,
+      }, function()
+        if broken then
+          error("a setup() of an enclosing block failed: " .. broken, 0)
+        end
+        in_case = true
+        scope = a.scope()
+        local current = a.current() --[[@as Testing.Result.Case]]
+        local ok, err = xpcall(function()
+          hooks_run("before")
+          fn()
+        end, with_traceback)
+        -- after_each hooks run in every case, in plenary's order (outermost block first)
+        for _, frame in ipairs(frames) do
+          for _, hook in ipairs(frame.after) do
+            local done, herr = xpcall(hook, with_traceback)
+            if not done and ok then
+              ok, err = false, herr
+            end
           end
         end
-      end
-      in_case = false
-      scope = nil
-      if ok then
-        return
-      end
-      if type(err) == "table" and err.__pending == PENDING then
-        local failed = false
-        for _, rec in ipairs(current.assertions) do
-          if not rec.ok then
-            failed = true
+        in_case = false
+        scope = nil
+        if ok then
+          return
+        end
+        if type(err) == "table" and err.__pending == PENDING then
+          local failed = false
+          for _, rec in ipairs(current.assertions) do
+            if not rec.ok then
+              failed = true
+            end
           end
+          if not failed then
+            current.status = "skip"
+            current.reason = err.reason
+          end
+          return
         end
-        if not failed then
-          current.status = "skip"
-          current.reason = err.reason
-        end
-        return
-      end
-      error(err, 0)
+        error(err, 0)
+      end)
     end)
     in_case = false
     scope = nil

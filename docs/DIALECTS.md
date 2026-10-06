@@ -19,14 +19,15 @@ the reason, never green; red under `--strict`). Nothing is a quiet pass.
 | `c` | `return function(H) ... end` | 1 | images.nvim | `eq`, `ok`, `falsy`, `contains`, `scratch(lines, ft)`, `tmpdir(fn)`, `write` |
 | `d` | `local t = require("harness")`, `function M.run()`, `return M` | 1 | spotlight.nvim | the plugin's own `harness` module, wrapped; its `t.ok`/`t.failures` counters become assertions |
 | `h` | `return function(H) ... end` on the project's own `TESTS/harness.lua` | 1 | repositories with helpers of their own | every function of the project's harness, wrapped |
+| `script` | a self-running file: own counters, `print("[FAIL] ...")`, ends with `os.exit(n)` | 1 | pickers.nvim, cmdlog.nvim, filetree.nvim | nothing is provided: the file is started as a program in a child editor of its own |
 | `busted` | `describe` / `it` at top level | one per `it` | plenary.busted specs | `describe`, `context`, `it`, `specify`, `pending`, `xit`, `before_each`, `after_each`, `setup`, `teardown`, `assert` (luassert subset) |
 
 `a`, `b` and `c` share the semantics of `H.eq` and `H.ok`: a file that only uses those two is `a`.
 Reading an `H` key that does not exist answers `nil` (feature detection must not raise).
 
-The sniffer never answers `h`: a project harness is a fact about the project, not the file. A
-`return function(H)` spec whose `H` keys no fixed shim provides, in a project that has a
-`TESTS/harness.lua`, runs as `h`.
+The sniffer answers `h` in one situation only: a `return function(H)` spec whose `H` keys no fixed shim
+provides (or provides with different semantics, e.g. a deep-equal `H.eq`), in a project that has a
+`TESTS/harness.lua`. An explicit `dialect = "h"` is never second-guessed.
 
 ### How `auto` decides
 
@@ -41,13 +42,40 @@ The sniffer never answers `h`: a project harness is a fact about the project, no
 
 ## Dialect `h`
 
-The project's `harness.lua` is loaded and every function of its table is wrapped. An error that
-reads `[file:line: ]FAIL ...` is a failed assertion: it is recorded and the call returns `false`.
-Any other error propagates and ends the file as `error` (a helper's own bug is loud, not a failed
-check). Functions whose body mentions `FAIL` are assertions and count as passes when they return.
+The project's `harness.lua` is loaded and every function of its table is wrapped, so the harness'
+own state stays one coherent object. The rule is **never greener than the project's own harness**:
 
-Limits: a helper that calls other assertions and fails in the middle stops there; a harness whose
-failures do not read `FAIL ...` is not recognised and its errors end the file as `error`.
+* An error that reads `[file:line: ]FAIL ...` is a failed assertion: it is recorded and the call
+  returns `false`. Functions whose body mentions `FAIL` are assertions and count as passes when they
+  return.
+* A collector (`H.check(name, fn)`: it catches the callback's error itself and appends to
+  `H.failures`) is recorded as one assertion, failed when the harness collected a failure.
+* After the file ran, what the harness recorded and the adapter did not see is added as failures:
+  growth of a failure list or counter (`H.failures`, `H.failed`, `H.fail_count`), failure lines the
+  harness printed (`[FAIL] ...`, `FAIL ...`, `not ok ...`) through `print`, `io.write`,
+  `io.stdout:write`, `io.stderr:write` or `nvim_out_write`, and, as a last net for a harness no
+  convention describes, any number or list field of `H` whose **name** contains `fail`, `err`, `bad`
+  or `broken` and that grew while the file ran (`H.n_bad`, `H.errors`, `H.late_errors`). A spec whose
+  own harness says "7 failed" is red here with those 7.
+* Any other error propagates and ends the file as `error` (a helper's own bug is loud, not a failed
+  check).
+
+Limits, honestly: a helper that calls other assertions and fails in the middle stops there; a harness
+that reports its failures only in a way no convention knows (not by raise, not in a field named like
+a failure, not in a printed line) is not seen; and a harness that counts passes under another name
+makes a green file "a case without assertions" (loud, never green). New conventions are data: see
+`lua/testing/dialect/harness_conventions.lua`.
+
+## Dialect `script`
+
+A file that runs itself (`nvim -l TESTS/units.lua`): it counts its own checks, prints `[ OK ]` /
+`[FAIL]` lines and ends with `os.exit(failed == 0 and 0 or 1)`. It cannot run in the runner's process
+(it would end it), so it runs in a child editor of its own, by default started like `nvim -l`
+(`host = "l"`, `--host` overrides). The file is **one case**; its verdict is the exit code **and** the
+`[FAIL]` lines it printed (a script that prints failures and still exits `0` is red), a signal or a
+native crash is `crash`, a limit exceeded is `timeout`. A summary of `0 passed` is a case without
+assertions. The sniffer recognises scripts by a top-level `os.exit(` / `cquit` and no `describe` /
+`function(H)`; a script without the `_spec` suffix needs a `spec_pattern` ([CONFIG.md](CONFIG.md)).
 
 ## Dialect `d`
 

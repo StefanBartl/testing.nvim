@@ -1,5 +1,6 @@
 -- Fixture (never a spec of this repo). Dialect D: `M.run()` with the plugin's own harness module.
 -- Three checks pass, three fail (one inside a helper that calls the assertions itself).
+---@diagnostic disable: param-type-mismatch, redundant-parameter
 
 local t = require("harness")
 

@@ -12,6 +12,8 @@
 ---   3  infrastructure error (a dependency is missing, the IR cannot be written or validated, a
 ---      reporter failed, the editor was quit under the run, any internal error)
 ---
+--- `testing migrate ...` is the migration tooling (`testing.migrate.main`), see docs/MIGRATING.md.
+---
 --- `main` never raises: everything that can raise runs under `xpcall`, and a raise is exit code 3
 --- with a message on stderr (set `TESTING_DEBUG=1` for the traceback).
 ---
@@ -99,6 +101,17 @@ local function doctor(plan, loaded, say)
     say("  " .. line)
   end
 
+  local run_opts = require("testing.run.options").of(plan)
+  say(
+    ("child editors: isolated=%s jobs=%d host=%s filetype=%s env_allow=%s"):format(
+      run_opts.isolated,
+      run_opts.jobs,
+      run_opts.host,
+      tostring(run_opts.filetype),
+      #run_opts.env_allow > 0 and table.concat(run_opts.env_allow, ",") or "-"
+    )
+  )
+
   say("dependencies:")
   local code = M.EXIT_OK
   ---@param row table
@@ -124,6 +137,22 @@ local function doctor(plan, loaded, say)
   return code
 end
 
+---`testing migrate [dry-run|apply] [<path>] [--json] [--markdown] [--check] [--fleet-root=<dir>]`: the
+---migration tooling (`testing.migrate`) has its own arguments and exit codes (0 done or nothing to do,
+---1 `--check` found work, 2 refused or bad usage, 3 the root cannot be analysed), so it is dispatched
+---before the run options are parsed.
+---@param rest string[] The arguments after `migrate`.
+---@param sv Testing.Run.Services
+---@return integer exit_code
+local function run_migrate(rest, sv)
+  local code, text = require("testing.migrate").main(rest, { cwd = vim.fn.getcwd() })
+  text = tostring(text or "")
+  -- the sinks add the newline themselves; usage and refusals belong on stderr
+  local sink = code == 2 and sv.err or sv.out
+  sink((text:gsub("\n+$", "")))
+  return code
+end
+
 ---Everything after argument parsing. May raise; `M.main` turns that into exit code 3.
 ---@param argv string[]
 ---@param sv Testing.Run.Services
@@ -131,6 +160,10 @@ end
 local function execute(argv, sv)
   local out, err = sv.out, sv.err
   local usage = args_mod.usage()
+
+  if argv[1] == "migrate" then
+    return run_migrate(vim.list_slice(argv, 2), sv)
+  end
 
   local args, problem = args_mod.parse(argv)
   if not args then

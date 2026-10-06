@@ -138,9 +138,46 @@ return function(H)
   a = assert(parse({ "r", "--filter", "os.exit(7); $(rm -rf /) `x`" }))
   eq(a.filter, { "os.exit(7); $(rm -rf /) `x`" }, "user text stays text")
 
+  -- per-file isolation: --isolated, --jobs, --host, --env-allow
+  a = assert(parse({ "r" }))
+  eq(a.isolated, nil, "isolated is unset by default (the config / the dialect decides)")
+  eq(a.jobs, nil, "jobs is unset by default")
+  eq(a.host, nil, "host is unset by default")
+  eq(a.env_allow, {}, "env_allow is empty by default")
+  a = assert(parse({ "r", "--isolated", "file", "--jobs", "4", "--host", "l" }))
+  eq(a.isolated, "file", "--isolated file")
+  eq(a.jobs, 4, "--jobs 4")
+  eq(a.host, "l", "--host l")
+  eq(a.given.isolated and a.given.jobs and a.given.host, true, "and they are recorded as given")
+  a = assert(parse({ "r", "--isolated=none", "--jobs=2", "--host=c" }))
+  eq({ a.isolated, a.jobs, a.host }, { "none", 2, "c" }, "the = form")
+  a = assert(parse({ "r", "--env-allow", "A", "--env-allow", "LUA_*" }))
+  eq(a.env_allow, { "A", "LUA_*" }, "--env-allow is repeatable")
+  has(refused({ "r", "--isolated", "maybe" }), "'none' or 'file'", "--isolated maybe")
+  has(refused({ "r", "--isolated" }), "needs a value", "--isolated without a value")
+  has(refused({ "r", "--jobs", "0" }), "integer >= 1", "--jobs 0")
+  has(refused({ "r", "--jobs", "many" }), "integer >= 1", "--jobs many")
+  has(refused({ "r", "--jobs", "-2" }), "integer >= 1", "--jobs -2")
+  has(refused({ "r", "--host", "x" }), "'c' or 'l'", "--host x")
+  has(refused({ "r", "--env-allow", "*" }), "whole environment", "--env-allow *")
+  has(refused({ "r", "--env-allow", "NVIM_LISTEN_ADDRESS" }), "NVIM", "--env-allow NVIM_...")
+  has(refused({ "r", "--env-allow", "A B" }), "--env-allow", "--env-allow with a space")
+
   -- usage is generated from the same table
   local usage = args_mod.usage()
-  for _, flag in ipairs({ "--json", "--junit", "--github", "--rtp", "--only", "-x", "--dry-run" }) do
+  for _, flag in ipairs({
+    "--json",
+    "--junit",
+    "--github",
+    "--rtp",
+    "--only",
+    "-x",
+    "--dry-run",
+    "--isolated",
+    "--jobs",
+    "--host",
+    "--env-allow",
+  }) do
     has(usage, flag, "usage names " .. flag)
   end
   has(

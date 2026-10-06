@@ -1,6 +1,7 @@
 -- TESTS/testing/usrcmds_spec.lua -- `:Testing`: completion (live, closed sets), the argv of the child
 -- process, the verdict shown for each exit code, the failure list, init through the command, and
 -- that docs/BINDINGS.md names every subcommand.
+---@diagnostic disable: duplicate-set-field, param-type-mismatch, missing-parameter, undefined-field, missing-fields, need-check-nil
 
 return function(H)
   local ok = H.ok
@@ -52,7 +53,8 @@ return function(H)
 
   -- ---------------------------------------------------------------- completion (UI-22/23/26)
 
-  local subcommands = { "config", "doctor", "file", "health", "init", "last", "list", "run" }
+  local subcommands =
+    { "config", "doctor", "file", "health", "init", "last", "list", "migrate", "run" }
   eq(sorted(complete("Testing ")), subcommands, "every subcommand is offered")
   eq(complete("Testing r"), { "run" }, "a prefix narrows the subcommands")
   eq(complete("Testing l"), { "last", "list" }, "a prefix narrows to the matching ones")
@@ -70,6 +72,18 @@ return function(H)
   )
   eq(sorted(complete("Testing init --")), { "--force", "--plugin" }, "init offers its flags")
   eq(complete("Testing file --"), { "--rtp" }, "file offers its flag")
+  eq(complete("Testing migrate --"), { "--fleet-root" }, "migrate offers its flag")
+  local modes = complete("Testing migrate ")
+  ok(
+    vim.tbl_contains(modes, "dry-run") and vim.tbl_contains(modes, "apply"),
+    "migrate offers its two modes: " .. vim.inspect(modes)
+  )
+  ok(vim.tbl_contains(complete("Testing migrate dr"), "dry-run"), "a prefix narrows the modes")
+  ok(not vim.tbl_contains(complete("Testing migrate dr"), "apply"), "and drops the others")
+  local mtype = require("lib.nvim.bindings.usercmd.composer.argtypes").get(usrcmds.TYPE_MIGRATE)
+  eq((mtype.validate("apply")), true, "a mode validates")
+  eq((mtype.validate("some/dir")), true, "so does a directory (the first word may be the root)")
+  eq((mtype.validate("")), false, "an empty word does not")
   eq(complete("Testing run --re"), { "--reporter" }, "a flag prefix narrows")
 
   local reporters = {}
@@ -426,6 +440,85 @@ return function(H)
     -- already exists: only reports; the point is that a hostile value does not raise
     ok(#messages > 0, "a hostile --plugin value is handled")
   end)
+
+  -- :Testing migrate through the command line
+  local shown
+  local real_viewer = usrcmds.viewer
+  usrcmds.viewer = function(lines, title)
+    shown = { text = table.concat(lines, "\n"), title = title }
+  end
+  local mig = tmp .. "/migme.nvim"
+  vim.fn.mkdir(mig .. "/lua/migme", "p")
+  vim.fn.mkdir(mig .. "/TESTS", "p")
+  vim.fn.mkdir(mig .. "/scripts", "p")
+  vim.fn.writefile({ "return {}" }, mig .. "/lua/migme/init.lua")
+  vim.fn.writefile(
+    { 'describe("a", function() it("b", function() assert.is_true(true) end) end)' },
+    mig .. "/TESTS/a_spec.lua"
+  )
+  vim.fn.writefile(
+    { "#!/usr/bin/env bash", "nvim -c PlenaryBustedDirectory" },
+    mig .. "/scripts/test.sh"
+  )
+  local function sys_git(...)
+    local res = vim
+      .system({ "git", "-c", "user.email=t@t", "-c", "user.name=t", ... }, { cwd = mig, text = true })
+      :wait()
+    eq(res.code, 0, "git " .. table.concat({ ... }, " "))
+  end
+  with_notify(function()
+    vim.cmd("Testing migrate " .. vim.fn.fnameescape(mig))
+    ok(shown ~= nil, "the plan goes to the viewer")
+    has(shown.text, "operation(s) planned", "which shows the plan")
+    has(shown.title, "migme.nvim", "titled with the repository")
+    has(all_messages(), "dry run, nothing written", "the notification says it was a dry run")
+    eq(messages[1].level, vim.log.levels.INFO, "as information")
+    ok(vim.uv.fs_stat(mig .. "/.testing.lua") == nil, "and nothing was written")
+  end)
+  with_notify(function()
+    shown = nil
+    vim.cmd("Testing migrate dry-run " .. vim.fn.fnameescape(mig))
+    ok(
+      shown ~= nil and shown.text:find("operation(s) planned", 1, true),
+      "the explicit dry-run mode"
+    )
+  end)
+  with_notify(function()
+    vim.cmd("Testing migrate apply " .. vim.fn.fnameescape(mig))
+    has(all_messages(), "migration refused", "apply without a clean git tree is refused")
+    has(all_messages(), "uncommitted changes", "with the reason")
+    eq(messages[1].level, vim.log.levels.ERROR, "as an error")
+    ok(vim.uv.fs_stat(mig .. "/.testing.lua") == nil, "and nothing was written")
+  end)
+  sys_git("init", "-q")
+  sys_git("add", "-A")
+  sys_git("commit", "-q", "-m", "init")
+  with_notify(function()
+    vim.cmd("Testing migrate apply " .. vim.fn.fnameescape(mig))
+    has(all_messages(), "file(s) written", "apply in a clean repository writes")
+    ok(vim.uv.fs_stat(mig .. "/.testing.lua") ~= nil, ".testing.lua exists now")
+    has(shown.text, "file(s) written", "and the viewer ends with the summary")
+  end)
+  with_notify(function()
+    sys_git("add", "-A")
+    sys_git("commit", "-q", "-m", "migrated")
+    vim.cmd("Testing migrate " .. vim.fn.fnameescape(mig))
+    has(all_messages(), "is migrated: nothing to do", "a migrated repository says so")
+  end)
+  with_notify(function()
+    vim.cmd("Testing migrate nonsense " .. vim.fn.fnameescape(mig))
+    has(
+      all_messages(),
+      "neither dry-run nor apply",
+      "an unknown first word with a root is an error"
+    )
+  end)
+  with_notify(function()
+    vim.cmd("Testing migrate " .. vim.fn.fnameescape(tmp .. "/not-there"))
+    has(all_messages(), "cannot analyse", "a missing directory is reported, not raised")
+    eq(messages[1].level, vim.log.levels.ERROR, "as an error")
+  end)
+  usrcmds.viewer = real_viewer
 
   vim.notify = real_notify
 

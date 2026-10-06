@@ -20,7 +20,9 @@
 -- #####################################################################
 -- config/project.lua (the per-project file `.testing.lua`)
 
----@alias Testing.Dialect "auto"|"testing"|"a"|"b"|"c"|"d"|"busted"
+---@alias Testing.Dialect "auto"|"testing"|"a"|"b"|"c"|"d"|"h"|"busted"|"script"
+
+---@alias Testing.DialectSetting Testing.Dialect|table<string, Testing.Dialect> One dialect, or { [relative path or glob] = dialect, ["*"] = dialect }.
 
 ---@class Testing.ProjectConfig.Conformance
 ---@field load_budget_ms number >= 0. Budget of the load-time check. Reserved (M3).
@@ -47,7 +49,14 @@
 --- Paths are relative to the project root, never absolute, never containing `..`.
 ---@field plugin string Lua module root; "" is replaced by the directory name of the root (without `.nvim`) after loading.
 ---@field roots string[] Spec roots, non-empty.
----@field dialect Testing.Dialect
+---@field spec_pattern string[] Lua patterns (against the relative path) that make a file a spec; default `{ "_spec%.lua$" }`.
+---@field dialect Testing.DialectSetting
+---@field assertions "error"|"warn" A case without assertions: failure (`error`, default) or pass with a warning (`warn`).
+---@field isolated "auto"|"none"|"file" Process isolation: `auto` = `file` for busted, `none` otherwise; resolve with `config.project.isolated_for`.
+---@field jobs integer >= 1. Parallel child processes of an isolated run.
+---@field host "c"|"l" Child host: `c` = started like plenary's (`--cmd`/`-c`), `l` = `nvim -l`.
+---@field filetype boolean The host runs `filetype plugin indent on`.
+---@field env_allow string[] Extra environment names (or `PREFIX*`) a child editor may inherit.
 ---@field minit string|false
 ---@field deps string[] Directory names, resolved by `testing.deps`.
 ---@field setup table<string, any> Options for the plugin's `setup()`.

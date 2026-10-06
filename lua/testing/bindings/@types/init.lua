@@ -32,6 +32,10 @@
 ---@field items table[] Quickfix items of the failures (empty when none).
 ---@field lines? string[] Output to show in a viewer (`list`, `doctor`).
 
+---@class Testing.Usrcmds.MigrateCtx
+---@field args { mode?: string, root?: string } `mode` is `dry-run` or `apply`; any other first word is the root.
+---@field flags { ["fleet-root"]?: string }
+
 ---@class Testing.Module
 --- Facade functions added by the editor-side commands (merged with the class of `testing.@types`).
 ---@field scaffold fun(root: string, opts?: Testing.Scaffold.Opts): Testing.Scaffold.Result Generate the test setup of a plugin repo; never overwrites unless `opts.force`.

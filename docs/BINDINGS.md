@@ -29,6 +29,7 @@ require("testing").setup({
 | `:Testing last` | none | Repeat the last `run`/`file` of this session. |
 | `:Testing list [<root>]` | as `run` | List the spec files that would run; run nothing. The list opens in a viewer. |
 | `:Testing init [<root>]` | `--force`, `--plugin=<name>` | Generate `.testing.lua`, `TESTS/minimal_init.lua`, `TESTS/<plugin>/load_spec.lua`, `scripts/test.sh`, `.github/workflows/ci.yml`, `stylua.toml`, `.luacheckrc` and `.gitattributes` in `<root>` (default: the working directory). An existing file is never overwritten, it is reported as kept; `--force` replaces it. |
+| `:Testing migrate [<mode>] [<root>]` | `--fleet-root=<dir>` | `<mode>` is `dry-run` or `apply`. Plan the move of a plugin repository from plenary / busted / a hand-written runner to testing.nvim, specs unchanged ([MIGRATING.md](MIGRATING.md)). `dry-run` (the default) writes nothing: it opens the plan (analysis, the new `.testing.lua`, `scripts/test.sh`, `TESTS/minimal_init.lua`, the CI workflow as a diff, notes, risks) in a viewer. `apply` writes it, and refuses a repository with uncommitted changes. The first word is the mode when it is `dry-run` or `apply`, else it is the root. `--fleet-root` is the directory with the sibling `*.nvim` repositories used to map `require`s to dependencies (default: the parent of `<root>`). |
 | `:Testing health` | none | Run `:checkhealth testing`. |
 | `:Testing config` | none | Show the effective configuration. |
 | `:Testing doctor [<root>]` | none | Show the project's resolved `.testing.lua` and where each dependency was found (or all four places that were searched). |
@@ -53,13 +54,21 @@ code 0, and a run that produced no readable result says so instead of "0 failed"
 No subcommand takes a range or a count: there is no text to act on and nothing
 to repeat. `:Testing last` is the repeat.
 
-The Lua API behind them: `require("testing").run(opts, on_done)` and
-`require("testing").scaffold(root, opts)`.
+The Lua API behind them: `require("testing").run(opts, on_done)`,
+`require("testing").scaffold(root, opts)` and, for `:Testing migrate`,
+`require("testing.migrate")` (`analyze`, `plan`, `render`, `to_json`, `apply`, `main`).
+
+`:Testing migrate` runs in this editor's process: it only reads files (and, with `apply`,
+writes the few files of the plan), so it needs no child process. Completion offers `dry-run`,
+`apply` and directories for the first word and directories for the root. The result is
+one notification (the count and whether anything was written) plus the full plan in the viewer.
 
 ## Command-line entry
 
 Not a Neovim binding, but the other way in: `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua
-<root> [--json <file>] [--rtp <dir>] [--only <text>] [--sentinel <name>] [--no-timings]`. Options and
+<root> [--json <file>] [--rtp <dir>] [--only <text>] [--sentinel <name>] [--no-timings]`, and
+`testing migrate [dry-run|apply] [<path>] [--json] [--markdown] [--check] [--fleet-root=<dir>]`
+(exit 0 done, 1 `--check` found work, 2 refused or bad usage, 3 unreadable root). Options and
 exit codes are in the README and in `:help testing-cli`. It registers no command, keymap or
 autocommand in an interactive session.
 

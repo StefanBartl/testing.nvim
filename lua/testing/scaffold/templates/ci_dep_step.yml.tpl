@@ -2,5 +2,5 @@
       - uses: actions/checkout@v5
         with:
           repository: @@REPO|yaml@@
-          path: .deps/@@NAME@@
+          path: @@PREFIX|raw@@@@NAME@@
           ref: ci-verified

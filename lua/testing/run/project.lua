@@ -42,6 +42,7 @@ M.EXIT_INFRA = 3
 ---@field out fun(s: string) stdout line sink
 ---@field err fun(s: string) stderr line sink
 ---@field inproc? table `testing.run.inproc` (seam for specs)
+---@field isolated? table `testing.run.isolated` (seam for specs)
 ---@field discover? table `testing.discover` (seam for specs)
 ---@field state_dir? string Overrides `stdpath('state')` (history).
 ---@field color? boolean Overrides the colour decision of the terminal reporter.
@@ -126,18 +127,30 @@ local function print_findings(findings, out)
   end
 end
 
+---Absolute path of the project's `minit` when the file exists.
+---@param root string
+---@param cfg Testing.ProjectConfig
+---@return string|nil
+local function minit_path(root, cfg)
+  if type(cfg.minit) ~= "string" then
+    return nil
+  end
+  local path = root .. "/" .. cfg.minit
+  local stat = vim.uv.fs_stat(path)
+  if not (stat and stat.type == "file") then
+    return nil
+  end
+  return path
+end
+
 ---Run the `minit` file of the project, if there is one.
 ---@param root string
 ---@param cfg Testing.ProjectConfig
 ---@return boolean ok
 ---@return string|nil err
 local function run_minit(root, cfg)
-  if type(cfg.minit) ~= "string" then
-    return true, nil
-  end
-  local path = root .. "/" .. cfg.minit
-  local stat = vim.uv.fs_stat(path)
-  if not (stat and stat.type == "file") then
+  local path = minit_path(root, cfg)
+  if not path then
     return true, nil
   end
   local release = M.guard_exit()
@@ -201,6 +214,61 @@ local function term_options(sv, args, ncases)
   return { color = color, durations = durations }
 end
 
+---The captured output of a child, as the lines printed before the report: capped, one header.
+---@param rel string
+---@param text string
+---@return string
+local function output_block(rel, text)
+  local lines = {}
+  for line in (text:gsub("\r\n", "\n") .. "\n"):gmatch("(.-)\n") do
+    lines[#lines + 1] = line
+  end
+  while #lines > 0 and lines[#lines] == "" do
+    lines[#lines] = nil
+  end
+  local max = 200
+  local shown = lines
+  if #lines > max then
+    shown = vim.list_slice(lines, 1, max / 2)
+    shown[#shown + 1] = ("... %d line(s) omitted (the red cases keep the tail) ..."):format(
+      #lines - max
+    )
+    vim.list_extend(shown, vim.list_slice(lines, #lines - max / 2 + 1, #lines))
+  end
+  local out = { ("output of %s:"):format(rel) }
+  for _, l in ipairs(shown) do
+    out[#out + 1] = "  " .. l
+  end
+  return table.concat(out, "\n")
+end
+
+---Under `assertions = "warn"` a case that asserts nothing passes; the terminal says how many and which
+---(the IR carries them as `no_assertions` assertions and a note, but nobody reads the IR of a green run).
+---@param res Testing.Result
+---@param out fun(s: string)
+local function print_unasserted(res, out)
+  local ids = {}
+  for _, c in ipairs(res.cases) do
+    for _, a in ipairs(c.assertions or {}) do
+      if a.kind == "no_assertions" and a.ok then
+        ids[#ids + 1] = c.id
+        break
+      end
+    end
+  end
+  if #ids == 0 then
+    return
+  end
+  local shown = math.min(#ids, 10)
+  out(('\n%d case(s) passed without asserting anything (assertions = "warn"):'):format(#ids))
+  for i = 1, shown do
+    out(safe("  " .. ids[i]))
+  end
+  if #ids > shown then
+    out(("  ... and %d more"):format(#ids - shown))
+  end
+end
+
 ---Execute one run of a project.
 ---@param plan Testing.Cli.RunPlan
 ---@param sv Testing.Run.Services
@@ -217,6 +285,8 @@ function M.execute(plan, sv)
   local args, root, cfg = plan.args, plan.root, plan.project
   local inproc = sv.inproc or require("testing.run.inproc")
   local select_mod = require("testing.run.select")
+  local options_mod = require("testing.run.options")
+  local run_opts = options_mod.of(plan)
 
   -- 1. minit
   local mok, merr = run_minit(root, cfg)
@@ -227,7 +297,10 @@ function M.execute(plan, sv)
 
   -- 2. discovery
   local discover = sv.discover or require("testing.discover")
-  local disc = discover.discover(root, { roots = cfg.roots, dialect = cfg.dialect })
+  local disc = discover.discover(
+    root,
+    { roots = cfg.roots, dialect = cfg.dialect, spec_pattern = cfg.spec_pattern }
+  )
   local ordered, order_notes = discover.order(disc)
   for _, note in ipairs(order_notes) do
     err("testing: note: " .. note)
@@ -369,9 +442,9 @@ function M.execute(plan, sv)
     return M.EXIT_OK
   end
 
-  -- 5. run
+  -- 5. run: in this editor, or (per file, see `testing.run.options`) in a child editor of its own
   local release = M.guard_exit()
-  local ok, report = pcall(inproc.run, {
+  local common = {
     root = root,
     files = files,
     argv = plan.argv,
@@ -382,7 +455,24 @@ function M.execute(plan, sv)
     timeouts = timeouts,
     findings = findings,
     strict = args.strict,
-  })
+    assertions = run_opts.assertions,
+  }
+  local ok, report
+  if options_mod.any_isolated(run_opts, files) then
+    local prepend, append, child_env = options_mod.child_rtp(plan)
+    common.child_env = child_env
+    common.options = run_opts
+    common.selector_spec =
+      { filter = args.filter, tags = args.tags, exclude_tags = args.exclude_tags }
+    common.rtp_prepend, common.rtp = prepend, append
+    common.minit = minit_path(root, cfg)
+    common.on_output = function(rel, text)
+      err(output_block(rel, text))
+    end
+    ok, report = pcall((sv.isolated or require("testing.run.isolated")).run, common)
+  else
+    ok, report = pcall(inproc.run, common)
+  end
   release()
   if not ok then
     err("testing: internal error: " .. tostring(report))
@@ -393,7 +483,6 @@ function M.execute(plan, sv)
     err("testing: no case matched the selection; nothing ran")
     return M.EXIT_USAGE
   end
-
   -- 6. reporters
   local primary, sanitized_specs = reporter_plan(args)
   local reports = require("testing.report")
@@ -449,6 +538,9 @@ function M.execute(plan, sv)
   end
 
   print_findings(findings, out)
+  if primary == "term" then
+    print_unasserted(res, out)
+  end
   if report.stopped and report.files_unrun > 0 then
     out(
       ("\nstopped after %d failure(s) (--maxfail %d): %d file(s) not run"):format(

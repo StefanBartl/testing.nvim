@@ -324,7 +324,7 @@ function M.start(sub, opts, on_done)
     end)
   end
 
-  local system = opts.system or vim.system
+  local system = (opts.system or vim.system) --[[@as function]]
   local ok, started =
     pcall(system, argv, { cwd = opts.root, text = true, timeout = M.TIMEOUT_MS }, finish)
   if not ok then

@@ -195,6 +195,7 @@ end
 ---@param path string
 ---@return boolean evaluated The file ran to a table in the sandbox.
 ---@return any result_or_reason The returned table, or the reason it could not be evaluated.
+---@return boolean? syntax The text does not compile (the third value only comes with that reason).
 local function sandbox_eval(path)
   local project = require("testing.config.project")
   local stat = (vim.uv or vim.loop).fs_stat(path)

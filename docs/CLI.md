@@ -2,6 +2,7 @@
 
 ```sh
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|init] [<root>] [options]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [options]
 ```
 
 Run it from `<root>`, the project whose specs should run: specs that look at "this repository" read
@@ -23,6 +24,7 @@ scripts/test.sh --file config      # only spec files whose name contains "config
 | `run` (default) | Discover and run the specs of `<root>`. |
 | `list` | List what would run, run nothing (same as `run --list`). |
 | `doctor` | Print the resolved configuration and the dependency report. Evaluates `.testing.lua`. |
+| `migrate` | Plan (`dry-run`, the default) or write (`apply`) the move of a plugin repository from plenary, busted or a hand-written runner to testing.nvim, specs unchanged. It has its own arguments and exit codes: [MIGRATING.md](MIGRATING.md). |
 | `init` | Scaffold `.testing.lua`, `TESTS/minimal_init.lua`, `scripts/test.sh` and a CI job in a project. Today only as the editor command `:Testing init` ([BINDINGS.md](BINDINGS.md)); on the command line it is refused with exit code `2`. |
 
 The subcommand is the first argument, when it is exactly one of those words. Any other first
@@ -56,9 +58,30 @@ An option that is accepted by the parser but not implemented is **refused** with
 | --- | --- |
 | `-x`, `--maxfail <n>` | Stop after the first / the `<n>`th failure. Cases that did not run are not in the report, and the run says so. |
 | `--shuffle`, `--seed <n>` | Random order; the seed is printed so a failure can be reproduced. |
-| `--case-timeout <ms>`, `--file-timeout <ms>` | Timeouts of one case and one spec file (defaults from `timeouts` in `.testing.lua`). A case over its limit has the status `timeout`. Best effort: the guard interrupts Lua code and `vim.wait`, not a spec that blocks inside C (a blocking `vim.system():wait()`, `io.read`). |
+| `--case-timeout <ms>`, `--file-timeout <ms>` | Timeouts of one case and one spec file (defaults from `timeouts` in `.testing.lua`). A case over its limit has the status `timeout`. In this editor the guard is best effort (it interrupts Lua code and `vim.wait`, not a spec that blocks inside C). In a child editor (`--isolated file`) the limits are **hard**: the child and its whole process tree are killed (`file_ms` + 2 s grace; for busted files also `case_ms` + 2 s without a new case once the first one is in). |
 | `--strict` | A skipped case and a discovery finding (legacy spec location, symlink, unknown dialect) make the run red. |
 | `--rtp <dir>` | Add `<dir>` to the runtimepath; repeatable. `<root>` is always added. |
+| `--isolated <none\|file>` | `file`: every spec file runs in a **child editor of its own** (like plenary: nothing leaks from one file into the next; a crash, a hang or a prompt ends that file only). Default `auto` (`.testing.lua` `isolated`): busted files `file`, the other dialects `none`; a `script` is always a child. |
+| `--jobs <n>` | Child editors running at once (default 1, `.testing.lua` `jobs`). The report, the printed child output and the exit code are the same for any `n`: results are merged in file order. |
+| `--host <c\|l>` | How a child starts. `c` (default): like plenary's host, the spec runs from a `-c` command (`v:vim_did_enter` is 0, `expand('<cword>')` works). `l`: `nvim -l`. A `script` prefers `l` unless this is given. |
+| `--env-allow <name>` | An environment variable (or `PREFIX*`) a child may inherit, on top of the allowlist; repeatable. See [child editors](../lua/testing/child/README.md). |
+
+#### What happens to a child
+
+* **It finishes**: its cases are merged. **It dies** (a native crash such as a segfault in a library,
+  `os.exit`, `:cquit`, a signal, an exit code other than `0`, no result): the cases it finished plus ONE
+  `crash` case for the file, naming the exit (`exit code 3221225477 = NTSTATUS 0xC0000005`, `signal 11
+  (SIGSEGV)`) and the tail of its stderr. The run goes on; the exit code is `1`.
+* **It hangs** (a blocking C call, a language server's prompt that nobody answers: stdin is the null
+  device and `input()` / `inputlist()` / `confirm()` answer "cancelled"): `file_ms` (+ 2 s) after the
+  start, or for busted files `case_ms` (+ 2 s) without a new case, the child **and its process tree**
+  are killed and the file ends with ONE `timeout` case. A process that is still alive 10 s after the kill
+  is abandoned: the run never waits for it.
+* **It leaves a helper behind** that holds its stdout/stderr (a language server): the child counts as
+  finished when its own process ended (plus 200 ms to read what was still in the pipes), not when the
+  helper ends. On POSIX the leftovers of its process group are killed; on Windows they are not (no job
+  objects from Lua), but they cannot hold the run any more.
+* What a child printed is shown **in file order**, once, with the header `output of <file>:`.
 
 ### Output
 
@@ -84,8 +107,10 @@ Reporters and the IR are described in [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md).
    deterministic order (byte-wise sorted path). A symlinked directory is reported and not entered; a
    spec in a legacy place (`docs/TESTS`, `tests`, `test`, `scripts`) is run and reported; a busted
    spec below `lua/` is reported, not run. A project without a single spec is exit code `2`.
-4. Sniff the dialect of every file ([DIALECTS.md](DIALECTS.md)) and run it. All files share one
-   Neovim process, like the old runners.
+4. Sniff the dialect of every file ([DIALECTS.md](DIALECTS.md)) and run it: the files that need
+   isolation (`--isolated`, `.testing.lua` `isolated`: busted files by default, every `script`) each in
+   a child editor of their own, the others in this editor, one process, like the old hand-written
+   runners. The result is merged in file order, so it is the same for any `--jobs`.
 5. Print the result, write the requested reports, record the run for `--lf`/`--ff`, exit
    ([EXIT-CODES.md](EXIT-CODES.md)).
 

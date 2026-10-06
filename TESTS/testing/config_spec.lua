@@ -267,5 +267,107 @@ return function(H)
   loaded = project.load(root, { file = root .. "/ci" })
   ok(loaded.error ~= nil, "a directory is not a config file")
 
+  -- ------------------------------------------------------------------ keys of the isolated/child driver
+  local defaults = project.validate(nil)
+  eq(defaults.spec_pattern, { "_spec%.lua$" }, "spec_pattern defaults to the _spec.lua suffix")
+  eq(defaults.assertions, "error", "a case without assertions is an error by default")
+  eq(defaults.isolated, "auto", "isolated defaults to auto")
+  eq(defaults.jobs, 1, "jobs defaults to 1")
+  eq(defaults.host, "c", "host defaults to c (started like plenary)")
+  eq(defaults.filetype, true, "filetype defaults to true")
+  eq(defaults.env_allow, {}, "env_allow defaults to nothing on top of the built-in allowlist")
+  eq(project.isolated_for(defaults, "busted"), "file", "auto: busted specs get a process per file")
+  for _, name in ipairs({ "a", "b", "c", "d", "h" }) do
+    eq(
+      project.isolated_for(defaults, name),
+      "none",
+      "auto: dialect " .. name .. " shares the process"
+    )
+  end
+  eq(project.isolated_for(defaults, "script"), "file", "a script always has its own process")
+  local explicit = project.validate({ isolated = "none" })
+  eq(project.isolated_for(explicit, "busted"), "none", "an explicit none wins for busted")
+  explicit = project.validate({ isolated = "file" })
+  eq(project.isolated_for(explicit, "a"), "file", "an explicit file wins for dialect a")
+
+  local good, good_problems = project.validate({
+    spec_pattern = { "^TESTS/[%w_]+%.lua$", "_spec%.lua$" },
+    assertions = "warn",
+    isolated = "file",
+    jobs = 8,
+    host = "l",
+    filetype = false,
+    env_allow = { "REPOS_DIR", "MAGICK_*" },
+  })
+  eq(good_problems, {}, "valid values of the new keys raise no problem")
+  eq(good.env_allow, { "REPOS_DIR", "MAGICK_*" }, "env_allow is taken (a name and a PREFIX*)")
+  eq(good.spec_pattern, { "^TESTS/[%w_]+%.lua$", "_spec%.lua$" }, "spec_pattern is taken")
+  eq(
+    { good.assertions, good.isolated, good.jobs, good.host, good.filetype },
+    { "warn", "file", 8, "l", false },
+    "the other new keys are taken"
+  )
+
+  -- every invalid value degrades to the default with ONE typed warning that names the key
+  local cases = {
+    { "spec_pattern", {}, "spec_pattern" },
+    { "spec_pattern", { "[" }, "spec_pattern" },
+    { "spec_pattern", { 3 }, "spec_pattern" },
+    { "spec_pattern", "_spec%.lua$", "spec_pattern" },
+    { "assertions", "silent", "assertions" },
+    { "isolated", "dir", "isolated" },
+    { "isolated", true, "isolated" },
+    { "jobs", 0, "jobs" },
+    { "jobs", 1.5, "jobs" },
+    { "jobs", 257, "jobs" },
+    { "jobs", "4", "jobs" },
+    { "host", "x", "host" },
+    { "host", "L", "host" },
+    { "filetype", "yes", "filetype" },
+    { "env_allow", "REPOS_DIR", "env_allow" },
+    { "env_allow", { "*" }, "env_allow" },
+    { "env_allow", { "NVIM_LISTEN_ADDRESS" }, "env_allow" },
+    { "env_allow", { "A B" }, "env_allow" },
+    { "env_allow", { 3 }, "env_allow" },
+  }
+  for _, c in ipairs(cases) do
+    local one, warnings = project.validate({ [c[1]] = c[2] })
+    eq(#warnings, 1, ("%s = %s: one warning"):format(c[1], vim.inspect(c[2])))
+    has(warnings[1], ("key '%s'"):format(c[3]), c[1] .. ": the warning names the key")
+    has(warnings[1], "using the default", c[1] .. ": and says the default stays")
+    eq(one[c[1]], defaults[c[1]], ("%s = %s: the default stays"):format(c[1], vim.inspect(c[2])))
+  end
+
+  -- dialect: the new names, and the table form with globs
+  for _, name in ipairs({ "h", "script", "d", "busted", "auto" }) do
+    local named, named_problems = project.validate({ dialect = name })
+    eq(named_problems, {}, "dialect " .. name .. " is valid")
+    eq(named.dialect, name, "dialect " .. name .. " is taken")
+  end
+  local table_form, table_problems = project.validate({
+    dialect = { ["TESTS/x_spec.lua"] = "h", ["TESTS/hover/**"] = "busted", ["*"] = "script" },
+  })
+  eq(table_problems, {}, "the table form with a literal path, a glob and * is valid")
+  eq(table_form.dialect["TESTS/hover/**"], "busted", "the glob key is kept")
+  local _, bad_name = project.validate({ dialect = { ["*"] = "klingon" } })
+  eq(#bad_name, 1, "a table entry with an unknown dialect name is invalid as a whole")
+  local _, bad_key = project.validate({ dialect = { ["../x_spec.lua"] = "a" } })
+  eq(#bad_key, 1, "a table key with .. is invalid")
+  local _, empty_table = project.validate({ dialect = {} })
+  eq(#empty_table, 1, "an empty table is invalid")
+
+  -- DEFAULTS stays pure data (LUA-06): no function, no userdata anywhere
+  local function plain_data(value, path)
+    local t = type(value)
+    if t == "table" then
+      for k, v in pairs(value) do
+        plain_data(v, path .. "." .. tostring(k))
+      end
+    else
+      ok(t == "string" or t == "number" or t == "boolean", path .. " is plain data, not " .. t)
+    end
+  end
+  plain_data(DEFAULTS, "DEFAULTS")
+
   vim.fn.delete(tmp, "rf")
 end

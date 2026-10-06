@@ -6,7 +6,7 @@ can tell "the suite is red" from "the machinery is broken" by the code alone.
 | Code | Meaning | Examples |
 | --- | --- | --- |
 | `0` | Every spec file passed. | |
-| `1` | At least one case failed, errored or timed out. Under `--strict` also a skipped case or a discovery finding. | A failed assertion, a spec that raises, a case over its timeout, a spec listed by the project's old runner but missing on disk. |
+| `1` | At least one case failed, errored, timed out or crashed (a child editor that died: signal, native crash, exit code != 0, no result). Under `--strict` also a skipped case or a discovery finding. | A failed assertion, a spec that raises, a case over its timeout, a spec listed by the project's old runner but missing on disk. |
 | `2` | Usage or configuration error, or nothing to run. | Unknown option, no `<root>`, root is not a directory, an unusable `.testing.lua`, no spec found, a selection (`--file`, `--filter`, `--tags`, `--lf`) that matches nothing. |
 | `3` | Infrastructure error. The verdict cannot be trusted. | A dependency is missing (the message names all four places searched), the project's `minit` raised, the JSON IR or a report could not be written or failed validation, the editor was quit under the run, an internal error. |
 
@@ -26,3 +26,23 @@ Rules behind the numbers:
   (`TESTING_DEBUG=1` adds the traceback).
 
 `scripts/test.sh` adds one case of its own: `nvim` not on `PATH` is exit `3`.
+
+## A file that dies or hangs
+
+In a child editor (`isolated = "file"`, every `script`) one file cannot take the run down with it. A
+file whose editor died (segfault, `os.exit`, a signal, no result) is one `crash` case, a file that
+exceeded its hard limit (the process tree is killed) is one `timeout` case; both are red (exit `1`),
+every other file still runs and reports. In the one-process mode (`--isolated none`) a native crash
+ends the whole run, and the shell reports the signal (`139` for a segfault) without a report: that is
+what the child mode is for.
+
+## `testing migrate`
+
+The migration tooling has its own codes, because its question is different:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The plan was printed (dry run), or written (`apply`), or there is nothing to do. |
+| `1` | `--check` only: the plan is not empty, the repository is not migrated yet. |
+| `2` | Bad usage, or `apply` refused (dirty working tree, not a git repository, a file changed since the plan, a symlink target). Nothing is written when anything is refused. |
+| `3` | The root cannot be analysed. |

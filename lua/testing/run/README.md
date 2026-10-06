@@ -7,6 +7,9 @@ IR; nothing here prints test results itself.
 |--------|---------|
 | [`testing.run.project`](project.lua) | One `testing run`: minit, discovery, selection and order, the run, reporters, history, sentinel, exit code |
 | [`testing.run.inproc`](inproc.lua) | The driver: runs the planned files in their dialect under a timeout guard, builds the IR; `list`, `sanitize`, `write_json` |
+| [`testing.run.isolated`](isolated.lua) | The isolated driver: one child editor per spec file, a pool of them (`--jobs`), results merged in file order, hard timeouts, crash classification |
+| [`testing.run.options`](options.lua) | The isolation options (`isolated`, `jobs`, `host`, `filetype`, `assertions`, `env_allow`) read from ONE place: flags win over `.testing.lua` |
+| [`testing.child`](../child/README.md) | One child editor: argv, sandbox, environment, start, process-tree kill; `boot.lua` runs inside it |
 | [`testing.run.select`](select.lua) | Pure: `--file`/`--filter`/`--tags` matching, `--lf` grouping, deterministic shuffle |
 | [`testing.run.timeout`](timeout.lua) | Best-effort in-process timeouts (count hook, `vim.wait` clamp) |
 | [`testing.history`](../history.lua) | `runs.jsonl` behind `--lf` / `--ff` (untrusted input when read back) |
@@ -94,9 +97,17 @@ case deadline is one-shot and re-armed by the driver after each case. The status
 `case_ms` applies per `it` of a busted file. The one-case-per-file dialects have no case boundary
 inside the file, so only `file_ms` applies there.
 
+**Child editors have hard limits.** With `--isolated file` (default for busted files) the file runs
+in a child process (`testing.child`) and the POOL enforces the limits from outside: `file_ms` plus a
+2 s grace since the start, and for busted files `case_ms` plus the grace without a new case once the
+first one finished (loading a big file is not a stuck case). The whole process tree is killed
+(Windows `taskkill /T /F`, POSIX the process group), the status is `timeout` for that file only, the
+cases that finished before are kept, the run goes on. The in-child guard above still runs first and
+usually ends the file with the precise message.
+
 **Not interruptible in-process:** a spec blocked inside C (`vim.system(...):wait()` without a timeout,
-`io.read`, a blocking `vim.fn.system`, a stuck RPC call) is not stopped. The real kill needs the child
-driver of M2 (a separate process that can be killed).
+`io.read`, a blocking `vim.fn.system`, a stuck RPC call) is not stopped in this editor. Run it in a
+child (`--isolated file`): that is what the kill is for.
 
 ## Output shapes
 

@@ -40,18 +40,37 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | --- | --- | --- | --- |
 | `plugin` | string, letters/digits/`._-` | directory name without `.nvim` | Lua module root of the project. |
 | `roots` | non-empty list of relative paths without `..` | `{ "TESTS" }` | Spec roots below the project root. |
-| `dialect` | `"auto"`, `"testing"`, `"a"`, `"b"`, `"c"`, `"d"`, `"busted"` | `"auto"` | `"auto"` sniffs the dialect per file; a name forces one dialect for every file. See [DIALECTS.md](DIALECTS.md). |
-| `minit` | `false` or relative path | `"TESTS/minimal_init.lua"` | Minimal init of the project, for isolated child runs. |
+| `spec_pattern` | non-empty list of Lua patterns | `{ "_spec%.lua$" }` | What makes a file below a root a spec, matched against its project-relative path. A project whose specs lack the suffix (self-running scripts such as `TESTS/units.lua`) names its own, e.g. `{ "_spec%.lua$", "^TESTS/[%w_]+%.lua$" }`. `harness.lua`, `run.lua` and `minimal_init.lua` directly in a root are never specs; `TESTS/refs/run.lua` is one when a pattern names it. |
+| `dialect` | one of `"auto"`, `"testing"`, `"a"`, `"b"`, `"c"`, `"d"`, `"h"`, `"busted"`, `"script"`, or a table `{ ["<path or glob>"] = "<name>", ["*"] = "<name>" }` | `"auto"` | `"auto"` sniffs the dialect per file; a name forces one dialect for every file; the table form sets it per file (a literal relative path wins over a glob with more literal characters, the lone `"*"` is the fallback; `*` is one segment, `**` crosses segments, `?` one character). See [DIALECTS.md](DIALECTS.md). |
+| `assertions` | `"error"` or `"warn"` | `"error"` | A case without a single assertion: `"error"` fails it (the default, "a case that asserts nothing proves nothing"); `"warn"` passes it, records `no_assertions` and a note in the IR, and the terminal lists the cases. A migrated plenary repository uses `"warn"`: plenary let such cases pass. |
+| `isolated` | `"auto"`, `"none"` or `"file"` | `"auto"` | `"file"`: every spec file runs in a child editor of its own; `"none"`: all in this editor; `"auto"`: `"file"` for busted files, `"none"` for the other dialects. A `script` is always a child. |
+| `jobs` | integer 1..256 | `1` | Child editors running at once. The report is the same for any value. |
+| `host` | `"c"` or `"l"` | `"c"` | How a child starts: `"c"` like plenary's host (a `-c` command: `vim.v.vim_did_enter` is `0`, `expand("<cword>")` works), `"l"` like `nvim -l`. |
+| `filetype` | boolean | `true` | A child runs `filetype plugin indent on` (plenary's minimal init does). |
+| `env_allow` | list of names, each optionally ending in `*` | `{}` | Environment variables a child may inherit on top of the built-in allowlist (`PATH`, `HOME`, `LANG`, `LC_*`, ...; secrets are never passed). `{ "REPOS_DIR", "MAGICK_*" }`. A bare `*` and names starting with `NVIM` are refused. `--env-allow` adds to it. |
+| `minit` | `false` or relative path | `"TESTS/minimal_init.lua"` | Minimal init of the project; it runs in this editor and in every child before the spec. |
 | `deps` | list of directory names | `{}` | Dependencies the run needs (see below). A missing one is exit code `3`. |
 | `setup` | table | `{}` | Options the conformance suite calls the plugin's `setup()` with (reserved). |
-| `timeouts.case_ms` | integer > 0 | `10000` | Hard timeout of one case. |
-| `timeouts.file_ms` | integer > 0 | `60000` | Hard timeout of one spec file. |
+| `timeouts.case_ms` | integer > 0 | `10000` | Timeout of one case: a guard in this editor, **hard** in a child (a busted file whose child writes no new case for `case_ms` + 2 s is killed with its process tree). |
+| `timeouts.file_ms` | integer > 0 | `60000` | Timeout of one spec file; hard in a child (`file_ms` + 2 s, then the process tree is killed and the file is one `timeout` case). |
 | `conformance.load_budget_ms` | number >= 0 | `40` | Reserved (conformance suite). |
 | `coverage.bindings`, `coverage.commands` | number 0..1 | `0` | Reserved (coverage gates; `0` = report only). |
 | `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | Reserved (snapshots). |
 | `backends.luals`, `.pty`, `.playwright`, `.webdriver` | boolean | `false` | Reserved (optional backends). |
 
 "Reserved" keys are validated and kept, but nothing acts on them yet.
+
+### Child editors
+
+With `isolated = "file"` (and for every `script` file) a spec file runs in a **child editor**:
+`nvim -n -i NONE --headless -u NORC`, started from the project root with an environment allowlist
+(`env_allow`) and its own `stdpath` data/state/cache/config and temp directories, stdin from the null
+device. The editor's runtime plugins load (netrw, matchit, ...), the dependencies and the project's
+`minit` are on its runtimepath, and the `$<NAME>_DIR` of every resolved dependency is set, so an
+editor a spec starts itself finds them too. A child that dies (native crash, `os.exit`, no result)
+becomes **one** `crash` case of that file; one that exceeds its limit is killed with its whole process
+tree and becomes one `timeout` case. Either way the other files run on. See
+[the child driver](../lua/testing/child/README.md).
 
 ### Dependencies
 

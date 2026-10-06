@@ -1,5 +1,6 @@
 -- TESTS/testing/scaffold_spec.lua -- `testing init`: the generated files, their invariants (NEW-39/40/45/49),
 -- no overwrite, force, hostile names (SEC-42/46) and a real run of what was generated.
+---@diagnostic disable: param-type-mismatch, need-check-nil
 
 return function(H)
   local ok = H.ok
@@ -481,6 +482,60 @@ return function(H)
   local red = run({ bash, "scripts/test.sh" }, run_proj, deps_env)
   eq(red.code, 1, "a broken module makes the generated setup exit 1")
   lacks(red.stdout, "TESTING_OK", "and no green sentinel is printed")
+
+  -- ---------------------------------------------------------------- pieces the migration reuses
+
+  -- the run arguments baked into test.sh: empty for `init` (byte-identical to before), a vetted block otherwise
+  local vars = assert(scaffold.build_vars("pl", { "lib.nvim" }, "StefanBartl"))
+  eq(vars.RUN_ARGS, "", "build_vars: no extra run arguments by default")
+  eq(vars.ALL_DEPS, { "testing.nvim", "lib.nvim" }, "build_vars: the runner comes first")
+  eq(vars.PLUGIN, "pl", "build_vars: the plugin")
+  local plain_sh = assert(scaffold.render_template("test.sh.tpl", vars))
+  has(plain_sh, 'run . "$@"', "render_template: no run arguments leave no gap")
+  lacks(plain_sh, "run .  ", "render_template: and no double space")
+  local sentinel_vars =
+    assert(scaffold.build_vars("pl", {}, "StefanBartl", { RUN_ARGS = " --sentinel 'PL_OK'" }))
+  has(
+    assert(scaffold.render_template("test.sh.tpl", sentinel_vars)),
+    "run . --sentinel 'PL_OK' \"$@\"",
+    "render_template: extra run arguments land before the user's arguments"
+  )
+  local no_tpl, no_tpl_err = scaffold.render_template("nope.tpl", vars)
+  eq(no_tpl, nil, "render_template: an unknown template is an error")
+  has(no_tpl_err, "cannot read template", "with the reason")
+  local lost, lost_err = scaffold.render_template("test.sh.tpl", { PLUGIN = "x" })
+  eq(lost, nil, "render_template: a missing placeholder value is an error")
+  has(lost_err, "no value for placeholder", "that names the problem")
+
+  -- dep_step: the checkout step of one dependency, in the layout of the job
+  local step = assert(scaffold.dep_step("lib.nvim"))
+  has(step, "path: .deps/lib.nvim\n", "dep_step: .deps/ by default")
+  has(step, 'repository: "StefanBartl/lib.nvim"', "dep_step: from the owner's repository")
+  has(step, "ref: ci-verified", "dep_step: from the verified branch")
+  has(
+    assert(scaffold.dep_step("ui.nvim", "someone", "")),
+    "path: ui.nvim\n",
+    "dep_step: an empty prefix is a sibling"
+  )
+  has(
+    assert(scaffold.dep_step("ui.nvim", "someone", "")),
+    '"someone/ui.nvim"',
+    "dep_step: with the owner given"
+  )
+  for _, bad_prefix in ipairs({ "../", "/abs/", "a b/", "x;y/", "$(id)/", 42 }) do
+    local t, e = scaffold.dep_step("lib.nvim", "StefanBartl", bad_prefix)
+    eq(t, nil, "dep_step refuses the prefix " .. vim.inspect(bad_prefix))
+    eq(e, "invalid path prefix", "with a reason")
+  end
+  eq((scaffold.dep_step("../evil")), nil, "dep_step refuses a path as a dependency name")
+  eq((scaffold.dep_step("lib.nvim", "bad owner")), nil, "dep_step refuses an invalid owner")
+
+  -- the artifact step of the migration is plain data too
+  local art =
+    assert(scaffold.render_template("ci_artifact_step.yml.tpl", { SUFFIX = "-${{ matrix.os }}" }))
+  has(art, "name: testing-ir-${{ matrix.os }}", "the artifact name carries the suffix")
+  has(art, "if: failure()", "it is uploaded when the job fails")
+  has(art, "path: ${{ runner.temp }}/testing-ir.json", "the IR is what it uploads")
 
   vim.fn.delete(tmp, "rf")
 end

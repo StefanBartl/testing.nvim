@@ -140,14 +140,16 @@ finding lib.nvim while the editor works), an info is something not checked.
 
 >sh
     nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor] [{root}] [options]
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [{path}] [options]
 <
 Run it from {root}: specs that look at "this repository" read the working
 directory and the runner does not change it. `scripts/test.sh` runs this
 repository's own specs this way.
 
 Subcommands: `run` (default), `list` (= `run --list`), `doctor` (resolved
-configuration and dependency report). `init` is available as |:Testing| init
-only.
+configuration and dependency report), `migrate` (plan or write the move of a
+repository to testing.nvim, see |testing-migrating|). `init` is available as
+|:Testing| init only.
 
 Selection ~
   --file {text}      Only spec files whose file name contains {text}
@@ -165,9 +167,19 @@ Control ~
   --shuffle, --seed {n}
                      Random order; the seed is printed.
   --case-timeout {ms}, --file-timeout {ms}
-                     Timeouts (best effort: Lua code and `vim.wait`, not a
-                     spec that blocks inside C).
+                     Timeouts. In this editor best effort (Lua code and
+                     `vim.wait`, not a spec that blocks inside C); in a child
+                     editor hard: the child and its process tree are killed.
   --strict           A skipped case or a discovery finding makes the run red.
+  --isolated {none|file}
+                     `file`: every spec file in a child editor of its own (a
+                     crash, a hang or a prompt ends that file only). Default
+                     `auto`: busted files `file`, the others `none`; a
+                     `script` is always a child.
+  --jobs {n}         Child editors at once; the report is the same for any n.
+  --host {c|l}       A child starts like plenary's host (`c`, default) or like
+                     `nvim -l`.
+  --env-allow {name} An environment variable (or PREFIX*) a child may inherit.
 
 Output ~
   --reporter {name}  Terminal reporter.
@@ -192,11 +204,22 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
 
   plugin       string       Module root of the project.
   roots        string[]     Spec roots, relative. Default { "TESTS" }.
-  dialect      string       "auto" (default), "testing", "a", "b", "c", "d",
-                            "busted".
+  spec_pattern string[]     Lua patterns that make a file a spec. Default
+                            { "_spec%.lua$" }.
+  dialect      string|table "auto" (default), "testing", "a", "b", "c", "d",
+                            "h", "busted", "script"; or { [path or glob] =
+                            name, ["*"] = name }.
+  assertions   string       "error" (default): a case without assertions
+                            fails; "warn": it passes and is listed.
+  isolated     string       "auto" (default), "none", "file".
+  jobs         integer      Child editors at once. Default 1.
+  host         string       "c" (default) or "l".
+  filetype     boolean      Children run `filetype plugin indent on`.
+  env_allow    string[]     Environment names a child may inherit on top of
+                            the allowlist (never NVIM*, never a bare "*").
   minit        false|string Minimal init, run before the specs.
   deps         string[]     Dependencies that must resolve (exit 3 if not).
-  timeouts     table        case_ms (10000), file_ms (60000).
+  timeouts     table        case_ms (10000), file_ms (60000); hard in a child.
   setup, conformance, coverage, snapshots, backends
                             Validated, reserved: nothing acts on them yet.
 
@@ -207,15 +230,19 @@ and stdpath('data')/lazy/<name>; the message of a miss names all four.
 10. Exit codes                                                  *testing-exit-codes*
 
   0   Every spec file passed.
-  1   A case failed, errored or timed out (under --strict also a skip or a
-      discovery finding).
+  1   A case failed, errored, timed out or crashed (a child editor that died);
+      under --strict also a skip or a discovery finding.
   2   Usage or configuration error, or nothing to run (also a selection that
       matches nothing).
   3   Infrastructure error: a dependency is missing, minit raised, a report
       could not be written, the editor was quit under the run, an internal
       error.
 
-A spec cannot end the run: `os.exit` inside a spec is an error of that file.
+A spec cannot end the run: `os.exit` inside a spec is an error of that file
+(in a child editor it is a `crash` of that file; the others run on).
+
+`testing migrate`: 0 done or nothing to do, 1 (`--check`) work to do, 2 refused
+or bad usage, 3 the root cannot be analysed.
 
 ==============================================================================
 11. Dialects                                                      *testing-dialects*
@@ -227,7 +254,12 @@ The dialect of a file is sniffed from its text (`dialect = "auto"`) or forced.
   d         `require("harness")` and `M.run()` (spotlight.nvim). One case per
             file.
   h         `return function(H)` on the project's own `TESTS/harness.lua`.
-            One case per file.
+            One case per file. Never greener than that harness: collected
+            failures, printed failure lines and fields named like a failure
+            that grew are failures.
+  script    A self-running file (own counters, `os.exit`): one case, run in a
+            child editor of its own; the exit code and the printed `[FAIL]`
+            lines are the verdict.
   busted    `describe` / `it` with before_each, after_each, setup, teardown,
             pending and a luassert subset. One case per `it`. Not supported,
             raising by name: spy, stub, mock, insulate, expose, finally,
@@ -254,9 +286,13 @@ XML for any input). A reporter that fails is exit code 3.
 ==============================================================================
 13. Migrating from busted or plenary                             *testing-migrating*
 
-Specs stay unchanged. Check out lib.nvim where the runner finds it, run the
-runner from the plugin root, read what it says about spec locations, unknown
-dialects and unsupported luassert features, then point scripts/test.sh and CI
-at the runner and remove the old one. See docs/MIGRATING.md.
+Specs stay unchanged. `testing migrate` reads the repository and prints the
+plan (a `.testing.lua`, `scripts/test.sh`, `TESTS/minimal_init.lua`, the CI
+workflow as diffs, notes and risks); `testing migrate apply` writes it into a
+clean git working tree. Or by hand: check out lib.nvim where the runner finds
+it, run the runner from the plugin root, read what it says about spec
+locations, unknown dialects and unsupported luassert features, then point
+scripts/test.sh and CI at the runner and remove the old one. See
+docs/MIGRATING.md.
 
  vim:tw=78:ts=8:ft=help:norl:

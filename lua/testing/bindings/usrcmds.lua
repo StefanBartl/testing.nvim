@@ -8,6 +8,7 @@
 ---   :Testing last                repeat the last run
 ---   :Testing list [<root>] ...   list what would run
 ---   :Testing init [<root>] [--force] [--plugin=<name>]   generate the test setup of a plugin repo
+---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
 ---   :Testing health | config | doctor [<root>]
 ---
 --- Runs go to a headless child nvim (`testing.bindings.child`), never into this editor. Completion
@@ -27,6 +28,14 @@ M.last_run = nil
 ---Names of the argument types this module registers with the composer.
 M.TYPE_REPORTER = "TESTING_REPORTER"
 M.TYPE_SPEC = "TESTING_SPEC"
+M.TYPE_MIGRATE = "TESTING_MIGRATE"
+
+---Where the text of `:Testing migrate` goes (a viewer); a spec replaces it.
+---@type fun(lines: string[], title: string)
+M.viewer = function(lines, title)
+  local prefix = require("testing.config").get().notify_prefix
+  require("lib.nvim.output").create(prefix).dump(lines, title)
+end
 
 ---@param path string
 ---@return string
@@ -141,6 +150,62 @@ function M.run_all(ctx)
   start("run", { root = M.resolve_root(ctx.args.root), flags = M.child_flags(ctx.flags) })
 end
 
+---`:Testing migrate [dry-run|apply] [<root>]`: plan the migration of a repository (nothing is written
+---without the word `apply`, and `apply` refuses a repository with uncommitted changes). The first
+---word is the mode when it is `dry-run` or `apply`, else it is the root.
+---@param ctx Testing.Usrcmds.MigrateCtx
+---@return Testing.Migrate.Plan|nil plan
+---@return Testing.Migrate.ApplyResult|nil applied
+function M.migrate(ctx)
+  local notify = require("testing.notify").get()
+  local migrate = require("testing.migrate")
+  local mode, root = ctx.args.mode, ctx.args.root
+  if mode ~= nil and mode ~= "dry-run" and mode ~= "apply" then
+    if root ~= nil then
+      notify.error(
+        ("testing migrate: %s is neither dry-run nor apply"):format(
+          require("testing.migrate.text").show(mode, 60)
+        )
+      )
+      return nil, nil
+    end
+    mode, root = nil, mode
+  end
+  local dir = M.resolve_root(root)
+  local plan = migrate.run(dir, { fleet_root = ctx.flags["fleet-root"] })
+  local applied
+  local lines = vim.split(migrate.render(plan, { format = "text" }), "\n", { plain = true })
+  local level = "info"
+  local summary
+  if plan.error then
+    level, summary = "error", ("cannot analyse %s: %s"):format(dir, plan.error)
+  elseif plan.skipped then
+    summary = ("%s is not a migration target"):format(plan.name)
+  elseif plan.empty then
+    summary = ("%s is migrated: nothing to do"):format(plan.name)
+  elseif mode == "apply" then
+    applied = migrate.apply(plan, { apply = true })
+    if #applied.errors > 0 then
+      level, summary = "error", "migration refused: " .. table.concat(applied.errors, "; ")
+    else
+      summary = ("%s: %d file(s) written: %s"):format(
+        plan.name,
+        #applied.applied,
+        table.concat(applied.applied, ", ")
+      )
+    end
+    vim.list_extend(lines, { "", summary })
+  else
+    summary = ("%s: %d operation(s) planned (dry run, nothing written; `:Testing migrate apply` writes)"):format(
+      plan.name,
+      #plan.ops
+    )
+  end
+  M.viewer(lines, "testing migrate " .. plan.name)
+  notify[level](summary)
+  return plan, applied
+end
+
 ---The route tree of `:Testing`.
 ---@return table[]
 function M.routes()
@@ -231,6 +296,16 @@ function M.routes()
       end,
     },
     {
+      path = { "migrate" },
+      desc = "Plan the move of a plugin repo to testing.nvim (dry-run; `apply` writes into a clean git tree)",
+      args = {
+        { name = "mode", type = M.TYPE_MIGRATE, optional = true },
+        { name = "root", type = "DIR", optional = true },
+      },
+      flags = { { name = "fleet-root", type = "DIR" } },
+      run = M.migrate,
+    },
+    {
       path = { "health" },
       desc = "Run :checkhealth testing",
       run = function()
@@ -271,6 +346,19 @@ local function register_types(composer)
       return prefix(require("testing.args").REPORTERS, lead)
     end,
   })
+  composer.register_type(M.TYPE_MIGRATE, {
+    validate = function(raw)
+      if raw == "" then
+        return false, nil, "expected dry-run, apply or a directory"
+      end
+      return true, raw, nil
+    end,
+    complete = function(lead)
+      local out = prefix(require("testing.migrate").MODES, lead)
+      vim.list_extend(out, vim.fn.getcompletion(lead, "dir"))
+      return out
+    end,
+  })
   composer.register_type(M.TYPE_SPEC, {
     validate = function(raw)
       if raw == "" then
@@ -305,7 +393,7 @@ function M.register()
     local composer = require("lib.nvim.bindings.usercmd.composer")
     register_types(composer)
     composer.verb("Testing", {
-      desc = "testing.nvim: run, file, last, list, init, health, config, doctor",
+      desc = "testing.nvim: run, file, last, list, init, migrate, health, config, doctor",
       default = function()
         M.run_all({ args = {}, flags = {} })
       end,

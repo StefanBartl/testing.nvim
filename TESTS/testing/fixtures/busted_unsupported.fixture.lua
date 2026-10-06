@@ -2,6 +2,7 @@
 -- loudly and name themselves; they must never pass.
 -- luacheck: globals describe it assert stub spy
 ---@diagnostic disable: undefined-global
+---@diagnostic disable: param-type-mismatch, missing-parameter
 
 describe("unsupported", function()
   it("uses a luassert stub", function()

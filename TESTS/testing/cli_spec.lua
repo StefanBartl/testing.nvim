@@ -279,6 +279,20 @@ return function(H)
   eq(code, 0, "--sentinel: exit 0")
   has(out, "CUSTOM_OK", "--sentinel overrides the hint")
 
+  -- `migrate` is a subcommand with its own arguments and exit codes (testing.migrate.main)
+  local mig = vim.fs.normalize(vim.fn.tempname()) .. "-mig"
+  write(mig .. "/TESTS/a_spec.lua", 'return function(H)\n  H.eq(1, 1, "a")\nend\n')
+  code, out = run({ "migrate", "dry-run", mig, "--markdown" })
+  eq(code, 0, "migrate dry-run: exit 0\n" .. out)
+  has(out, "operation(s) planned. Dry run: nothing has been written", "the plan is printed")
+  eq(vim.uv.fs_stat(mig .. "/.testing.lua"), nil, "and nothing was written")
+  code = run({ "migrate", "--check", mig })
+  eq(code, 1, "migrate --check on a repository that has work to do: exit 1")
+  code, out, errout = run({ "migrate", "--no-such-option", mig })
+  eq(code, 2, "migrate with a bad option: exit 2\n" .. out .. errout)
+  has(errout, "usage: testing migrate", "the usage goes to stderr")
+  vim.fn.delete(mig, "rf")
+
   local json_file = root .. "/out/r.json"
   code, out = run({ root, "--json", json_file })
   eq(code, 0, "--json on a green project: exit 0\n" .. out)

@@ -65,7 +65,7 @@ end
 ---@param files (Testing.Discover.File|string)[]
 ---@param default_dialect string
 ---@return Testing.Inproc.Entry[]
-local function entries_of(root, files, default_dialect)
+function M.entries_of(root, files, default_dialect)
   local relpath = require("lib.nvim.fs.relpath")
   local out = {}
   for _, f in ipairs(files) do
@@ -137,7 +137,10 @@ end
 ---@field timeouts? { case_ms?: integer, file_ms?: integer } Milliseconds; nil = no limit.
 ---@field findings? Testing.Discover.Finding[] Discovery findings: attached to the case of their file; under `strict` a synthetic failing case.
 ---@field strict? boolean Warn/error findings and skipped cases make the run red.
+---@field assertions? "error"|"warn" What a case without assertions is (`testing.policy`); default `error`.
+---@field skip_facts? boolean Do not ask git for the header (a child editor: the parent owns it).
 ---@field on_case? fun(case: Testing.Result.Case) Progress hook, called for every recorded case.
+---@field on_case_early? fun(case: Testing.Result.Case) Called the moment a dialect finishes a case, long before the file is over (a child editor streams these, so a kill keeps them). The case may still be adjusted afterwards (file deadline); `on_case` sees the final one.
 ---@field clock? Testing.Assert.Clock Case clock in ms (default `vim.uv.hrtime`).
 
 ---@class Testing.Inproc.Report
@@ -152,6 +155,26 @@ end
 ---@field stopped boolean `--maxfail` stopped the run.
 ---@field wall_ms number Wall time of the file loop.
 ---@field exit_code integer 0 green, 1 at least one red case (or, under `strict`, a skip / a finding).
+
+---The empty IR of a run: header facts (nvim, os, git HEAD of the root) and no cases.
+---@param root string Project root, no trailing slash.
+---@param opts { seed?: integer, argv?: string[], jobs?: integer, skip_facts?: boolean }
+---@return Testing.Result
+function M.begin_result(root, opts)
+  local facts = run_facts(root)
+  return result.new({
+    root = root,
+    project_key = facts.project_key,
+    nvim = facts.nvim,
+    os = facts.os,
+    arch = facts.arch,
+    -- a child editor reports cases only: the parent owns the header, and a `git` per child is time
+    git = (not opts.skip_facts) and git_facts(root) or nil,
+    seed = opts.seed,
+    jobs = opts.jobs or 1,
+    argv = opts.argv or {},
+  })
+end
 
 ---Make a case of `rel` for a failure of the driver itself.
 ---@param a Testing.Assert.Context
@@ -174,6 +197,41 @@ local function first_error(case)
   return case.error and case.error.message or case.status
 end
 
+---Discovery findings: attached to the case of their file, and under `strict` one failing case.
+---Shared by the in-process driver and the isolated one (`testing.run.isolated`).
+---@param res Testing.Result
+---@param a Testing.Assert.Context Context that builds the synthetic strict case.
+---@param findings Testing.Discover.Finding[]
+---@param strict boolean|nil
+---@param record fun(case: Testing.Result.Case) Adds a case to the result.
+function M.attach_findings(res, a, findings, strict, record)
+  if #findings == 0 then
+    return
+  end
+  local by_rel = {}
+  for _, c in ipairs(res.cases) do
+    by_rel[c.file] = by_rel[c.file] or c
+  end
+  local strict_findings = {}
+  for _, f in ipairs(findings) do
+    local line = ("finding [%s %s] %s"):format(f.rule, f.severity, f.message)
+    local target = f.path and by_rel[f.path]
+    if target then
+      target.notes[#target.notes + 1] = line
+    end
+    if f.severity ~= "info" then
+      strict_findings[#strict_findings + 1] = line
+    end
+  end
+  if strict and #strict_findings > 0 then
+    a.begin_case({ file = "<findings>", name = "strict: discovery findings" })
+    for _, line in ipairs(strict_findings) do
+      a.fail(line)
+    end
+    record(a.end_case())
+  end
+end
+
 ---Run the planned files and build the IR.
 ---@param opts Testing.Inproc.Opts
 ---@return Testing.Inproc.Report
@@ -181,23 +239,12 @@ function M.run(opts)
   local root = slashes(opts.root):gsub("/+$", "")
   local a = assert_mod.new({ clock = opts.clock })
   local dialect = require("testing.dialect")
-  local entries = entries_of(root, opts.files, opts.dialect or "a")
+  local entries = M.entries_of(root, opts.files, opts.dialect or "a")
   local selector = opts.selector or select_mod.new({})
   local timeouts = opts.timeouts or {}
   local maxfail = opts.maxfail
 
-  local facts = run_facts(root)
-  local res = result.new({
-    root = root,
-    project_key = facts.project_key,
-    nvim = facts.nvim,
-    os = facts.os,
-    arch = facts.arch,
-    git = git_facts(root),
-    seed = opts.seed,
-    jobs = 1,
-    argv = opts.argv or {},
-  })
+  local res = M.begin_result(root, opts)
 
   local header_cache = {}
   ---@param rel string
@@ -297,12 +344,16 @@ function M.run(opts)
             local spec = { path = entry.path, rel = rel, harness = entry.harness, root = root }
             cases = dialect.run_file(entry.dialect, a, spec, {
               select = accept,
+              assertions = opts.assertions,
               on_case = function(case)
                 if guard:take_case() then
                   case.status = "timeout"
                 end
                 seen_in_file = seen_in_file + 1
                 guard:arm_case()
+                if opts.on_case_early then
+                  pcall(opts.on_case_early, case)
+                end
                 if M.BAD[case.status] and maxfail then
                   bad_before = bad_before + 1
                   if bad_before >= maxfail then
@@ -388,32 +439,7 @@ function M.run(opts)
     record(a.end_case())
   end
 
-  -- Discovery findings: attached to the case of their file, and under `strict` one failing case.
-  local findings = opts.findings or {}
-  if #findings > 0 then
-    local by_rel = {}
-    for _, c in ipairs(res.cases) do
-      by_rel[c.file] = by_rel[c.file] or c
-    end
-    local strict_findings = {}
-    for _, f in ipairs(findings) do
-      local line = ("finding [%s %s] %s"):format(f.rule, f.severity, f.message)
-      local target = f.path and by_rel[f.path]
-      if target then
-        target.notes[#target.notes + 1] = line
-      end
-      if f.severity ~= "info" then
-        strict_findings[#strict_findings + 1] = line
-      end
-    end
-    if opts.strict and #strict_findings > 0 then
-      a.begin_case({ file = "<findings>", name = "strict: discovery findings" })
-      for _, line in ipairs(strict_findings) do
-        a.fail(line)
-      end
-      record(a.end_case())
-    end
-  end
+  M.attach_findings(res, a, opts.findings or {}, opts.strict, record)
 
   res.run.duration_ms = math.floor(wall_ms * 1000 + 0.5) / 1000
   result.finalize(res)
@@ -468,7 +494,7 @@ function M.list(opts)
   local dialect = require("testing.dialect")
   local selector = opts.selector or select_mod.new({})
   local items = {}
-  for _, entry in ipairs(entries_of(root, opts.files, opts.dialect or "a")) do
+  for _, entry in ipairs(M.entries_of(root, opts.files, opts.dialect or "a")) do
     local rel = entry.rel
     local lf_ids = opts.lf and select_mod.lf_ids(rel, opts.lf) or nil
     local function accept(id)

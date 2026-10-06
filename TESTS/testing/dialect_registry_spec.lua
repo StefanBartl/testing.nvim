@@ -35,7 +35,7 @@ return function(H)
   end
 
   -- every name of the registry has a run_file; the names the sniffer knows are all runnable
-  eq(dialect.NAMES, { "a", "b", "c", "d", "h", "busted" }, "the registry names")
+  eq(dialect.NAMES, { "a", "b", "c", "d", "h", "busted", "script" }, "the registry names")
   for _, name in ipairs(dialect.NAMES) do
     eq(type(dialect.get(name)), "function", "dialect " .. name .. " has a run_file")
   end
@@ -45,6 +45,7 @@ return function(H)
       "the sniffer's dialect " .. name .. " is in the registry"
     )
   end
+  eq(dialect.CHILD_ONLY, { script = true }, "script is the one dialect that needs its own process")
   eq(dialect.get("unknown"), nil, "`unknown` is no dialect")
   eq(dialect.get("testing"), nil, "`testing` (the native dialect) is not a shim")
   eq(dialect.get("klingon"), nil, "a typo is no dialect")
@@ -99,4 +100,12 @@ return function(H)
   eq(failed[1].line, line_of(path, "a1"), "first failure: the fixture's own line")
   eq(failed[2].line, line_of(path, "a2"), "second failure: the fixture's own line")
   eq(failed[1].msg, "first wrong", "message")
+  -- a script cannot run in the driver's process: a visible error case that says why
+  cases = dialect.run_file("script", assert_mod.new(), {
+    path = here .. "/fixtures/a_fail.fixture.lua",
+    rel = "TESTS/pickers_spec.lua",
+  })
+  eq(#cases, 1, "script through the registry: one case")
+  eq(cases[1].status, "error", "an error, not a pass: nothing ran")
+  has(cases[1].error.message, "own child process", "and it says the script needs its own process")
 end

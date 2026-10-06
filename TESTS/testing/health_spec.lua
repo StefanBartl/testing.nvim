@@ -1,5 +1,6 @@
 -- TESTS/testing/health_spec.lua -- `:checkhealth testing` resolves, reports without errors, and its
 -- levels agree with its text for every failure it can detect.
+---@diagnostic disable: duplicate-set-field
 
 return function(H)
   local ok = H.ok

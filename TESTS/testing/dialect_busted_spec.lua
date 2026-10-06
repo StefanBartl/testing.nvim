@@ -1,6 +1,7 @@
 -- TESTS/testing/dialect_busted_spec.lua -- dialect E (plenary.busted): describe/it cases are reported
 -- one by one with stable ids, hooks run in the plenary order, every failure of a body is collected,
 -- unsupported constructs fail loudly, nothing leaks into the globals.
+---@diagnostic disable: need-check-nil
 
 return function(H)
   local ok = H.ok

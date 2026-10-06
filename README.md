@@ -1,7 +1,7 @@
 > **Pre-alpha, milestone M1.** A test runner for Neovim plugins that runs the spec styles of the
-> author's plugins unchanged, tells the truth about a run, and tests itself with itself. No
-> editor UI beyond `:Testing`, no process isolation between spec files yet, and the fleet has not
-> been migrated. Expect breaking changes; do not depend on it.
+> author's plugins unchanged, tells the truth about a run, and tests itself with itself. Spec files
+> can run in a child editor of their own. No editor UI beyond `:Testing`, and the fleet has been
+> measured but not yet migrated. Expect breaking changes; do not depend on it.
 
 # testing.nvim
 
@@ -30,14 +30,18 @@ A test runner and orchestration layer for Neovim plugins, built on
 [lib.nvim](https://github.com/StefanBartl/lib.nvim). The goal is to replace busted and plenary for
 the author's plugins and to replace, extend and improve their hand-written test harnesses, with the
 existing specs running **unchanged**. What is true today: the runner runs `describe`/`it` specs
-**without plenary or busted**, runs the harness-style specs of the fleet (`return function(H)` and
-the like), tests this very repository with its own runner, and reports through a terminal reporter,
-GitHub annotations, JUnit XML and a JSON result format. Moving the fleet's repositories over is the
-next step and has not happened.
+**without plenary or busted** (verified on the 13 plenary repositories of the fleet, with a probe that
+fails when plenary is reachable), runs the harness-style specs of the fleet (`return function(H)` and
+the like, on the project's own harness where there is one), runs self-running scripts, can run every
+spec file in a child editor of its own, tests this very repository with its own runner, and reports
+through a terminal reporter, GitHub annotations, JUnit XML and a JSON result format. How close the
+fleet is to the goal is measured, not claimed: see [Fleet status](#fleet-status). Moving the fleet's
+repositories over has not happened.
 
 ## Table of contents
 
 - [Status](#status)
+- [Fleet status](#fleet-status)
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -55,13 +59,23 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   ([docs/EXIT-CODES.md](docs/EXIT-CODES.md)).
 - **Dialects** ([docs/DIALECTS.md](docs/DIALECTS.md)): `return function(H)` in the three shapes of
   lib.nvim, markdown/diff.nvim and images.nvim (`a`, `b`, `c`), spotlight.nvim's `M.run()` (`d`),
-  specs on a project's own `harness.lua` (`h`), and `describe`/`it` with a luassert subset
-  (`busted`). A failed check is recorded and the file goes on, so every failure is visible.
-  Unsupported busted features (`spy`, `stub`, `mock`, `insulate`, ...) raise by name instead of
-  passing silently.
-- **Honesty**: a case without an assertion fails; a spec cannot end the run with `os.exit`; quitting
+  specs on a project's own `harness.lua` (`h`), self-running scripts (`script`) and `describe`/`it`
+  with a luassert subset (`busted`). A failed check is recorded and the file goes on, so every
+  failure is visible. Unsupported busted features (`spy`, `stub`, `mock`, `insulate`, ...) raise by
+  name instead of passing silently.
+- **Honesty**: a case without an assertion fails (unless `assertions = "warn"`, and then the terminal
+  lists them); the runner is never greener than a project's own harness (collected failures, printed
+  `[FAIL]` lines, fields named like a failure); a spec cannot end the run with `os.exit`; quitting
   the editor mid-run is exit `3`; a selection or a skipped case never prints the "all green" last
   line; a missing dependency is reported with all four places that were searched.
+- **Child editors** ([CONFIG.md](docs/CONFIG.md#child-editors)): `isolated = "file"` (default for busted
+  files and for scripts) runs every spec file in an editor of its own, `jobs` of them at once, with an
+  environment allowlist and a sandboxed `stdpath`. A file that crashes the editor is one `crash` case,
+  a file that hangs is killed with its process tree and is one `timeout` case, a prompt nobody can
+  answer is cancelled; the other files run on.
+- **Migration** ([docs/MIGRATING.md](docs/MIGRATING.md)): `testing migrate` plans (dry run, default) or
+  writes the move of a repository to testing.nvim; specs, `TESTS/harness.lua` and `TESTS/run.lua` are
+  never touched.
 - **Selection and order**: `--file`, `--filter`, `--tags`, `--exclude-tags`, `--lf`, `--ff`,
   `-x`/`--maxfail`, `--shuffle`/`--seed`, `--list`, timeouts per case and file.
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
@@ -75,14 +89,52 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
 
 Known limits, not hidden:
 
-- All spec files share one Neovim process, like in the old runners. A spec that blocks inside C
-  (a `vim.system():wait()` without timeout) cannot be interrupted by the timeouts.
+- Without isolation (`--isolated none`, the default for the non-busted dialects) all spec files of
+  a run share one Neovim process, like in the old runners: shared `package.loaded`, globals and
+  autocmds, and a native crash ends the whole run. The timeouts are then a best-effort guard that
+  cannot interrupt a spec blocking inside C. Under `isolated = "file"` they are hard.
+- A helper a spec leaves behind after its child ended normally is not killed on Windows (no job
+  objects from Lua); on POSIX its process group is.
+- The runner itself is started with `nvim -l` (`v:vim_did_enter` is `1`, `expand("<cfile>")` raises);
+  specs that need the host of a `-c` command must run in a child (`isolated = "file"`, host `c`).
 - `effects` of a case (processes, network, writes) are not measured yet; every case says so.
 - The `init` subcommand exists only as `:Testing init`, not on the command line.
-- Not implemented at all: parallel or isolated execution, a test UI, snapshots, coverage,
-  conformance checks, adapters for other test frameworks. Keys for some of these exist in
-  `.testing.lua` and are validated, but nothing acts on them.
-- The fleet's repositories still run on their own runners.
+- Not implemented at all: a test UI, snapshots, coverage, conformance checks, guards against
+  state leaks, adapters for other test frameworks. Keys for some of these exist in `.testing.lua`
+  and are validated, but nothing acts on them.
+
+## Fleet status
+
+The goal is measured, not claimed. On 2026-10-06 (Windows 11, Neovim 0.12.2) 39 of the 41 repositories
+with specs were run twice, with their own runner (plenary or a hand-written `TESTS/run.lua`) and with
+`testing run` on a copy, using the `.testing.lua` (and, where the old minimal init loaded plenary, the
+`TESTS/minimal_init.lua`) that `testing migrate` proposes. **No spec was changed.**
+
+- **Same verdict as the old runner: 30 of 39** (case for case in the busted repositories: rules 163,
+  gitsuite 232, my 203, data 507, ui 1027, lsp 1523 including its one pending case, mdview 299, dap 246,
+  sandbox 964; and the hand-written ones such as lib 87, documentation 107, tasks, media, insights,
+  color_my_ascii, emojis, pdfport, open, ...). cascade is red under both runners, for the same reason.
+- **Differs, and the reason is known: 9.**
+  - gopath: the old runner reports 19/19 although 7 `[FAIL]` lines are printed (its harness collects
+    failures itself); the runner is red with those 7. This is the honest verdict, not parity.
+  - hover, github_stats: 2 cases each assert nothing and fail under the default `assertions = "error"`
+    (plenary let them pass); green with `assertions = "warn"`. casedesk: one spec needs `$REPOS_DIR`
+    in the child (`env_allow = { "REPOS_DIR" }`); green with it.
+  - markdown (`expand("<cfile>")` under `nvim -l`), diff (a state leak between two spec files in one
+    process, cause not found), images and spotlight (the plan puts `ui.nvim` on the runtimepath, their
+    specs need it absent; spotlight also `v:vim_did_enter`), filetree (one case of `gaps.lua` that
+    only passes while `$TEMP` is the default temp directory, reproducible without the runner: the
+    sandbox of a child redirects it).
+- Same verdict, one line lost: fileops.nvim is green, but one of its specs skips itself by design, and
+  a skip is never green, so the "all green" sentinel line its CI greps for is not printed.
+- Not measured: testing.nvim itself (its 44 spec files pass through its own runner) and plenary.nvim
+  (not part of the fleet).
+
+Per-file isolation matters: with plenary-style isolation lsp.nvim no longer ends in exit `3` (a
+language server's prompt), hover.nvim's native crash can no longer take the run down, and about 60
+cases that failed through leaked state in my, data, casedesk and ui pass. 17 cases of the plenary
+repositories assert nothing (3 of them are spec bugs, e.g. `ipairs({ nil, 0 })` whose body never
+runs); `assertions = "warn"` keeps their verdict and the terminal lists them.
 
 ## Requirements
 

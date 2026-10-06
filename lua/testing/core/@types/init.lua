@@ -139,7 +139,7 @@
 
 ---@class Testing.Result.ValidateOpts
 ---@field forbid? string[] Words (e.g. the user name, the host name) that must not occur anywhere in the IR; whole word, case-insensitive.
----@field forbid_free_text_only? boolean Check `forbid` only in free text (assertion texts, error, notes, reason), not in ids, names and file names.
+---@field forbid_free_text_only? boolean Check `forbid` and the e-mail shape only in free text (assertion texts, error, notes, reason), not in ids, names and file names.
 ---@field allow_emails? boolean Skip the e-mail address leak check (default false).
 ---@field allow_abs_paths? boolean Skip the user-home-path leak check (default false).
 

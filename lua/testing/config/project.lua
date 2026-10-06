@@ -17,8 +17,25 @@
 --- (ERR-50, ERR-22). Only a file that cannot be used at all (syntax error, raises, does not return
 --- a table, lies outside the root) is an `error`, which the CLI maps to exit code 2.
 ---
---- Keys: plugin, roots, dialect, minit, deps, setup, timeouts (used by M1) and the reserved typed
---- tables conformance, coverage, snapshots, backends (validated, not acted upon yet).
+--- Keys: plugin, roots, spec_pattern, dialect, minit, deps, setup, timeouts, assertions (used by the
+--- in-process driver), isolated, jobs, host, filetype, env_allow (used by the child driver) and the reserved
+--- typed tables conformance, coverage, snapshots, backends (validated, not acted upon yet).
+---
+--- Which key means what (defaults in `testing.config.DEFAULTS`, documented in docs/CONFIG.md):
+---   spec_pattern  Lua patterns (against the relative path) that make a file a spec; `{"_spec%.lua$"}`
+---   dialect       a name or a table `{ [<path or glob>] = <name>, ["*"] = <name> }`; the names are
+---                 "auto", "testing", "a", "b", "c", "d", "h" (the project's own harness), "busted",
+---                 "script" (a self-running script, run in its own process)
+---   assertions    "error" (a case without assertions fails) or "warn" (it passes with a warning)
+---   isolated      "none" (everything in one process), "file" (one child process per spec file) or
+---                 "auto" (default): "file" for busted files, "none" for the others;
+---                 `M.isolated_for(config, dialect)` resolves it
+---   jobs          integer >= 1, parallel child processes of an isolated run
+---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
+---                 `vim.v.vim_did_enter` is 0 while the specs run) or "l" (`nvim -l`)
+---   filetype      true (default): the host runs `filetype plugin indent on` like plenary's minimal init
+---   env_allow     environment names (or `PREFIX*`) a child may inherit on top of the built-in
+---                 allowlist; `--env-allow` adds to them
 
 local M = {}
 
@@ -95,8 +112,29 @@ local function is_bool(v)
 end
 
 ---@type table<string, true>
-local DIALECTS =
-  { auto = true, testing = true, a = true, b = true, c = true, d = true, busted = true }
+local DIALECTS = {
+  auto = true,
+  testing = true,
+  a = true,
+  b = true,
+  c = true,
+  d = true,
+  h = true,
+  busted = true,
+  script = true,
+}
+
+---@param v any
+---@return boolean
+local function is_lua_pattern(v)
+  return type(v) == "string" and v ~= "" and #v <= 200 and pcall(string.find, "", v)
+end
+
+---@param v any
+---@return boolean
+local function is_jobs(v)
+  return type(v) == "number" and v == math.floor(v) and v >= 1 and v <= 256
+end
 
 ---Schema: a leaf (`check` + `expect`) or a group of named nodes. Keys of the file that the
 ---schema does not name are reported as unknown.
@@ -112,10 +150,41 @@ local SCHEMA = {
     check = list_of(is_safe_relpath, 1),
     expect = "a non-empty list of relative paths without '..'",
   },
+  spec_pattern = {
+    check = list_of(is_lua_pattern, 1),
+    expect = 'a non-empty list of Lua patterns, e.g. { "_spec%.lua$" }',
+  },
+  assertions = {
+    check = function(v)
+      return v == "error" or v == "warn"
+    end,
+    expect = '"error" (a case without assertions fails) or "warn" (it passes with a warning)',
+  },
+  isolated = {
+    check = function(v)
+      return v == "auto" or v == "none" or v == "file"
+    end,
+    expect = '"auto", "none" (one process) or "file" (one child process per spec file)',
+  },
+  jobs = { check = is_jobs, expect = "an integer between 1 and 256" },
+  host = {
+    check = function(v)
+      return v == "c" or v == "l"
+    end,
+    expect = '"c" (started like plenary: --cmd/-c) or "l" (nvim -l)',
+  },
+  filetype = { check = is_bool, expect = "true or false" },
+  env_allow = {
+    check = list_of(function(v)
+      return (require("testing.child.env").check_entry(v))
+    end, 0),
+    expect = 'a list of environment names, each optionally ending in "*" (e.g. { "REPOS_DIR", "MAGICK_*" }); names starting with NVIM are refused',
+  },
   dialect = {
     check = function(v)
       if type(v) == "table" then
-        -- per-file overrides: { ["TESTS/x_spec.lua"] = "c", ["*"] = "a" } (literal relative paths)
+        -- per-file overrides: { ["TESTS/x_spec.lua"] = "c", ["TESTS/hover/**"] = "busted", ["*"] = "a" }
+        -- (a literal relative path or a glob: `*` within a segment, `**` across, `?` one character)
         local n = 0
         for k, name in pairs(v) do
           n = n + 1
@@ -132,7 +201,7 @@ local SCHEMA = {
       end
       return type(v) == "string" and DIALECTS[v] == true
     end,
-    expect = 'one of "auto", "testing", "a", "b", "c", "d", "busted", or a table { ["<relative spec path>" or "*"] = <one of those> }',
+    expect = 'one of "auto", "testing", "a", "b", "c", "d", "h", "busted", "script", or a table { ["<relative spec path or glob>" or "*"] = <one of those> }',
   },
   minit = {
     check = function(v)
@@ -262,6 +331,26 @@ function M.validate(raw)
   end
   apply(raw, SCHEMA, config, "", problems)
   return config, problems
+end
+
+---The isolation that applies to a spec file of `dialect`: the explicit `isolated` of the project, and
+---for `"auto"` one child process per file for busted specs (plenary ran one nvim per file and busted
+---specs were written against that) and the shared process for every other dialect. A `script` is
+---always its own process: it ends the process it runs in.
+---@param config Testing.ProjectConfig
+---@param dialect string
+---@return "none"|"file" mode
+function M.isolated_for(config, dialect)
+  if dialect == "script" then
+    return "file"
+  end
+  local mode = config.isolated
+  if mode == "file" then
+    return "file"
+  elseif mode == "none" then
+    return "none"
+  end
+  return dialect == "busted" and "file" or "none"
 end
 
 ---Default `plugin` when the file does not name it.

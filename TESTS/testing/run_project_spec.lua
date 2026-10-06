@@ -468,6 +468,61 @@ return function(H)
   r = go({ mroot })
   eq(r.code, 1, "minit = false: it does not run, the spec sees no global" .. both(r))
 
+  -- =====================================================================
+  -- `.testing.lua` keys that must reach the run (review V3): spec_pattern names the scripts without the
+  -- `_spec` suffix (filetree/pickers/cmdlog), env_allow lets one variable into the child editors
+  local proot = new_root()
+  write(proot .. "/TESTS/a_spec.lua", PASS_A:format("a"))
+  write(
+    proot .. "/TESTS/tool.lua",
+    table.concat({
+      'if vim.env.TESTING_SPEC_VAR ~= "hello" then',
+      '  print("[FAIL] the variable did not arrive: " .. tostring(vim.env.TESTING_SPEC_VAR))',
+      "  os.exit(1)",
+      "end",
+      'print("[ OK ] variable")',
+      "os.exit(0)",
+      "",
+    }, "\n")
+  )
+  r = go({ proot })
+  eq(r.code, 0, "without spec_pattern only *_spec.lua runs (the script is not a spec)" .. both(r))
+  lacks(r.out, "tool.lua", "the script is not listed")
+  local SCRIPT_CFG = 'spec_pattern = { "_spec%.lua$", "/tool%.lua$" }, '
+    .. 'dialect = { ["TESTS/tool.lua"] = "script", ["*"] = "auto" }'
+  write(proot .. "/.testing.lua", "return { " .. SCRIPT_CFG .. " }\n")
+  vim.uv.os_setenv("TESTING_SPEC_VAR", "hello")
+  r = go({ proot })
+  eq(r.code, 1, "spec_pattern from .testing.lua makes the script run" .. both(r))
+  has(r.out, "tool.lua", "the script is listed")
+  has(
+    r.out .. r.err,
+    "the variable did not arrive: nil",
+    "and the child did not inherit the variable"
+  )
+  write(
+    proot .. "/.testing.lua",
+    "return { " .. SCRIPT_CFG .. ', env_allow = { "TESTING_SPEC_VAR" } }\n'
+  )
+  r = go({ proot })
+  eq(r.code, 0, "env_allow from .testing.lua lets the variable into the child" .. both(r))
+  vim.uv.os_unsetenv("TESTING_SPEC_VAR")
+
+  -- assertions = "warn": the case passes, and the terminal says so (not only the IR)
+  local wroot = new_root()
+  write(
+    wroot .. "/TESTS/quiet_spec.lua",
+    "describe('d', function()\n  it('does not throw', function() end)\n  it('asserts', function() assert.is_true(true) end)\nend)\n"
+  )
+  r = go({ wroot })
+  eq(r.code, 1, "default assertions = error: a case without assertions is red" .. both(r))
+  write(wroot .. "/.testing.lua", 'return { assertions = "warn" }\n')
+  r = go({ wroot })
+  eq(r.code, 0, "assertions = warn: green" .. both(r))
+  has(r.out, "1 case(s) passed without asserting anything", "the terminal counts them")
+  has(r.out, "TESTS/quiet_spec.lua::d::does not throw", "and names the case")
+  lacks(r.out, "d::asserts", "but not the one that asserts")
+
   ok(os.exit == exit_before, "no exit guard left behind")
   for _, d in ipairs(made) do
     vim.fn.delete(d, "rf")

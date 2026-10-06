@@ -229,6 +229,33 @@ return function(H)
   )
   eq(valid, true, "free-text-only: ids are exempt")
 
+  -- a case NAMED after an address-shaped string (ai.nvim: "https://a:b@gw.example.com:8443/p") is the
+  -- project's own word; a full sanitize must not end in exit 3 because of it, yet the same shape in
+  -- free text is still redacted
+  local mail = result.new({ root = "<repo>", id = "2026-01-01T00:00:00Z-0003" })
+  local mcase =
+    result.new_case({ file = "TESTS/x_spec.lua", name = "keeps https://a:b@gw.example.com:8443/p" })
+  mcase.status = "skip"
+  mcase.reason = "ask admin@example.com"
+  result.add_case(mail, mcase)
+  result.finalize(mail)
+  local inproc = require("testing.run.inproc")
+  local mir, mjson, merr = inproc.sanitize(mail, "<repo>")
+  ok(mir ~= nil, "an address-shaped case name does not fail the IR validation: " .. tostring(merr))
+  has(mjson or "", "gw.example.com", "the case name is kept as it is")
+  ok(
+    (mjson or ""):find("admin@example.com", 1, true) == nil,
+    "while an address in free text (the skip reason) is redacted"
+  )
+  eq(
+    result.validate(
+      json.decode(assert(result.encode(mail))),
+      { forbid_free_text_only = true, allow_abs_paths = true }
+    ),
+    false,
+    "and the validator still flags an address in free text"
+  )
+
   -- =====================================================================
   -- history: a control character in an id, or one bad id, never discards a run
   local rec = history.validate({

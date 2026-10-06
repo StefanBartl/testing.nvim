@@ -57,6 +57,10 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field case_timeout_ms? integer `--case-timeout <ms>`
 ---@field file_timeout_ms? integer `--file-timeout <ms>`
 ---@field sentinel? string `--sentinel <name>` (transitional: last line of a green run)
+---@field isolated? "none"|"file" `--isolated none|file`: run each spec file in a child editor of its own
+---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
+---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
+---@field env_allow string[] `--env-allow <name>`, repeatable: environment names a child may inherit
 ---@field timings boolean false after `--no-timings`
 ---@field given table<string, boolean> Canonical names (`json`, `maxfail`, ...) of the options the user passed.
 
@@ -265,6 +269,58 @@ local OPTIONS = {
     help = "last line of a fully green run (default: taken from <root>/TESTS/run.lua)",
   },
   {
+    name = "isolated",
+    long = "isolated",
+    kind = "value",
+    field = "isolated",
+    arg = "<none|file>",
+    help = "file: every spec file runs in a child editor of its own (default for busted files)",
+    check = function(v)
+      if v == "none" or v == "file" then
+        return nil
+      end
+      return ("--isolated must be 'none' or 'file', got '%s'"):format(v)
+    end,
+  },
+  {
+    name = "jobs",
+    long = "jobs",
+    kind = "int",
+    field = "jobs",
+    arg = "<n>",
+    min = 1,
+    help = "child editors running at once (isolated runs; default 1)",
+  },
+  {
+    name = "host",
+    long = "host",
+    kind = "value",
+    field = "host",
+    arg = "<c|l>",
+    help = "how a child starts: c = like plenary's host (default), l = nvim -l",
+    check = function(v)
+      if v == "c" or v == "l" then
+        return nil
+      end
+      return ("--host must be 'c' or 'l', got '%s'"):format(v)
+    end,
+  },
+  {
+    name = "env_allow",
+    long = "env-allow",
+    kind = "list",
+    field = "env_allow",
+    arg = "<name>",
+    help = "environment variable (or PREFIX*) a child may inherit; repeatable",
+    check = function(v)
+      local ok, why = require("testing.child.env").check_entry(v)
+      if ok then
+        return nil
+      end
+      return ("--env-allow '%s': %s"):format(v, why)
+    end,
+  },
+  {
     name = "timings",
     long = "no-timings",
     kind = "flag",
@@ -290,11 +346,13 @@ end
 function M.usage()
   local lines = {
     "usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor] [<root>] [options]",
+    "       nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [--json|--markdown] [--check] [--fleet-root=<dir>]",
     "",
     "  run      run the spec files of <root> (default)",
     "  list     list what would run (= run --list)",
     "  doctor   print the resolved configuration and the dependency report",
     "  init     scaffold .testing.lua, TESTS/minimal_init.lua, scripts/test.sh, a CI job",
+    "  migrate  plan (or write) the move of a repository from plenary / busted / its own runner to testing.nvim",
     "",
     "  <root>   project root; further positionals are paths below it",
   }
@@ -331,6 +389,7 @@ local function new_args()
     list = false,
     strict = false,
     rtp = {},
+    env_allow = {},
     timings = true,
     given = {},
   }
