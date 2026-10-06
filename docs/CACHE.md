@@ -332,6 +332,9 @@ that only touches CI files.
   spec reads"): that is the stale pass the key cannot rule out.
 - The clock and random numbers of a module, and the processes of a module that the run did not start, do not block a
   key (see "When there is no key"). `-- @cache-allow` and `-- @cache off` are the author's tools for the exceptions.
+- The stat pre-check relies on size, mtime and ctime. On a filesystem whose ctime does not change on write (seen on
+  Windows CI runners) a content change that restores size and mtime is not detected by the pre-check; use `--no-cache`
+  or `--cache-refresh` where that matters.
 - A run with cache hits keeps the sentinel (`TESTING_OK`): the cache promises the verdict of a full run. A script that
   must not be satisfied by earlier results passes `--no-cache`; CI does not use the cache by default.
 - The graph of `documentation.nvim` does not see a `require(variable)` (documentation.nvim task); this consumer does
