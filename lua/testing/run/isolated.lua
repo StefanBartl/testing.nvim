@@ -223,7 +223,8 @@ function M.classify(input)
     end
   elseif input.frag.done == nil or input.code ~= 0 or (input.signal or 0) ~= 0 then
     local why
-    if input.frag.done == nil and input.code == 0 then
+    -- a signalled child reports exit code 0 plus a signal on POSIX (libuv): that is a death, not a quit
+    if input.frag.done == nil and input.code == 0 and (input.signal or 0) == 0 then
       why =
         "the editor exited with code 0 before the file was finished (the spec quit the editor, or stdin ended)"
     else

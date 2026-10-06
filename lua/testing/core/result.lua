@@ -245,6 +245,15 @@ local function build_matchers(roots, ci)
       root = root:gsub("\\", "/"):gsub("/+$", "")
       if root ~= "" then
         list[#list + 1] = { key = ci and root:lower() or root, ph = ph }
+        -- the same place under its symlink-resolved name (macOS: /var/... is /private/var/...; a
+        -- checkout reached through a link): tools and tracebacks report either spelling
+        local real = vim.uv.fs_realpath(root)
+        if real then
+          real = real:gsub("\\", "/"):gsub("/+$", "")
+          if real ~= "" and real:lower() ~= root:lower() then
+            list[#list + 1] = { key = ci and real:lower() or real, ph = ph }
+          end
+        end
       end
     end
   end

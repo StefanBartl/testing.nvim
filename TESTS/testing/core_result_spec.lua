@@ -221,7 +221,9 @@ return function(H)
     result.validate(result.normalize(res, host_roots, { case_insensitive = ci_host }))
   ok(good, "the built result is valid: " .. joined(problems))
 
-  local text = enc(res)
+  -- the decoded IR is checked as it would be written: through the host's own roots (a checkout
+  -- below /home/<user> or /Users/<user> is a home path until it is normalized)
+  local text = enc(res, { roots = host_roots, case_insensitive = ci_host })
   has(text, '"schema_version":1', "the schema version is in the JSON")
   has(text, '"status":"fail"', "statuses are in the JSON")
   local decoded, derr = json.decode(text)
@@ -357,8 +359,15 @@ return function(H)
   -- the whole IR: no user name after normalization, a leak is caught without it
   local leaky = build()
   leaky.run.root = "E:\\repos\\demo.nvim"
-  leaky.cases[2].assertions[1].file = "E:/repos/demo.nvim/TESTS/a_spec.lua"
-  leaky.cases[3].error.traceback = leaky.cases[3].error.traceback
+  -- the assertion files recorded by build() are this machine's real spec path: make every one a
+  -- path of the synthetic demo repository, so the test does not depend on where the checkout is
+  for _, c in ipairs(leaky.cases) do
+    for _, rec in ipairs(c.assertions or {}) do
+      rec.file = "E:/repos/demo.nvim/TESTS/a_spec.lua"
+    end
+  end
+  leaky.cases[3].error.message = "E:/repos/demo.nvim/TESTS/a_spec.lua:7: boom"
+  leaky.cases[3].error.traceback = "stack traceback:\n\tE:/repos/demo.nvim/TESTS/a_spec.lua:7: in main chunk"
     .. "\nC:\\Users\\bob\\AppData\\Local\\Temp\\lua_9\\x.lua:1"
   good, problems = result.validate(leaky, { forbid = { "bob" } })
   eq(good, false, "an IR with raw paths is invalid")

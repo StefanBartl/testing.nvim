@@ -312,7 +312,21 @@ local function case_details(c, indent, lines, o, paint)
         if not where and c.file then
           where = c.file .. (c.line and (":" .. c.line) or "")
         end
-        local head = (where and (where .. "  ") or "") .. (a.msg or a.kind or "failed")
+        local msg = a.msg or a.kind or "failed"
+        if where then
+          -- a long absolute path (a deep temp dir, a CI checkout) must not push the message out of
+          -- the line: keep the tail of the path, which names the file, and the whole message
+          local first = tostring(msg):match("^[^\n]*") or ""
+          local budget = math.max(30, width - indent - 2 - #first)
+          if #where > budget then
+            local cut = #where - (budget - 3) + 1
+            while cut <= #where and where:byte(cut) >= 0x80 and where:byte(cut) < 0xC0 do
+              cut = cut + 1 -- never start inside a multi-byte character
+            end
+            where = "..." .. where:sub(cut)
+          end
+        end
+        local head = (where and (where .. "  ") or "") .. msg
         emit(lines, indent, head, width)
         if a.expected or a.actual then
           value_block(lines, a, indent + 2, o, paint)

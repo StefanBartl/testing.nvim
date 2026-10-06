@@ -100,7 +100,12 @@ end
   eq(info.kept, "kept", "child: a variable named by env_allow is")
   eq(info.job_var, nil, "child: $TESTING_CHILD_JOB is removed before the spec runs")
   eq(info.boot_var, nil, "child: $TESTING_CHILD_BOOT is removed before the spec runs")
-  eq(norm(info.cwd), norm(root), "child: the working directory is the project root")
+  -- the child reports its cwd symlink-resolved (macOS: /var/folders/... is /private/var/folders/...)
+  eq(
+    norm(vim.uv.fs_realpath(info.cwd) or info.cwd),
+    norm(vim.uv.fs_realpath(root) or root),
+    "child: the working directory is the project root"
+  )
   ok(#info.argv >= 8 and info.argv[8] == "-c", "child: host c is started with -c")
   for _, key in ipairs({ "data", "state", "cache", "config" }) do
     ok(

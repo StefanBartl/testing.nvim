@@ -186,7 +186,13 @@ return function(H)
   eq(res.summary.fail, 1, "summary: one fail")
   eq(res.summary.error, 1, "summary: one error")
   eq(res.summary.skip, 3, "summary: three skips (skips are counted, never green)")
-  local encoded = assert(result.encode(res))
+  -- the recorded assertion files are real paths of this checkout: normalize them as a report does
+  -- (a checkout below /home/<user> or /Users/<user> is a home path until it is a placeholder)
+  local host_ci = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
+  local encoded = assert(result.encode(res, {
+    roots = { repo = vim.fs.dirname(vim.fs.dirname(here)), home = vim.uv.os_homedir() },
+    case_insensitive = host_ci,
+  }))
   local good, problems = result.validate(vim.json.decode(encoded))
   ok(good, "the busted cases validate as IR: " .. table.concat(problems or {}, "; "))
 
