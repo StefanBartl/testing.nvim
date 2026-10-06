@@ -19,6 +19,12 @@
 ---@field reporter? string `--reporter=<name>`
 ---@field rtp? string[] `--rtp=<dir>`
 ---@field config? string `--config=<file>`
+---@field cached? boolean `--cached`: reuse the results of unchanged spec files
+---@field no_cache? boolean `--no-cache`
+---@field changed? boolean `--changed`: only the specs the working tree can reach
+---@field since? string `--since=<rev>`
+---@field shard? string `--shard=<i>/<n>`
+---@field raw? string[] Arguments passed verbatim (`conformance`, `surface`, `budget` have their own grammar).
 
 ---@class Testing.Child.Opts
 ---@field root string Project root (absolute); also the working directory of the child.

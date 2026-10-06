@@ -53,23 +53,50 @@ return function(H)
 
   -- ---------------------------------------------------------------- completion (UI-22/23/26)
 
-  local subcommands =
-    { "config", "doctor", "file", "health", "init", "last", "list", "migrate", "run" }
+  local subcommands = {
+    "budget",
+    "cache",
+    "config",
+    "conformance",
+    "doctor",
+    "file",
+    "health",
+    "init",
+    "last",
+    "list",
+    "migrate",
+    "run",
+    "surface",
+  }
   eq(sorted(complete("Testing ")), subcommands, "every subcommand is offered")
   eq(complete("Testing r"), { "run" }, "a prefix narrows the subcommands")
   eq(complete("Testing l"), { "last", "list" }, "a prefix narrows to the matching ones")
   eq(complete("Testing zzz"), {}, "nothing matches an unknown prefix")
 
-  eq(
-    sorted(complete("Testing run --")),
-    { "--config", "--file", "--filter", "--reporter", "--rtp" },
-    "run offers its flags"
-  )
-  eq(
-    sorted(complete("Testing list --")),
-    { "--config", "--file", "--filter", "--reporter", "--rtp" },
-    "list offers its flags"
-  )
+  eq(sorted(complete("Testing run --")), {
+    "--cached",
+    "--changed",
+    "--config",
+    "--file",
+    "--filter",
+    "--no-cache",
+    "--reporter",
+    "--rtp",
+    "--shard",
+    "--since",
+  }, "run offers its flags")
+  eq(sorted(complete("Testing list --")), {
+    "--cached",
+    "--changed",
+    "--config",
+    "--file",
+    "--filter",
+    "--no-cache",
+    "--reporter",
+    "--rtp",
+    "--shard",
+    "--since",
+  }, "list offers its flags")
   eq(sorted(complete("Testing init --")), { "--force", "--plugin" }, "init offers its flags")
   eq(complete("Testing file --"), { "--rtp" }, "file offers its flag")
   eq(complete("Testing migrate --"), { "--fleet-root" }, "migrate offers its flag")

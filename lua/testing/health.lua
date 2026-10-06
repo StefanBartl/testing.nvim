@@ -381,6 +381,118 @@ local function check_isolation(health, project)
   end
 end
 
+---Can `dir` be created and written? Looks at the nearest ancestor that exists (nothing is written).
+---@param dir string
+---@return boolean writable
+---@return string checked The directory that was tested.
+local function writable_dir(dir)
+  local uv = vim.uv or vim.loop
+  local probe = dir
+  while probe ~= "" and not uv.fs_stat(probe) do
+    local parent = vim.fs.dirname(probe)
+    if parent == probe then
+      break
+    end
+    probe = parent
+  end
+  return uv.fs_access(probe, "W") == true, probe
+end
+
+---The result cache, the affected selection, the conformance suite and the surface report: are they
+---available, and is what they read and write in order?
+---@param health table
+local function check_extensions(health)
+  health.start("testing.nvim: cache, affected selection, conformance, surface")
+  local root = vim.fs.normalize(M.project_dir())
+
+  local okc, cache = pcall(require, "testing.cache")
+  if not okc then
+    health.error("testing.cache does not load: " .. tostring(cache), {
+      "This is a defect of testing.nvim",
+    })
+  else
+    local ok_stats, stats = pcall(cache.stats, { root = root })
+    if ok_stats then
+      local writable, checked = writable_dir(stats.dir)
+      if writable then
+        health.ok(
+          ("result cache: %s is writable (%d entr%s, %.1f KB); `--cached` uses it, `--cache-clear` empties it"):format(
+            stats.dir,
+            stats.entries,
+            stats.entries == 1 and "y" or "ies",
+            stats.bytes / 1024
+          )
+        )
+      else
+        health.warn(
+          ("result cache: %s cannot be written (%s is not writable); `--cached` runs everything and stores nothing"):format(
+            stats.dir,
+            checked
+          ),
+          { "Fix the permissions of stdpath('cache'), or do not use --cached" }
+        )
+      end
+    else
+      health.warn("result cache: cannot read its state: " .. tostring(stats))
+    end
+  end
+
+  local oka, affected = pcall(require, "testing.affected")
+  if not oka then
+    health.error("testing.affected does not load: " .. tostring(affected), {
+      "This is a defect of testing.nvim",
+    })
+  else
+    local okd, doc = pcall(require, "documentation.testing")
+    if okd and type(doc) == "table" and type(doc.affected_specs) == "function" then
+      health.ok(
+        ("documentation.nvim contract is available (version %s): --changed / --since / --affected use its module graph"):format(
+          tostring(doc.CONTRACT_VERSION)
+        )
+      )
+      local fresh = affected.graph_freshness(root)
+      if fresh.status == "ok" then
+        health.ok("module graph (docs/map/module_map.json) is current")
+      elseif fresh.status == "stale" then
+        health.warn(
+          "module graph is stale: " .. fresh.message .. " (the selection runs every spec)",
+          { "Regenerate it with documentation.nvim's map generator" }
+        )
+      elseif fresh.status == "missing" then
+        health.info("module graph: " .. fresh.message .. " (the built-in heuristic is used)")
+      else
+        health.info("module graph: " .. tostring(fresh.message))
+      end
+    else
+      health.info(
+        "documentation.nvim contract is not on the runtimepath: --changed / --since / --affected use the built-in heuristic (conservative, project-local)"
+      )
+    end
+  end
+
+  local okf, conformance = pcall(require, "testing.conformance")
+  if okf then
+    health.ok(
+      ("`testing conformance` is available (%d checks; report only unless --gate)"):format(
+        #conformance.checks()
+      )
+    )
+  else
+    health.error("testing.conformance does not load: " .. tostring(conformance), {
+      "This is a defect of testing.nvim",
+    })
+  end
+  local oks, surface = pcall(require, "testing.surface")
+  local okt = oks and pcall(require, "testing.surface.track")
+  if oks and okt then
+    health.ok("`testing surface` and the tracking layer (`surface.track = true`) are available")
+  else
+    health.error("testing.surface does not load: " .. tostring(surface), {
+      "This is a defect of testing.nvim",
+    })
+  end
+end
+
 ---@param health table
 local function check_deps(health)
   health.start("testing.nvim: dependency resolution (command line)")
@@ -425,6 +537,7 @@ function M.check()
   check_deps(health)
   local project = check_project(health)
   check_isolation(health, project)
+  check_extensions(health)
 
   health.start("testing.nvim: configuration")
   local config = require("testing.config")

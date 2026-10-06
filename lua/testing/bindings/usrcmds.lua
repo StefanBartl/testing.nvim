@@ -9,6 +9,10 @@
 ---   :Testing list [<root>] ...   list what would run
 ---   :Testing init [<root>] [--force] [--plugin=<name>]   generate the test setup of a plugin repo
 ---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
+---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
+---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
+---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
+---   :Testing cache stats | clear [<root>]   the result cache of the project
 ---   :Testing health | config | doctor [<root>]
 ---
 --- Runs go to a headless child nvim (`testing.bindings.child`), never into this editor. Completion
@@ -84,7 +88,31 @@ local function run_flags()
     { name = "reporter", type = M.TYPE_REPORTER },
     { name = "rtp", type = "DIR", repeatable = true },
     { name = "config", type = "FILE" },
+    { name = "cached", bool = true },
+    { name = "no-cache", bool = true },
+    { name = "changed", bool = true },
+    { name = "since", type = "STRING" },
+    { name = "shard", type = "STRING" },
   }
+end
+
+---The verbatim arguments of a subcommand with its own grammar.
+---@param flags table<string, any>
+---@param spec { bool: string[], value: string[] } Flag names that are switches and flags that take a value.
+---@return string[] raw
+local function raw_args(flags, spec)
+  local raw = {}
+  for _, name in ipairs(spec.bool) do
+    if flags[name] then
+      raw[#raw + 1] = "--" .. name
+    end
+  end
+  for _, name in ipairs(spec.value) do
+    if type(flags[name]) == "string" then
+      raw[#raw + 1] = ("--%s=%s"):format(name, flags[name])
+    end
+  end
+  return raw
 end
 
 ---`ctx.flags` as the child's flag table.
@@ -97,10 +125,15 @@ function M.child_flags(flags)
     reporter = flags.reporter,
     rtp = flags.rtp,
     config = flags.config,
+    cached = flags.cached or nil,
+    no_cache = flags["no-cache"] or nil,
+    changed = flags.changed or nil,
+    since = flags.since,
+    shard = flags.shard,
   }
 end
 
----@param sub "run"|"list"|"doctor"
+---@param sub "run"|"list"|"doctor"|"conformance"|"surface"|"budget"
 ---@param opts Testing.Child.Opts
 local function start(sub, opts)
   local notify = require("testing.notify").get()
@@ -309,6 +342,98 @@ function M.routes()
       run = M.migrate,
     },
     {
+      path = { "conformance" },
+      desc = "Run the conformance checks K1..K15 on the project (report only unless --gate)",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = {
+        { name = "gate", bool = true },
+        { name = "only", type = "STRING" },
+        { name = "skip", type = "STRING" },
+        { name = "bridge", bool = true },
+        { name = "markdown", bool = true },
+      },
+      run = function(ctx)
+        start("conformance", {
+          root = M.resolve_root(ctx.args.root),
+          flags = {
+            raw = raw_args(ctx.flags, {
+              bool = { "gate", "bridge", "markdown" },
+              value = { "only", "skip" },
+            }),
+          },
+        })
+      end,
+    },
+    {
+      path = { "surface" },
+      desc = "List the plugin's keymaps, commands and autocmds and how much the specs exercised",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = {
+        { name = "from", type = "FILE" },
+        { name = "threshold", type = "STRING" },
+        { name = "markdown", bool = true },
+      },
+      run = function(ctx)
+        start("surface", {
+          root = M.resolve_root(ctx.args.root),
+          flags = {
+            raw = raw_args(ctx.flags, {
+              bool = { "markdown" },
+              value = { "from", "threshold" },
+            }),
+          },
+        })
+      end,
+    },
+    {
+      path = { "budget" },
+      desc = "Measure the performance budgets and compare them with the baseline",
+      args = { { name = "root", type = "DIR", optional = true } },
+      flags = {
+        { name = "update", bool = true },
+        { name = "allow-new", bool = true },
+        { name = "factor", type = "STRING" },
+      },
+      run = function(ctx)
+        start("budget", {
+          root = M.resolve_root(ctx.args.root),
+          flags = {
+            raw = raw_args(ctx.flags, { bool = { "update", "allow-new" }, value = { "factor" } }),
+          },
+        })
+      end,
+    },
+    {
+      path = { "cache", "stats" },
+      desc = "Show the size and age of the result cache of the project",
+      args = { { name = "root", type = "DIR", optional = true } },
+      run = function(ctx)
+        local root = M.resolve_root(ctx.args.root)
+        local s = require("testing.cache").stats({ root = root })
+        notify().info(
+          ("result cache of %s: %d entr%s, %.1f KB (%s)"):format(
+            root,
+            s.entries,
+            s.entries == 1 and "y" or "ies",
+            s.bytes / 1024,
+            s.dir
+          )
+        )
+      end,
+    },
+    {
+      path = { "cache", "clear" },
+      desc = "Delete the result cache of the project (it is regenerable: costs time, never correctness)",
+      args = { { name = "root", type = "DIR", optional = true } },
+      run = function(ctx)
+        local root = M.resolve_root(ctx.args.root)
+        local n = require("testing.cache").clear({ root = root })
+        notify().info(
+          ("result cache of %s cleared: %d entr%s removed"):format(root, n, n == 1 and "y" or "ies")
+        )
+      end,
+    },
+    {
       path = { "health" },
       desc = "Run :checkhealth testing",
       run = function()
@@ -397,7 +522,7 @@ function M.register()
     local composer = require("lib.nvim.bindings.usercmd.composer")
     register_types(composer)
     composer.verb("Testing", {
-      desc = "testing.nvim: run, file, last, list, init, migrate, health, config, doctor",
+      desc = "testing.nvim: run, file, last, list, init, migrate, conformance, surface, budget, cache, health, config, doctor",
       default = function()
         M.run_all({ args = {}, flags = {} })
       end,

@@ -17,7 +17,7 @@
 --- (ERR-50, ERR-22). Only a file that cannot be used at all (syntax error, raises, does not return
 --- a table, lies outside the root) is an `error`, which the CLI maps to exit code 2.
 ---
---- Keys: plugin, roots, spec_pattern, dialect, minit, deps, setup, timeouts, assertions (used by the
+--- Keys: plugin, roots, spec_pattern, dialect, minit, deps, setup, timeouts, shard, watch, budget, assertions (used by the
 --- in-process driver), isolated, jobs, host, filetype, env_allow, disable_first_run (used by the child driver and the in-process driver) and the reserved
 --- typed tables conformance, coverage, snapshots, backends (validated, not acted upon yet).
 ---
@@ -40,7 +40,10 @@
 ---   pool          { size = 0..256 (0 = jobs), reuse = bool }: the warm child pool
 ---   determinism   true (default): children start with a fixed LANG/LC_ALL and TZ
 ---   trace         true (default): a child that times out or crashes leaves a trace artifact
----   jobs          integer >= 1, parallel child processes of an isolated run
+---   jobs          integer >= 1 or "auto" (cores minus one), parallel child processes of an isolated run
+---   shard         { balance = "size"|"count"|"hash"|"history", durations = <relative json path> }: `--shard i/n`
+---   watch         { debounce_ms, poll_ms }: `--watch`
+---   budget        { factor = number >= 1, baseline = <relative json path> }: `testing budget`
 ---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
 ---                 `vim.v.vim_did_enter` is 0 while the specs run) or "l" (`nvim -l`)
 ---   filetype      true (default): the host runs `filetype plugin indent on` like plenary's minimal init
@@ -146,7 +149,7 @@ end
 ---@param v any
 ---@return boolean
 local function is_jobs(v)
-  return type(v) == "number" and v == math.floor(v) and v >= 1 and v <= 256
+  return v == "auto" or (type(v) == "number" and v == math.floor(v) and v >= 1 and v <= 256)
 end
 
 ---@param v any
@@ -167,6 +170,27 @@ end
 ---@return boolean
 local function is_module_pattern(v)
   return type(v) == "string" and #v <= 100 and v:match("^[%w_.%-]+%*?$") ~= nil
+end
+
+---A check id of the conformance suite: `K1` .. `K15` (the suite itself reports an id it does not know).
+---@param v any
+---@return boolean
+local function is_check_id(v)
+  return type(v) == "string" and v:match("^K%d%d?$") ~= nil
+end
+
+---One waiver of `conformance.waivers`: a table naming a check and a reason (the suite validates the rest).
+---@param v any
+---@return boolean
+local function is_waiver(v)
+  return type(v) == "table"
+    and type(v.check) == "string"
+    and is_check_id(v.check)
+    and type(v.reason) == "string"
+    and #vim.trim(v.reason) >= 8
+    and (v.rule == nil or type(v.rule) == "string")
+    and (v.file == nil or is_safe_relpath(v.file))
+    and (v.text == nil or type(v.text) == "string")
 end
 
 ---Schema: a leaf (`check` + `expect`) or a group of named nodes. Keys of the file that the
@@ -237,7 +261,7 @@ local SCHEMA = {
   },
   determinism = { check = is_bool, expect = "true or false" },
   trace = { check = is_bool, expect = "true or false" },
-  jobs = { check = is_jobs, expect = "an integer between 1 and 256" },
+  jobs = { check = is_jobs, expect = 'an integer between 1 and 256, or "auto" (cores minus one)' },
   host = {
     check = function(v)
       return v == "c" or v == "l"
@@ -300,10 +324,71 @@ local SCHEMA = {
       end,
       expect = "a number >= 0",
     },
+    gate = {
+      check = is_bool,
+      expect = "true or false (true: `testing conformance` exits 1 on a failed check)",
+    },
+    skip = {
+      check = list_of(is_check_id, 0),
+      expect = 'a list of check ids ("K1" .. "K15")',
+    },
+    waivers = {
+      check = list_of(is_waiver, 0),
+      expect = 'a list of tables { check = "K4", reason = "why" (>= 8 characters), rule?, file?, text? }',
+    },
+    keymaps_off = {
+      check = function(v)
+        return type(v) == "table"
+      end,
+      expect = "a table (what `setup()` is called with on top of `setup` to switch the keymaps off)",
+    },
+    timeout_ms = {
+      check = function(v)
+        return type(v) == "number" and v == math.floor(v) and v >= 1000 and v <= 600000
+      end,
+      expect = "an integer between 1000 and 600000 (milliseconds)",
+    },
+    rules_bridge = {
+      rulesets = { check = list_of(is_allow_entry, 0), expect = "a list of paths" },
+      families = {
+        check = list_of(is_allow_entry, 1),
+        expect = 'a non-empty list of rule family prefixes, e.g. { "NEW", "REL" }',
+      },
+    },
+  },
+  surface = {
+    track = {
+      check = is_bool,
+      expect = "true or false (true: the runner counts the handlers the specs exercise)",
+    },
+    threshold = { check = is_unit, expect = "a number between 0 and 1 (0 = only report)" },
+    kinds = {
+      check = list_of(function(v)
+        return v == "binding" or v == "command" or v == "autocmd" or v == "api"
+      end, 1),
+      expect = 'a non-empty list of "binding", "command", "autocmd", "api"',
+    },
+    ignore = {
+      check = list_of(is_lua_pattern, 0),
+      expect = "a list of Lua patterns that match entry ids",
+    },
+    setup_chunk = {
+      check = function(v)
+        return type(v) == "string" and v ~= "" and #v <= 4000
+      end,
+      expect = "a non-empty string (Lua code the surface is read after)",
+    },
+  },
+  cache = {
+    enabled = {
+      check = is_bool,
+      expect = "true or false (true: reuse results without --cached; ignored in CI)",
+    },
   },
   coverage = {
     bindings = { check = is_unit, expect = "a number between 0 and 1" },
     commands = { check = is_unit, expect = "a number between 0 and 1" },
+    autocmds = { check = is_unit, expect = "a number between 0 and 1" },
   },
   timeouts = {
     case_ms = { check = is_int_gt0, expect = "a positive integer (milliseconds)" },
@@ -311,6 +396,31 @@ local SCHEMA = {
   },
   snapshots = {
     dir = { check = is_safe_relpath, expect = "a relative path without '..'" },
+  },
+  shard = {
+    balance = {
+      check = function(v)
+        return v == "size" or v == "count" or v == "hash" or v == "history"
+      end,
+      expect = '"size" (file bytes), "count", "hash" or "history" (measured durations)',
+    },
+    durations = {
+      check = is_safe_relpath,
+      expect = 'a relative path without \'..\' to a JSON file { "<spec path>": <ms> } (used by balance = "history")',
+    },
+  },
+  watch = {
+    debounce_ms = { check = is_int_gt0, expect = "a positive integer (milliseconds)" },
+    poll_ms = { check = is_int_gt0, expect = "a positive integer (milliseconds)" },
+  },
+  budget = {
+    factor = {
+      check = function(v)
+        return type(v) == "number" and v == v and v >= 1 and v <= 1000
+      end,
+      expect = "a number between 1 and 1000 (a measurement may be this many times its baseline)",
+    },
+    baseline = { check = is_safe_relpath, expect = "a relative path without '..'" },
   },
   backends = {
     luals = { check = is_bool, expect = "true or false" },

@@ -38,6 +38,7 @@ local M = {}
 ---@field error? string Why the guard layer could not be installed or failed later (nil when absent or fine).
 ---@field notes string[] The guard layer's own diagnostics.
 ---@field is_open boolean A case window is open.
+---@field surface_result? { hit: string[], counts: table<string, integer> } What the surface tracker saw in the window that just closed (`testing.surface.track.hook_runner` sets it, `M.attach_surface` takes it).
 local Session = {}
 Session.__index = Session
 
@@ -217,6 +218,37 @@ end
 ---@return boolean
 local function is_flat_effects(effects)
   return effects.spawned ~= nil or effects.network ~= nil or effects.fs_outside_tmp ~= nil
+end
+
+---Put the handlers a closed window exercised (`testing.surface.track`) into the case it belongs to:
+---`case.surface = { hit = { ids... } }`. Nothing to do without a tracker or without a result. Hits that
+---arrive after the last case (a late close) are merged into that last case.
+---@param cases Testing.Result.Case[]
+---@param session? Testing.Run.GuardSession
+function M.attach_surface(cases, session)
+  local r = session and session.surface_result
+  if not r then
+    return
+  end
+  session.surface_result = nil
+  local target = cases[#cases]
+  if not target then
+    return
+  end
+  local seen, hit = {}, {}
+  for _, id in ipairs(target.surface and target.surface.hit or {}) do
+    seen[id] = true
+    hit[#hit + 1] = id
+  end
+  for _, id in ipairs(r.hit or {}) do
+    if not seen[id] then
+      seen[id] = true
+      hit[#hit + 1] = id
+    end
+  end
+  table.sort(hit)
+  ---@diagnostic disable-next-line: inject-field
+  target.surface = { hit = hit }
 end
 
 ---Put findings and effects into the cases of ONE file.

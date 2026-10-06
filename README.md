@@ -1,8 +1,9 @@
-> **Pre-alpha, milestone M2 in progress (M1 is done).** A test runner for Neovim plugins that runs
-> the spec styles of the author's plugins unchanged, tells the truth about a run, and tests itself
-> with itself. Spec files can run in a child editor of their own, guards name what a spec leaves
-> behind, and an opt-in warm pool reuses editors between files. No editor UI beyond `:Testing`. Expect
-> breaking changes; do not depend on it.
+> **Pre-alpha, milestones M0 to M2 are done, M4 and M5 are being wired in.** A test runner for Neovim
+> plugins that runs the spec styles of the author's plugins unchanged, tells the truth about a run, and
+> tests itself with itself. Spec files can run in a child editor of their own, guards name what a spec
+> leaves behind, an opt-in warm pool reuses editors between files, and an opt-in result cache skips spec
+> files that cannot have changed. No editor UI beyond `:Testing`. Expect breaking changes; do not depend on
+> it.
 
 # testing.nvim
 
@@ -93,7 +94,21 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   writes the move of a repository to testing.nvim; specs, `TESTS/harness.lua` and `TESTS/run.lua` are
   never touched.
 - **Selection and order**: `--file`, `--filter`, `--tags`, `--exclude-tags`, `--lf`, `--ff`,
-  `-x`/`--maxfail`, `--shuffle`/`--seed`, `--list`, timeouts per case and file.
+  `-x`/`--maxfail`, `--shuffle`/`--seed`, `--list`, timeouts per case and file, `--shard i/n` for CI
+  matrices, `--watch`, `--profile` ([docs/CLI.md](docs/CLI.md), [docs/PERFORMANCE.md](docs/PERFORMANCE.md)).
+- **Result cache and affected selection** ([docs/CACHE.md](docs/CACHE.md)), both opt-in and never the
+  default in CI: `--cached` does not run a spec file whose inputs (its content, the files it requires,
+  the files it reads, the runner, Neovim, the configuration) are byte-identical to an earlier green run;
+  its cases come back marked `cached` and counted as not run, a spec that reads the clock or starts a
+  process is never cached, and `--no-cache` always wins. `--changed`, `--since <rev>` and `--affected` run only
+  the specs the git changes can reach (a built-in heuristic on the `require` graph, to which the module graph of
+  documentation.nvim can only ADD specs); a change nobody can place selects every spec, and a selection is a
+  partial run that never prints the "all green" last line.
+- **Conformance and surface** ([docs/CONFORMANCE.md](docs/CONFORMANCE.md),
+  [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K15 of the gates on a
+  plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
+  keymaps, commands and autocmds and, from a run with `surface = { track = true }`, how many of them the
+  specs exercised. Both report first; neither is a gate by default.
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
   redacted, validated after writing).
@@ -125,9 +140,17 @@ Known limits, not hidden:
   per file is the exact isolation.
 - The state guard has nothing to protect in a child that runs one case (it dies with its case) and is off
   there; the cases say so. A `script` file runs without any guard, and says so as well.
-- Not implemented at all: a test UI, snapshots, coverage, conformance checks, adapters for other test
-  frameworks. Keys for some of these exist in `.testing.lua` and are validated, but nothing acts on
-  them.
+- The result cache does not know what a spec reads from a path it builds at run time with no literal anywhere
+  (declare it with `-- @cache-inputs` or opt out with `-- @cache off`), does not treat the clock or a process
+  of a MODULE as a hidden input (the effects ledger refuses a file that really started one; a clock is not seen:
+  `docs/CACHE.md`, "Known limit"), and a case selection (`--filter`, `--lf`, ...) turns it off for that run. The
+  affected selection follows `require`s, path literals and directory listings: a spec that starts a process is
+  run whenever a module changed, a spec that lists directories whenever anything changed, and a change in another
+  checkout (lib.nvim) selects nothing here.
+- Surface tracking does not work with the warm pool (it says so), a keymap with a string right-hand side
+  cannot be observed, and no threshold fails `testing run`; `testing surface` is the gate.
+- Not implemented at all: a test UI (tree, hover), snapshots, adapters for other test frameworks. Keys for
+  some of these exist in `.testing.lua` and are validated, but nothing acts on them.
 
 ## Fleet status
 
@@ -206,6 +229,10 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua . --list             # what would run, in which dialect
 ... -l scripts/testing.lua . --json out.json --junit out.xml --github
 ... -l scripts/testing.lua doctor .             # configuration and dependency report
+... -l scripts/testing.lua . --cached           # skip spec files whose inputs did not change
+... -l scripts/testing.lua . --changed          # only the specs the working tree can reach
+... -l scripts/testing.lua conformance .        # the conformance checks K1 to K15
+... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
 ```
 
 All options: [docs/CLI.md](docs/CLI.md). A run looks like this (the terminal shows absolute
@@ -234,6 +261,8 @@ summary: 1 pass, 1 fail, 1 skip (3 case(s)) in 0.00 s
 :Testing file         " the spec of the current buffer
 :Testing last         " repeat the last run
 :Testing health       " same as :checkhealth testing
+:Testing conformance  " the conformance checks of the current project
+:Testing cache clear  " delete the result cache of the project
 ```
 
 The plugin binds no keymap and registers no autocommand by default. Every subcommand, flag and
@@ -256,6 +285,10 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
+- [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format.
+- [docs/CONFORMANCE.md](docs/CONFORMANCE.md): the checks K1 to K15 and how a repository adopts them.
+- [docs/SURFACE.md](docs/SURFACE.md): the surface of a plugin and the binding coverage.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): `--profile`, `testing budget`, the worker pool, measured numbers.
 - [docs/CONFIG.md](docs/CONFIG.md): `.testing.lua` keys with types, dependency resolution, `setup()` options.
 - [docs/ISOLATION.md](docs/ISOLATION.md): the isolation modes (`none`, `soft`, `file`, `case`), the guard
   settings and the other isolation keys.
@@ -273,6 +306,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 ```sh
 scripts/test.sh                  # all specs, through this repository's own runner
 scripts/test.sh --file config    # specs whose file name contains "config"
+TESTING_CACHE_HOME=~/.cache/testing-nvim-tests scripts/test.sh --cached   # unchanged specs do not run again
 ```
 
 `scripts/test.sh` is `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua .` plus an isolated

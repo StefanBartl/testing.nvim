@@ -25,14 +25,23 @@
 local M = {}
 
 ---@type string[]
-M.SUBCOMMANDS = { "run", "init", "list", "doctor" }
+M.SUBCOMMANDS = { "run", "init", "list", "doctor", "budget", "conformance", "surface" }
+
+---Subcommand names that are parsed but not dispatched yet. Empty since the integration step wired
+---`conformance` and `surface` (`testing.cli` hands them to their own modules, with their own arguments,
+---before the run options are parsed).
+---@type string[]
+M.RESERVED_COMMANDS = {}
+
+---Largest `<n>` of `--shard i/n` (a CI matrix is never wider).
+M.MAX_SHARDS = 1000
 
 ---Reporter names `--reporter` accepts; the reporter implementation extends this list.
 ---@type string[]
 M.REPORTERS = { "term", "github", "junit", "json" }
 
 ---@class Testing.Args
----@field command "run"|"init"|"list"|"doctor"
+---@field command "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"
 ---@field help boolean `-h`/`--help`
 ---@field root? string Project root (`--root` or the first positional).
 ---@field paths string[] Positionals after the root.
@@ -67,6 +76,26 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field determinism? boolean `--no-determinism` (false); nil = the config decides
 ---@field trace? boolean `--no-trace` (false); nil = the config decides
 ---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
+---@field jobs_auto? boolean `--jobs auto`: cores minus one (the caller resolves it into `jobs`)
+---@field shard_text? string `--shard i/n` as typed
+---@field shard? { index: integer, count: integer } `--shard i/n`, validated (1 <= i <= n)
+---@field watch boolean `--watch`: re-run the affected spec files when something changes
+---@field watch_debounce_ms? integer `--watch-debounce <ms>`
+---@field watch_poll boolean `--watch-poll`: poll the file system instead of using fs events
+---@field profile boolean `--profile`: per-phase timing, slowest files and cases, histogram (`run.profile` in the IR)
+---@field baseline? string `--baseline <file>` (`budget`)
+---@field factor_text? string `--factor <x>` as typed (`budget`)
+---@field factor? number `--factor <x>`: a measurement may be this many times the baseline (`budget`)
+---@field budget_update boolean `--update` (`budget`): write the measured values as the new baseline
+---@field budget_allow_new boolean `--allow-new` (`budget`): a measured case without a baseline entry is not an error
+---@field budget_runs? integer `--runs <n>` (`budget`): measured runs per case
+---@field cache? boolean `--cached`: reuse the results of unchanged spec files, store new green ones
+---@field no_cache boolean `--no-cache`: never read or write the cache (wins over `--cached`, `--cache-refresh` and the config)
+---@field cache_refresh boolean `--cache-refresh`: run everything and store the results, never read
+---@field cache_clear boolean `--cache-clear`: delete the cache of this project and exit
+---@field affected? boolean|string `--affected` / `--affected=<rev>`: the specs the changes since `<rev>` (default `HEAD~1`) can reach
+---@field changed boolean `--changed`: the specs the working tree against `HEAD` can reach
+---@field since? string `--since <rev>`: the specs the working tree against `<rev>` can reach
 ---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
 ---@field env_allow string[] `--env-allow <name>`, repeatable: environment names a child may inherit
 ---@field first_run boolean `--first-run`: do not disable lib.nvim's first-run float (default false)
@@ -77,8 +106,10 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field name string Canonical name (no dashes, underscores): the key in `Args.given`.
 ---@field long? string Long spelling without the dashes.
 ---@field short? string Short spelling without the dash.
----@field kind "flag"|"value"|"list"|"csv"|"int"
+---@field kind "flag"|"value"|"list"|"csv"|"int"|"optvalue" `optvalue`: `--name` alone stores true, `--name=<v>` stores `<v>` (never consumes the next argument).
 ---@field field string Field of `Testing.Args` that receives the value.
+---@field word? string An `int` that also accepts this word (`--jobs auto`); the word sets `word_field`.
+---@field word_field? string
 ---@field const? any Value a `flag` stores (default true).
 ---@field arg? string Placeholder for the usage text.
 ---@field min? integer Lower bound of an `int`.
@@ -381,9 +412,11 @@ local OPTIONS = {
     long = "jobs",
     kind = "int",
     field = "jobs",
-    arg = "<n>",
+    arg = "<n|auto>",
     min = 1,
-    help = "child editors running at once (isolated runs; default 1)",
+    word = "auto",
+    word_field = "jobs_auto",
+    help = "child editors running at once (isolated runs; default 1; auto = cores minus one)",
   },
   {
     name = "host",
@@ -421,6 +454,146 @@ local OPTIONS = {
     field = "first_run",
     const = true,
     help = "keep lib.nvim's one-time first-run float enabled (a suite that tests it, such as lib.nvim's own)",
+  },
+  {
+    name = "shard",
+    long = "shard",
+    kind = "value",
+    field = "shard_text",
+    arg = "<i/n>",
+    help = "run only shard <i> of <n> (1-based; a deterministic partition of the spec files, for CI matrices; also with --list)",
+    check = function(v)
+      local _, why = M.parse_shard(v)
+      return why
+    end,
+  },
+  {
+    name = "watch",
+    long = "watch",
+    kind = "flag",
+    field = "watch",
+    help = "run, then re-run the affected spec files whenever something changes (failed files first; Ctrl-C ends it)",
+  },
+  {
+    name = "watch_debounce",
+    long = "watch-debounce",
+    kind = "int",
+    field = "watch_debounce_ms",
+    arg = "<ms>",
+    min = 1,
+    help = "quiet time after the last change before --watch re-runs (default from .testing.lua watch.debounce_ms)",
+  },
+  {
+    name = "watch_poll",
+    long = "watch-poll",
+    kind = "flag",
+    field = "watch_poll",
+    help = "--watch polls the file system instead of using fs events (network drives, exhausted watchers)",
+  },
+  {
+    name = "profile",
+    long = "profile",
+    kind = "flag",
+    field = "profile",
+    help = "per-phase timing, slowest files and cases, histogram, pool use (text on stderr; run.profile in the IR)",
+  },
+  {
+    name = "baseline",
+    long = "baseline",
+    kind = "value",
+    field = "baseline",
+    arg = "<file>",
+    help = "budget: baseline file (default budget.baseline of .testing.lua)",
+  },
+  {
+    name = "factor",
+    long = "factor",
+    kind = "value",
+    field = "factor_text",
+    arg = "<x>",
+    help = "budget: a measurement may be <x> times its baseline (default budget.factor of .testing.lua)",
+    check = function(v)
+      local n = tonumber(v)
+      if n == nil or n ~= n or n < 1 or n > 1000 then
+        return ("--factor needs a number between 1 and 1000, got '%s'"):format(v)
+      end
+      return nil
+    end,
+  },
+  {
+    name = "budget_update",
+    long = "update",
+    kind = "flag",
+    field = "budget_update",
+    help = "budget: write the measured values as the new baseline",
+  },
+  {
+    name = "budget_allow_new",
+    long = "allow-new",
+    kind = "flag",
+    field = "budget_allow_new",
+    help = "budget: a case that has no baseline entry yet is not an error (the gate compared nothing for it)",
+  },
+  {
+    name = "budget_runs",
+    long = "runs",
+    kind = "int",
+    field = "budget_runs",
+    arg = "<n>",
+    min = 1,
+    help = "budget: measured runs per case (default 5; the median counts)",
+  },
+  {
+    name = "cache",
+    long = "cached",
+    kind = "flag",
+    field = "cache",
+    const = true,
+    help = "do not run spec files whose inputs are byte-identical to an earlier green run (their cases are reported as cached)",
+  },
+  {
+    name = "no_cache",
+    long = "no-cache",
+    kind = "flag",
+    field = "no_cache",
+    help = "never read or write the result cache (wins over --cached, --cache-refresh and .testing.lua)",
+  },
+  {
+    name = "cache_refresh",
+    long = "cache-refresh",
+    kind = "flag",
+    field = "cache_refresh",
+    help = "run everything and store the green results, never read the cache",
+  },
+  {
+    name = "cache_clear",
+    long = "cache-clear",
+    kind = "flag",
+    field = "cache_clear",
+    help = "delete the result cache of this project and exit",
+  },
+  {
+    name = "affected",
+    long = "affected",
+    kind = "optvalue",
+    field = "affected",
+    arg = "[=<rev>]",
+    help = "only the specs the changes since <rev> (default HEAD~1) can reach: a developer tool, never the default in CI",
+  },
+  {
+    name = "changed",
+    long = "changed",
+    kind = "flag",
+    field = "changed",
+    help = "only the specs the working tree (against HEAD, untracked files included) can reach",
+  },
+  {
+    name = "since",
+    long = "since",
+    kind = "value",
+    field = "since",
+    arg = "<rev>",
+    help = "only the specs the working tree against <rev> can reach",
   },
   {
     name = "timings",
@@ -471,6 +644,89 @@ function M.check_allow(flag, v)
   return nil
 end
 
+---Parse `i/n` of `--shard`: 1 <= i <= n <= `MAX_SHARDS`, decimal digits only.
+---@param v string
+---@return { index: integer, count: integer }|nil shard
+---@return string|nil problem
+function M.parse_shard(v)
+  local i, n = tostring(v):match("^(%d+)/(%d+)$")
+  if not i or #i > 6 or #n > 6 then
+    return nil, ("--shard needs <i>/<n> (e.g. 2/4), got '%s'"):format(tostring(v))
+  end
+  local index, count =
+    tonumber(i), --[[@as integer]]
+    tonumber(n) --[[@as integer]]
+  if count < 1 or count > M.MAX_SHARDS then
+    return nil, ("--shard: <n> must be between 1 and %d, got %d"):format(M.MAX_SHARDS, count)
+  end
+  if index < 1 or index > count then
+    return nil, ("--shard: <i> must be between 1 and <n> (%d), got %d"):format(count, index)
+  end
+  return { index = index, count = count }, nil
+end
+
+---Options that only make sense together with something else are refused, never silently ignored.
+---@param args Testing.Args
+---@return string|nil problem
+function M.check_combination(args)
+  local given = args.given
+  if args.command == "budget" then
+    return nil
+  end
+  for _, name in ipairs({
+    "baseline",
+    "factor",
+    "budget_update",
+    "budget_allow_new",
+    "budget_runs",
+  }) do
+    if given[name] then
+      return ("--%s belongs to `budget`"):format((name:gsub("budget_", ""):gsub("_", "-")))
+    end
+  end
+  if args.watch then
+    if args.list then
+      return "--watch runs the specs; it cannot be combined with --list"
+    end
+    if args.shard then
+      return "--watch cannot be combined with --shard"
+    end
+    if args.profile then
+      return "--profile measures one run; it cannot be combined with --watch"
+    end
+  else
+    if given.watch_debounce then
+      return "--watch-debounce needs --watch"
+    end
+    if args.watch_poll then
+      return "--watch-poll needs --watch"
+    end
+  end
+  if args.profile and args.list then
+    return "--profile measures a run; it cannot be combined with --list"
+  end
+  local selecting = {}
+  if args.changed then
+    selecting[#selecting + 1] = "--changed"
+  end
+  if args.since ~= nil then
+    selecting[#selecting + 1] = "--since"
+  end
+  if args.affected then
+    selecting[#selecting + 1] = "--affected"
+  end
+  if #selecting > 1 then
+    return table.concat(selecting, " and ") .. " exclude each other"
+  end
+  if args.watch and (#selecting > 0 or args.cache or args.cache_refresh) then
+    return "--watch selects the changed files itself; it cannot be combined with --cached, --cache-refresh, --changed, --since or --affected"
+  end
+  if args.cache_clear and (#selecting > 0 or args.cache or args.cache_refresh or args.watch) then
+    return "--cache-clear only deletes the cache and exits; it cannot be combined with a run option"
+  end
+  return nil
+end
+
 ---@type table<string, Testing.Args.Option>
 local BY_LONG, BY_SHORT = {}, {}
 for _, o in ipairs(OPTIONS) do
@@ -486,12 +742,15 @@ end
 ---@return string
 function M.usage()
   local lines = {
-    "usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor] [<root>] [options]",
+    "usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor|budget|conformance|surface] [<root>] [options]",
     "       nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [--json|--markdown] [--check] [--fleet-root=<dir>]",
     "",
     "  run      run the spec files of <root> (default)",
     "  list     list what would run (= run --list)",
     "  doctor   print the resolved configuration and the dependency report",
+    "  budget   measure the performance budgets and compare them with the baseline (exit 1 when one is exceeded)",
+    "  conformance  run the conformance checks K1..K15 on <root> (own options: conformance --help)",
+    "  surface  list the plugin's surface (keymaps, commands, ...) and how much the specs exercised (surface --help)",
     "  init     scaffold .testing.lua, TESTS/minimal_init.lua, scripts/test.sh, a CI job",
     "  migrate  plan (or write) the move of a repository from plenary / busted / its own runner to testing.nvim",
     "",
@@ -536,6 +795,15 @@ local function new_args()
     allow_spawn = {},
     allow_network = {},
     first_run = false,
+    watch = false,
+    watch_poll = false,
+    profile = false,
+    budget_update = false,
+    budget_allow_new = false,
+    cache_clear = false,
+    no_cache = false,
+    cache_refresh = false,
+    changed = false,
     timings = true,
     given = {},
   }
@@ -568,8 +836,20 @@ local function apply(args, o, spelled, value)
       args[o.field] = o.const
     end
   else
+    if o.kind == "optvalue" and value == nil then
+      args[o.field] = true
+      args.given[o.name] = true
+      return nil
+    end
     if value == nil or value == "" then
       return ("option %s needs a value"):format(spelled)
+    end
+    if o.word and value == o.word then
+      args[
+        o.word_field --[[@as string]]
+      ] = true
+      args.given[o.name] = true
+      return nil
     end
     if o.check then
       local why = o.check(value)
@@ -577,7 +857,7 @@ local function apply(args, o, spelled, value)
         return why
       end
     end
-    if o.kind == "value" then
+    if o.kind == "value" or o.kind == "optvalue" then
       args[o.field] = value
     elseif o.kind == "list" then
       local list = args[o.field]
@@ -599,6 +879,14 @@ local function apply(args, o, spelled, value)
     elseif o.kind == "int" then
       local n = parse_uint(value)
       if n == nil or n < (o.min or 0) then
+        if o.word then
+          return ("option %s needs an integer >= %d or '%s', got '%s'"):format(
+            spelled,
+            o.min or 0,
+            o.word,
+            value
+          )
+        end
         return ("option %s needs an integer >= %d, got '%s'"):format(spelled, o.min or 0, value)
       end
       args[o.field] = n
@@ -618,11 +906,12 @@ function M.parse(argv)
   local positionals = {}
 
   if n >= 1 then
-    for _, name in ipairs(M.SUBCOMMANDS) do
-      if argv[1] == name then
-        args.command = name --[[@as "run"|"init"|"list"|"doctor"]]
-        i = 2
-        break
+    for _, list in ipairs({ M.SUBCOMMANDS, M.RESERVED_COMMANDS }) do
+      for _, name in ipairs(list) do
+        if argv[1] == name then
+          args.command = name --[[@as "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"]]
+          i = 2
+        end
       end
     end
   end
@@ -644,7 +933,7 @@ function M.parse(argv)
         return nil, ("unknown option %s"):format(a)
       end
       local value = inline
-      if value == nil and o.kind ~= "flag" then
+      if value == nil and o.kind ~= "flag" and o.kind ~= "optvalue" then
         local nxt = argv[i + 1]
         if nxt ~= nil and tostring(nxt):sub(1, 2) ~= "--" then
           value = tostring(nxt)
@@ -685,6 +974,16 @@ function M.parse(argv)
   end
   if args.command == "list" then
     args.list = true
+  end
+  if args.shard_text ~= nil then
+    args.shard = M.parse_shard(args.shard_text)
+  end
+  if args.factor_text ~= nil then
+    args.factor = tonumber(args.factor_text)
+  end
+  local problem = M.check_combination(args)
+  if problem then
+    return nil, problem
   end
   return args, nil
 end

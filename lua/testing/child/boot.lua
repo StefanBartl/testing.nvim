@@ -101,6 +101,20 @@ if job.disable_first_run ~= false and vim.g.lib_nvim_deps_disable_first_run == n
   vim.g.lib_nvim_deps_disable_first_run = true
 end
 
+-- surface tracking (`surface.track = true`): the layer goes in BEFORE the minit, which may call the plugin's
+-- `setup()`; it follows the runner's case windows and the cases carry `surface.hit` (docs/SURFACE.md)
+if type(job.guard) == "table" and type(job.guard.surface) == "table" then
+  local tok, track = pcall(require, "testing.surface.track")
+  if tok then
+    local hok, herr = pcall(track.hook_runner, job.guard.surface)
+    if not hok then
+      io.stderr:write("testing child: surface tracking failed to install: ", tostring(herr), "\n")
+    end
+  else
+    io.stderr:write("testing child: surface tracking is not available: ", tostring(track), "\n")
+  end
+end
+
 -- the project's own minimal init, as plenary's `-u minimal_init` would have run it
 if type(job.minit) == "string" then
   local mok, merr = pcall(dofile, job.minit)

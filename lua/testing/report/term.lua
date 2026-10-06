@@ -425,8 +425,11 @@ function M.render(result, opts)
   local failed_files = 0
 
   for _, g in ipairs(util.group_by_file(result)) do
-    local bad, skipped = 0, 0
+    local bad, skipped, cached = 0, 0, 0
     for _, c in ipairs(g.cases) do
+      if c.cached then
+        cached = cached + 1
+      end
       local cls = util.class_of(c.status)
       if cls == "bad" then
         bad = bad + 1
@@ -446,6 +449,10 @@ function M.render(result, opts)
     local suffix = (bad == 0 and skipped > 0 and skipped < #g.cases)
         and (" (%d skipped)"):format(skipped)
       or ""
+    if cached > 0 and cached == #g.cases then
+      -- not executed in this run (`--cached`): never look the same as a file that ran
+      suffix = suffix .. " (cached)"
+    end
     lines[#lines + 1] = paint(kind, label)
       .. (" "):rep(6 - #label)
       .. fit(g.file, width - 6 - #suffix)
@@ -510,9 +517,16 @@ function M.render(result, opts)
     local hint = bad_total > 0 and ("  (reproduce: --shuffle --seed %d)"):format(run.seed) or ""
     lines[#lines + 1] = ("seed: %d%s"):format(run.seed, hint)
   end
-  local summary = ("summary: %s (%d case(s)) in %.2f s"):format(
+  local ncached = 0
+  for _, c in ipairs(result.cases or {}) do
+    if c.cached then
+      ncached = ncached + 1
+    end
+  end
+  local summary = ("summary: %s (%d case(s)%s) in %.2f s"):format(
     table.concat(parts, ", "),
     #(result.cases or {}),
+    ncached > 0 and (", %d cached, not run"):format(ncached) or "",
     (run.duration_ms or 0) / 1000
   )
   lines[#lines + 1] =

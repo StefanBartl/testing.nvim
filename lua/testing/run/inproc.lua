@@ -148,6 +148,8 @@ end
 ---@field guard_session? Testing.Run.GuardSession An already installed guard layer (the caller uninstalls it).
 
 ---@class Testing.Inproc.Report
+---@field cases_cached? integer Cases that came from the result cache (set by `testing.run.cached`).
+---@field files_cached? integer Files that came from the result cache.
 ---@field result Testing.Result The finalized IR.
 ---@field failed integer Cases that are red (`M.BAD`).
 ---@field failed_files integer Files with at least one red case.
@@ -433,6 +435,7 @@ local function run_files(opts, holder)
                     return gsess:close()
                   end)
                   vim.list_extend(unattached, prefixed(rel, guards_mod.attach({ case }, gf, ge)))
+                  guards_mod.attach_surface({ case }, gsess)
                 end
                 if opts.on_case_early then
                   pcall(opts.on_case_early, case)
@@ -506,6 +509,7 @@ local function run_files(opts, holder)
         if gsess then
           -- what happened after the last case (an `after_all`, a late timer) lands on the last case
           findings, effects = gsess:close()
+          guards_mod.attach_surface(cases, gsess)
         end
         if opts.soft then
           vim.list_extend(findings, opts.soft:leave(frame).findings)
@@ -690,12 +694,21 @@ end
 ---@return string
 function M.timing_line(res, n)
   local per_file, order = {}, {}
+  local cached_files, seen_cached = 0, {}
   for _, c in ipairs(res.cases) do
-    if per_file[c.file] == nil then
-      per_file[c.file] = 0
-      order[#order + 1] = c.file
+    if c.cached then
+      -- not executed in this run: its duration is the one of an earlier run and must not be named as slow
+      if not seen_cached[c.file] then
+        seen_cached[c.file] = true
+        cached_files = cached_files + 1
+      end
+    else
+      if per_file[c.file] == nil then
+        per_file[c.file] = 0
+        order[#order + 1] = c.file
+      end
+      per_file[c.file] = per_file[c.file] + c.duration_ms
     end
-    per_file[c.file] = per_file[c.file] + c.duration_ms
   end
   table.sort(order, function(x, y)
     if per_file[x] ~= per_file[y] then
@@ -707,10 +720,11 @@ function M.timing_line(res, n)
   for i = 1, math.min(n or 5, #order) do
     parts[#parts + 1] = ("%s %.0f ms"):format(vim.fs.basename(order[i]), per_file[order[i]])
   end
-  return ("timings: %d file(s) in %.0f ms; slowest: %s"):format(
+  return ("timings: %d file(s) in %.0f ms%s; slowest: %s"):format(
     #order,
     res.run.duration_ms,
-    table.concat(parts, ", ")
+    cached_files > 0 and (" (+ %d cached, not run)"):format(cached_files) or "",
+    #parts > 0 and table.concat(parts, ", ") or "-"
   )
 end
 

@@ -29,9 +29,10 @@ style `describe` / `it` specs, without plenary or busted), reports through a
 terminal reporter, GitHub annotations, JUnit XML and a JSON result format, and
 refuses to report a green run it cannot stand behind.
 
-This release is pre-alpha (milestone M1). All spec files share one Neovim
-process, `effects` of a case are not measured, and there is no editor UI beyond
-|:Testing|. The long form of this help is in the repository's docs/ directory.
+This release is pre-alpha. Spec files can run in a child editor of their own,
+guards name what a spec leaves behind, unchanged spec files can come from a
+result cache, and there is no editor UI beyond |:Testing|. The long form of this
+help is in the repository's docs/ directory.
 
 ==============================================================================
 2. Requirements                                               *testing-requirements*
@@ -89,16 +90,32 @@ keymaps ~
 5. Commands                                                      *testing-commands*
 
                                                                        *:Testing*
-:Testing [run] [{root}] [--file=..] [--filter=..] [--reporter=..]
+:Testing [run] [{root}] [--file=..] [--filter=..] [--reporter=..] [--cached]
+        [--no-cache] [--changed] [--since={rev}] [--shard={i}/{n}]
         Run the specs of the project in a headless child Neovim, never in this
         editor. {root} defaults to the nearest directory upwards that holds
-        `.testing.lua`, `TESTS` or `.git`.
+        `.testing.lua`, `TESTS` or `.git`. `--cached` skips spec files whose
+        inputs did not change since a green run (reported as cached);
+        `--changed` and `--since` run only the specs the changes can reach (a
+        partial run, never the "all green" last line).
 :Testing file [{spec}]    Run the spec of the current buffer.
 :Testing last             Repeat the last run.
 :Testing list [{root}]    List what would run.
 :Testing init [{root}] [--force] [--plugin={name}]
         Generate the test setup of a plugin repository. An existing file is
         never overwritten without `--force`.
+:Testing conformance [{root}] [--gate] [--only={ids}] [--skip={ids}] [--bridge]
+        Run the conformance checks K1..K15 on the project (a report; a failed
+        gate is a warning, not an error).
+:Testing surface [{root}] [--from={ir.json}] [--threshold={n}] [--markdown]
+        The keymaps, commands and autocmds of the plugin and how much of them
+        the specs exercised.
+:Testing budget [{root}] [--update] [--factor={x}] [--allow-new]
+        Measure the performance budgets of the runner. A measured case
+        without a baseline entry compared nothing: exit 2 unless
+        `--allow-new`.
+:Testing cache stats | clear [{root}]
+        Size of the result cache of the project, or delete it.
 :Testing health           Run `:checkhealth testing`.
 :Testing config           Show the effective plugin configuration.
 :Testing doctor [{root}]  Show the project configuration and the dependency
@@ -125,7 +142,10 @@ reporter registries; whether the command-line runner can find lib.nvim; the
 `.testing.lua` of the current directory; the guards and the warm pool as that
 file configures them (modes, allowances, pool size; a warning when every guard
 is off, an error when a module of the isolation machinery does not load); the
-effective configuration; and whether |:Testing| is registered.
+effective configuration; whether the result cache directory can be written, whether
+the documentation.nvim module graph of the affected selection is available and
+current, and whether the conformance suite and the surface report load; and
+whether |:Testing| is registered.
 
 It is read-only, starts no process and loads no plugin that is lazy-loaded.
 `.testing.lua` is a Lua file and loading it executes it, so the health check
@@ -141,7 +161,7 @@ finding lib.nvim while the editor works), an info is something not checked.
 8. Command-line runner                                                *testing-cli*
 
 >sh
-    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor] [{root}] [options]
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface] [{root}] [options]
     nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [{path}] [options]
 <
 Run it from {root}: specs that look at "this repository" read the working
@@ -150,8 +170,11 @@ repository's own specs this way.
 
 Subcommands: `run` (default), `list` (= `run --list`), `doctor` (resolved
 configuration and dependency report), `migrate` (plan or write the move of a
-repository to testing.nvim, see |testing-migrating|). `init` is available as
-|:Testing| init only.
+repository to testing.nvim, see |testing-migrating|), `budget` (measure the hot
+paths of a run against a baseline), `conformance` (the checks K1..K15) and
+`surface` (the plugin's keymaps, commands, ... and what the specs exercised);
+the last two have their own arguments and exit codes (docs/CONFORMANCE.md,
+docs/SURFACE.md). `init` is available as |:Testing| init only.
 
 Selection ~
   --file {text}      Only spec files whose file name contains {text}
@@ -161,6 +184,17 @@ Selection ~
   --exclude-tags     title, or a `-- @tags a b` header line in any spec.
   --lf, --ff         Only what failed last time, or that first.
   --list, --dry-run  List what would run, run nothing.
+  --shard {i}/{n}    Only shard {i} of {n} (CI matrices).
+  --changed, --since {rev}, --affected[={rev}]
+                     Only the specs the changes can reach (git, working tree
+                     against HEAD, against {rev}, or the last commit). A
+                     partial run: no "all green" last line. Anything that
+                     cannot be placed selects every spec. Never the default.
+  --cached, --no-cache, --cache-refresh, --cache-clear
+                     The result cache: a spec file whose inputs are
+                     byte-identical to an earlier green run does not run and is
+                     reported as cached. Off unless asked for; --no-cache
+                     always wins. docs/CACHE.md.
   --config {file}    Project file inside the root.
   --rtp {dir}        Add {dir} to the runtimepath (repeatable).
 
@@ -180,7 +214,9 @@ Control ~
                      file changed is restored before the next. Default
                      `auto`: busted files `file`, the others `none`; a
                      `script` is always a child.
-  --jobs {n}         Child editors at once; the report is the same for any n.
+  --jobs {n|auto}    Child editors at once; the report is the same for any n.
+  --watch            Run, then re-run on every change.
+  --profile          Where the time went (stderr; `run.profile` in the IR).
   --pool-reuse, --no-pool-reuse
                      The warm pool: with `--isolated file` the files share
                      child editors that are reset and verified clean between
@@ -237,7 +273,17 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
   determinism  boolean      Fixed LANG/LC_ALL/TZ in a child. Default true.
   trace        boolean      Trace artifact of a child that died. Default true.
   soft_keep    string[]     Modules the soft isolation never unloads.
-  jobs         integer      Child editors at once. Default 1.
+  jobs         integer|"auto" Child editors at once. Default 1.
+  shard, watch, budget
+               tables       `--shard` balance, `--watch` debounce and poll,
+                            `testing budget` factor and baseline.
+  cache        table        { enabled = boolean }: reuse results without
+                            --cached (never in CI).
+  conformance  table        gate, skip, waivers (each with a reason),
+                            keymaps_off, timeout_ms, load_budget_ms,
+                            rules_bridge: `testing conformance`.
+  surface      table        track (the runner records what the cases
+                            exercise), threshold, kinds, ignore, setup_chunk.
   host         string       "c" (default) or "l".
   filetype     boolean      Children run `filetype plugin indent on`.
   disable_first_run boolean Set lib.nvim's first-run opt-out
@@ -249,7 +295,11 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
   minit        false|string Minimal init, run before the specs.
   deps         string[]     Dependencies that must resolve (exit 3 if not).
   timeouts     table        case_ms (10000), file_ms (60000); hard in a child.
-  setup, conformance, coverage, snapshots, backends
+  setup        table        Options `setup()` is called with by conformance
+                            and surface.
+  coverage      table       bindings, commands, autocmds: 0..1 thresholds of
+                            `testing surface`.
+  snapshots, backends
                             Validated, reserved: nothing acts on them yet.
 
 A dependency is looked up in $<NAME>_DIR, <root>/.deps/<name>, <root>/../<name>
@@ -307,7 +357,10 @@ Statuses: pass, fail, error, skip, xfail, xpass, timeout, crash. Paths become
 host name, environment pairs, e-mail addresses, `Users/<name>` path shapes) and validated
 after writing. A privacy finding that redaction cannot remove becomes a top-level `warnings`
 list; it never discards the verdict.
-`effects` are not collected yet; every case says so.
+`effects` are filled by the guard layer; a case says so in its notes when the
+guard that fills them is off. Additive fields: `cases[].cached` (not executed
+in this run, from the result cache), `cases[].surface` (`surface.track`),
+`run.cache`, `run.profile`.
 
 Reporters read the IR only and treat everything from the code under test as
 hostile input: `term` (default), `github` (annotations escaped so a test name

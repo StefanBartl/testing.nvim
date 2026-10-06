@@ -25,11 +25,28 @@
 ---@alias Testing.DialectSetting Testing.Dialect|table<string, Testing.Dialect> One dialect, or { [relative path or glob] = dialect, ["*"] = dialect }.
 
 ---@class Testing.ProjectConfig.Conformance
----@field load_budget_ms number >= 0. Budget of the load-time check. Reserved (M3).
+---@field load_budget_ms number >= 0. Budget of the K10 load-time check (ms).
+---@field gate boolean `true`: `testing conformance` exits 1 on a failed check (default: report only).
+---@field skip string[] Check ids that do not run.
+---@field waivers table[] Accepted findings, each `{ check, reason, rule?, file?, text? }` (a reason is mandatory).
+---@field keymaps_off table What K3 passes to `setup()` on top of `setup`.
+---@field timeout_ms integer 1000..600000. Timeout of one call into the conformance child editor.
+---@field rules_bridge { rulesets?: string[], families: string[] } The soft bridge to rules.nvim.
+
+---@class Testing.ProjectConfig.Surface
+---@field track boolean `true`: the runner counts the handlers the specs exercise (`cases[].surface`).
+---@field threshold number 0..1 gate threshold of the overall ratio, 0 = report only.
+---@field kinds string[] Kinds counted in the ratio.
+---@field ignore string[] Lua patterns of entry ids that are not counted.
+---@field setup_chunk? string Lua code the surface is read after.
+
+---@class Testing.ProjectConfig.Cache
+---@field enabled boolean `true`: reuse results of unchanged spec files without `--cached` (ignored in CI).
 
 ---@class Testing.ProjectConfig.Coverage
----@field bindings number 0..1 gate threshold, 0 = report only. Reserved.
----@field commands number 0..1 gate threshold, 0 = report only. Reserved.
+---@field bindings number 0..1 gate threshold, 0 = report only.
+---@field commands number 0..1 gate threshold, 0 = report only.
+---@field autocmds number 0..1 gate threshold, 0 = report only.
 
 ---@class Testing.ProjectConfig.Timeouts
 ---@field case_ms integer > 0. Hard timeout of one case.
@@ -43,6 +60,18 @@
 ---@field pty boolean Reserved.
 ---@field playwright boolean Reserved.
 ---@field webdriver boolean Reserved.
+
+---@class Testing.ProjectConfig.Shard
+---@field balance "size"|"count"|"hash"|"history" How `--shard` weighs the files.
+---@field durations? string Relative path of a JSON file `{ "<spec path>": <ms> }` (opt-in: used by `history`).
+
+---@class Testing.ProjectConfig.Watch
+---@field debounce_ms integer > 0. Quiet time after the last change before `--watch` re-runs.
+---@field poll_ms integer > 0. Interval of the polling fallback.
+
+---@class Testing.ProjectConfig.Budget
+---@field factor number 1..1000. A measurement may be this many times its baseline.
+---@field baseline string Relative path of the baseline JSON.
 
 ---@alias Testing.GuardMode "off"|"warn"|"error"
 
@@ -79,7 +108,7 @@
 ---@field pool Testing.ProjectConfig.Pool
 ---@field determinism boolean Children get a fixed `LANG`/`LC_ALL` and `TZ`.
 ---@field trace boolean A child that times out or crashes leaves a trace artifact.
----@field jobs integer >= 1. Parallel child processes of an isolated run.
+---@field jobs integer|"auto" >= 1, or "auto" (cores minus one; `testing.cli` resolves it to an integer). Parallel child processes of an isolated run.
 ---@field host "c"|"l" Child host: `c` = started like plenary's (`--cmd`/`-c`), `l` = `nvim -l`.
 ---@field filetype boolean The host runs `filetype plugin indent on`.
 ---@field disable_first_run boolean Set lib.nvim's first-run opt-out in every editor the runner starts, before `minit`.
@@ -88,9 +117,14 @@
 ---@field deps string[] Directory names, resolved by `testing.deps`.
 ---@field setup table<string, any> Options for the plugin's `setup()`.
 ---@field conformance Testing.ProjectConfig.Conformance
+---@field surface Testing.ProjectConfig.Surface
+---@field cache Testing.ProjectConfig.Cache
 ---@field coverage Testing.ProjectConfig.Coverage
 ---@field timeouts Testing.ProjectConfig.Timeouts
 ---@field snapshots Testing.ProjectConfig.Snapshots
+---@field shard Testing.ProjectConfig.Shard
+---@field watch Testing.ProjectConfig.Watch
+---@field budget Testing.ProjectConfig.Budget
 ---@field backends Testing.ProjectConfig.Backends
 
 ---@class Testing.ProjectConfig.Loaded

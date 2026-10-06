@@ -49,6 +49,9 @@ M.EXIT_INFRA = 3
 ---@field isolated? table `testing.run.isolated` (seam for specs)
 ---@field discover? table `testing.discover` (seam for specs)
 ---@field state_dir? string Overrides `stdpath('state')` (history).
+---@field cache_dir? string Overrides `stdpath('cache')` (the result cache, specs).
+---@field cache? table Replaces `testing.cache` (specs).
+---@field affected? Testing.Run.AffectedSeams Replaces single seams of the affected selection (specs).
 ---@field color? boolean Overrides the colour decision of the terminal reporter.
 
 local guard_count = 0
@@ -231,6 +234,13 @@ local function safe_output_line(line)
   return (clean:gsub("^(%s*)::", "%1\\x3A:"))
 end
 
+---Plain text for any line of the run's own diagnostics (`--profile`, the cache line): see `safe_output_line`.
+---@param line string
+---@return string
+function M.safe_line(line)
+  return safe_output_line(line)
+end
+
 ---The captured output of a child, as the lines printed before the report: capped, one header.
 ---@param rel string
 ---@param text string
@@ -334,7 +344,33 @@ function M.execute(plan, sv)
 
   -- the test-environment defaults go in before the minit and come out again on every exit path
   local restore_first_run = options_mod.apply_first_run_default(run_opts.disable_first_run)
+  -- surface tracking (`surface.track = true`) goes in before the minit too: a minit may call `setup()`
+  local tracker
+  if run_opts.surface and not plan.args.list then
+    if run_opts.pool.reuse then
+      err(
+        "testing: note: surface tracking is not active with the warm pool (--pool-reuse): no case carries `surface`"
+      )
+      run_opts.surface = nil
+    else
+      local tok, t = pcall(function()
+        return require("testing.surface.track").hook_runner(run_opts.surface)
+      end)
+      if tok then
+        tracker = t
+      else
+        err("testing: note: surface tracking could not be installed: " .. tostring(t))
+        run_opts.surface = nil
+      end
+    end
+  end
   local ok, code = pcall(M.execute_run, plan, sv, run_opts, err)
+  if tracker then
+    local left = tracker:uninstall()
+    if type(left) == "table" and #left > 0 then
+      err("testing: note: surface tracking could not undo: " .. table.concat(left, ", "))
+    end
+  end
   restore_first_run()
   if not ok then
     error(code, 0)
@@ -418,6 +454,35 @@ function M.execute_run(plan, sv, run_opts, err)
       )
     )
     return M.EXIT_USAGE
+  end
+
+  -- 3b. --changed / --since / --affected: only the specs the changes can reach (never the default in CI)
+  local selection_label
+  do
+    local sel, aerr =
+      require("testing.run.cached").select_affected(plan, ordered, files, sv.affected)
+    if aerr then
+      err("testing: " .. aerr)
+      return M.EXIT_USAGE
+    end
+    if sel then
+      for _, note in ipairs(sel.notes) do
+        err("testing: note: " .. note)
+      end
+      if #sel.files < #files then
+        selection_label = sel.label
+      end
+      files = sel.files
+      if #files == 0 then
+        out(
+          ("no spec file is affected by the changes (%s): nothing ran. This is not a green run (no sentinel); run without %s to run everything"):format(
+            sel.label,
+            sel.label:match("^%-%-%a+")
+          )
+        )
+        return M.EXIT_OK
+      end
+    end
   end
 
   -- history: --lf / --ff
@@ -556,8 +621,28 @@ function M.execute_run(plan, sv, run_opts, err)
       )
     end
   end
+  -- the result cache: a file whose inputs are byte-identical to an earlier green run does not run
+  local cached_mod = require("testing.run.cached")
+  local prep = cached_mod.prepare({
+    plan = plan,
+    run_opts = run_opts,
+    files = files,
+    selector = selector,
+    lf = lf_by_file,
+    findings = findings,
+    seed = seed,
+    cache_dir = sv.cache_dir,
+    cache = sv.cache,
+    getenv = sv.affected and sv.affected.getenv or nil,
+  })
+  if prep.why_off then
+    err("testing: note: cache not used: " .. prep.why_off)
+  end
+  common.files = prep.run_files
   local ok, report
-  if options_mod.any_isolated(run_opts, files) then
+  if #prep.run_files == 0 then
+    ok, report = true, cached_mod.empty_report(plan, seed)
+  elseif options_mod.any_isolated(run_opts, prep.run_files) then
     local prepend, append, child_env = options_mod.child_rtp(plan)
     common.child_env = child_env
     common.options = run_opts
@@ -576,6 +661,18 @@ function M.execute_run(plan, sv, run_opts, err)
   if not ok then
     err("testing: internal error: " .. tostring(report))
     return M.EXIT_INFRA
+  end
+  if prep.mode ~= "off" then
+    local fok, ferr = pcall(
+      cached_mod.finish,
+      prep,
+      report,
+      { cache = sv.cache, cache_dir = sv.cache_dir, root = root }
+    )
+    if not fok then
+      err("testing: note: the cache could not be merged into the report: " .. tostring(ferr))
+      return M.EXIT_INFRA
+    end
   end
   for _, note in ipairs(report.notes or {}) do
     err("testing: note: " .. note)
@@ -677,8 +774,21 @@ function M.execute_run(plan, sv, run_opts, err)
       )
     )
   end
+  local cache_line = cached_mod.summary_line(prep)
+  if cache_line then
+    -- the reasons carry names from the project's files (environment variables, modules): plain text only
+    cache_line = safe_output_line(cache_line)
+    if primary == "term" then
+      out("\n" .. cache_line)
+    else
+      err("testing: note: " .. cache_line)
+    end
+  end
   if args.timings then
-    out("\n" .. inproc.timing_line(res))
+    out(
+      (cache_line and primary == "term") and inproc.timing_line(res)
+        or ("\n" .. inproc.timing_line(res))
+    )
   end
 
   -- 7. history (a convenience: a failure to write is a note, never the verdict)
@@ -713,7 +823,15 @@ function M.execute_run(plan, sv, run_opts, err)
   -- the sentinel: last line, only for a complete, green run without a skipped case
   if code == M.EXIT_OK then
     local partial_files = #files < total
-    if partial_files and not selector.active and lf_by_file == nil then
+    if selection_label and not selector.active and lf_by_file == nil then
+      out(
+        ("\npartial run: %d of %d spec files (%s; no sentinel)"):format(
+          #files,
+          total,
+          selection_label
+        )
+      )
+    elseif partial_files and not selector.active and lf_by_file == nil then
       out(("\npartial run: %d of %d spec files (no sentinel)"):format(#files, total))
     elseif partial_files or selector.active or lf_by_file ~= nil then
       out("\npartial run: a selection (--filter, --tags, --lf, a path) applied (no sentinel)")

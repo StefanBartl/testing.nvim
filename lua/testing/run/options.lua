@@ -55,6 +55,7 @@ local M = {}
 ---@field disable_first_run boolean
 ---@field assertions "error"|"warn"
 ---@field env_allow string[]
+---@field surface? { api: string[] } `surface.track = true`: the runner counts which handlers the cases exercise (`testing.surface.track`); `api` names the module of the plugin.
 
 ---@param v any
 ---@param allowed string[]
@@ -172,6 +173,9 @@ function M.of(plan)
     disable_first_run = cfg.disable_first_run ~= false and not args.first_run,
     assertions = (one_of(cfg.assertions, { "error", "warn" }) or "error") --[[@as "error"|"warn"]],
     env_allow = allow,
+    surface = (type(cfg.surface) == "table" and cfg.surface.track == true) and {
+      api = (type(cfg.plugin) == "string" and cfg.plugin ~= "") and { cfg.plugin } or {},
+    } or nil,
   }
 end
 
@@ -242,6 +246,7 @@ end
 ---@field strict boolean `--strict`: the guard layer promotes every `warn` to `error`.
 ---@field restore boolean Always false: restoring between FILES is the runner's soft isolation (`testing.isolation`), not a per-case restore of the state guard.
 ---@field guards table<string, table> `{ <guard> = { mode, ... } }`, see below.
+---@field surface? { api: string[] } Surface tracking (`surface.track`): installed by the editor that runs the file (`testing.surface.track.hook_runner`), not by the guard layer; it travels in the same job key.
 
 ---The ONE adapter between the run options and the guard layer: option names in, the layer's
 ---configuration out. The in-process driver calls it once per run, the isolated driver once per
@@ -295,6 +300,7 @@ function M.guard_config(opts, ctx)
     repo = ctx.root,
     strict = opts.strict == true,
     restore = false,
+    surface = opts.surface and vim.deepcopy(opts.surface) or nil,
     guards = {
       fs = { mode = g.fs, allow = vim.deepcopy(allow.fs) },
       state = {

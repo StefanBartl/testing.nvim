@@ -26,7 +26,12 @@ M.TIMEOUT_MS = 900000
 
 ---Subcommands of the driver that this module starts.
 ---@type string[]
-M.SUBCOMMANDS = { "run", "list", "doctor" }
+M.SUBCOMMANDS = { "run", "list", "doctor", "conformance", "surface", "budget" }
+
+---Subcommands whose exit code 1 is a finding of the report (a gate or a threshold that was not met), not a
+---failure to run: the report is shown and the level is a warning.
+---@type table<string, true>
+M.REPORT_COMMANDS = { conformance = true, surface = true, budget = true }
 
 -- Types: lua/testing/bindings/@types/init.lua (Testing.Child.Flags, .Opts, .Verdict).
 
@@ -38,21 +43,24 @@ end
 
 ---@param argv string[]
 ---@param name string
----@param values string[]|string|nil
+---@param values string[]|string|boolean|nil `true` is a switch without a value
 local function add_flag(argv, name, values)
-  if values == nil then
+  if values == nil or values == false then
     return
   end
-  if type(values) == "string" then
-    values = { values }
+  if values == true then
+    argv[#argv + 1] = "--" .. name
+    return
   end
-  for _, v in ipairs(values) do
+  ---@type string[]
+  local list = type(values) == "string" and { values } or values --[[@as string[] ]]
+  for _, v in ipairs(list) do
     argv[#argv + 1] = ("--%s=%s"):format(name, v)
   end
 end
 
 ---The argument list of the child process (nothing is started).
----@param sub "run"|"list"|"doctor"
+---@param sub "run"|"list"|"doctor"|"conformance"|"surface"|"budget"
 ---@param opts Testing.Child.Opts
 ---@return string[] argv
 ---@return string|nil err
@@ -82,6 +90,15 @@ function M.build_argv(sub, opts)
   add_flag(argv, "reporter", flags.reporter)
   add_flag(argv, "rtp", flags.rtp)
   add_flag(argv, "config", flags.config)
+  add_flag(argv, "cached", flags.cached)
+  add_flag(argv, "no-cache", flags.no_cache)
+  add_flag(argv, "changed", flags.changed)
+  add_flag(argv, "since", flags.since)
+  add_flag(argv, "shard", flags.shard)
+  -- arguments of a subcommand with its own grammar (`conformance --gate`, `surface --from=...`): verbatim
+  for _, a in ipairs(flags.raw or {}) do
+    argv[#argv + 1] = tostring(a)
+  end
   if sub == "run" and opts.json then
     add_flag(argv, "json", opts.json)
   end
@@ -183,7 +200,7 @@ local function head(text, n)
 end
 
 ---Turn the finished child into what the user is shown. Pure apart from reading the IR file.
----@param sub "run"|"list"|"doctor"
+---@param sub "run"|"list"|"doctor"|"conformance"|"surface"|"budget"
 ---@param res { code: integer, signal?: integer, stdout?: string, stderr?: string }
 ---@param opts Testing.Child.Opts
 ---@return Testing.Child.Verdict
@@ -203,6 +220,14 @@ function M.interpret(sub, res, opts)
 
   if sub ~= "run" then
     local lines = vim.split(vim.trim(res.stdout or ""), "\n", { plain = true })
+    if code == 1 and M.REPORT_COMMANDS[sub] then
+      return {
+        level = "warn",
+        message = ("testing %s: the report has findings that fail its gate (exit 1)"):format(sub),
+        items = {},
+        lines = #lines > 0 and lines[1] ~= "" and lines or nil,
+      }
+    end
     if code ~= 0 then
       return {
         level = "error",
@@ -287,7 +312,7 @@ end
 ---Start the child. The callback runs on the main loop with the verdict, exactly once, when the
 ---process has ended. When the process cannot be started, nothing is called back: the function
 ---returns `false` and the reason instead.
----@param sub "run"|"list"|"doctor"
+---@param sub "run"|"list"|"doctor"|"conformance"|"surface"|"budget"
 ---@param opts Testing.Child.Opts
 ---@param on_done? fun(verdict: Testing.Child.Verdict)
 ---@return boolean started

@@ -119,7 +119,7 @@ return function(H)
   eq(cfg.deps, { "lib.nvim", "runtime-analysis.nvim" }, "deps")
   eq(cfg.setup, { keymaps = { save = "<leader>s" } }, "setup")
   eq(cfg.timeouts, { case_ms = 5000, file_ms = 20000 }, "timeouts")
-  eq(cfg.coverage, { bindings = 1.0, commands = 0.5 }, "coverage")
+  eq(cfg.coverage, { bindings = 1.0, commands = 0.5, autocmds = 0 }, "coverage")
   eq(cfg.backends.luals, true, "backends.luals")
 
   -- partial groups keep the defaults of the other keys

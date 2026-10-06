@@ -50,22 +50,41 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `determinism` | boolean | `true` | A child starts with `LANG`/`LC_ALL=C.UTF-8` and `TZ=UTC`; `false` passes the parent's through. `--no-determinism`. |
 | `trace` | boolean | `true` | A child that timed out or died leaves a trace artifact on its `timeout` / `crash` case. `--no-trace`. |
 | `soft_keep` | list of module names (`prefix*` allowed) | `{}` | Modules the soft isolation (`isolated = "soft"`, the warm pool) never unloads. |
-| `jobs` | integer 1..256 | `1` | Child editors running at once. The report is the same for any value. |
+| `jobs` | integer 1..256, or `"auto"` | `1` | Child editors running at once. The report is the same for any value. `"auto"` is cores minus one (at least 1), resolved by the command line before the run; `--jobs` overrides it. |
+| `shard.balance` | `"size"`, `"count"`, `"hash"` or `"history"` | `"size"` | How `--shard i/n` weighs the spec files: file bytes (the same on every job of a CI matrix), equal counts, a stable hash of the path (adding a file moves no other), or measured durations. See [CLI.md](CLI.md#sharding). |
+| `shard.durations` | relative path without `..` | absent | JSON file `{ "<spec path>": <ms> }` that `balance = "history"` reads instead of the local history. Absent on purpose (opt-in): with it, every job of a matrix reads the same durations; without it a job's own history decides, and jobs can compute different partitions. |
+| `watch.debounce_ms` | integer > 0 | `150` | `--watch`: quiet time after the last change before a re-run (an editor save fires several events). `--watch-debounce` overrides it. |
+| `watch.poll_ms` | integer > 0 | `1000` | `--watch`: polling interval of the fallback used when the file system cannot deliver events (or with `--watch-poll`). |
+| `budget.factor` | number 1..1000 | `2.0` | `testing budget`: a measurement may be this many times its baseline before the check fails. `--factor` overrides it. |
+| `budget.baseline` | relative path without `..` | `"TESTS/bench/baseline.json"` | `testing budget`: the baseline file `--update` writes. `--baseline` overrides it. |
 | `host` | `"c"` or `"l"` | `"c"` | How a child starts: `"c"` like plenary's host (a `-c` command: `vim.v.vim_did_enter` is `0`, `expand("<cword>")` works), `"l"` like `nvim -l`. |
 | `filetype` | boolean | `true` | A child runs `filetype plugin indent on` (plenary's minimal init does). |
 | `disable_first_run` | boolean | `true` | Test-environment default: every editor the runner starts (each child, and this editor for an in-process run, restored afterwards) gets `vim.g.lib_nvim_deps_disable_first_run = true` **before** the project's `minit` runs. lib.nvim shows a one-time "missing tools" float on a plugin's first start when `stdpath('cache')` is empty; a child's cache is always empty, so without this the float opens windows and buffers inside a spec. A value the project (or the user) already set is left alone; `false` leaves the variable untouched. |
 | `env_allow` | list of names, each optionally ending in `*` | `{}` | Environment variables a child may inherit on top of the built-in allowlist (`PATH`, `HOME`, `LANG`, `LC_*`, ...; secrets are never passed). `{ "REPOS_DIR", "MAGICK_*" }`. A bare `*` and names starting with `NVIM` are refused. `--env-allow` adds to it. |
 | `minit` | `false` or relative path | `"TESTS/minimal_init.lua"` | Minimal init of the project; it runs in this editor and in every child before the spec. |
 | `deps` | list of directory names | `{}` | Dependencies the run needs (see below). A missing one is exit code `3`. |
-| `setup` | table | `{}` | Options the conformance suite calls the plugin's `setup()` with (reserved). |
+| `setup` | table | `{}` | Options `testing conformance` and `testing surface` call the plugin's `setup()` with. Put the options that switch every optional part on here: opt-in keymaps that the default `setup()` does not bind are not part of the surface. |
 | `timeouts.case_ms` | integer > 0 | `10000` | Timeout of one case: a guard in this editor, **hard** in a child (a busted file whose child writes no new case for `case_ms` + 2 s is killed with its process tree). |
 | `timeouts.file_ms` | integer > 0 | `60000` | Timeout of one spec file; hard in a child (`file_ms` + 2 s, then the process tree is killed and the file is one `timeout` case). |
-| `conformance.load_budget_ms` | number >= 0 | `40` | Reserved (conformance suite). |
-| `coverage.bindings`, `coverage.commands` | number 0..1 | `0` | Reserved (coverage gates; `0` = report only). |
+| `conformance.load_budget_ms` | number >= 0 | `40` | K10 of `testing conformance`: `require` + `setup()` must fit in this many milliseconds. |
+| `conformance.gate` | boolean | `false` | `true`: `testing conformance` exits `1` when a check failed. Off until the findings of the repository are triaged ([CONFORMANCE.md](CONFORMANCE.md)). |
+| `conformance.skip` | list of check ids | `{}` | `{ "K10" }`: checks that do not run (they stay in the report as `n/a`). |
+| `conformance.waivers` | list of tables | `{}` | Accepted findings: `{ check = "K4", reason = "...", rule?, file?, text? }`. A waiver **needs a reason** of at least 8 characters; one without is ignored and named. |
+| `conformance.keymaps_off` | table | `{ keymaps = false }` | What K3 passes to `setup()` on top of `setup` to switch the keymaps off. |
+| `conformance.timeout_ms` | integer 1000..600000 | `20000` | Timeout of one call into the conformance child editor. |
+| `conformance.rules_bridge.rulesets`, `.families` | list of paths, non-empty list of prefixes | none, `{ "NEW", "REL" }` | `testing conformance --bridge`: the rule files and rule families of rules.nvim to run on top. |
+| `surface.track` | boolean | `false` | `true`: the runner counts which keymaps, commands and autocmds the cases exercise and writes `surface = { hit = { ids... } }` into every case of the IR (in a child editor per file and in this editor; not with the warm pool, which says so). `testing surface --from ir.json` reads it ([SURFACE.md](SURFACE.md)). |
+| `surface.threshold` | number 0..1 | `0` | Gate on the overall ratio of `testing surface`; `0` = only report. |
+| `surface.kinds` | list of `binding`, `command`, `autocmd`, `api` | `{ "binding", "command", "autocmd" }` | The kinds counted in the ratio. |
+| `surface.ignore` | list of Lua patterns | `{}` | Entry ids that are not counted. |
+| `surface.setup_chunk` | string | absent | Lua code the surface is read after. |
+| `cache.enabled` | boolean | `false` | `true`: reuse the results of unchanged spec files without `--cached`. Ignored in CI: a default never decides there ([CACHE.md](CACHE.md)). `--no-cache` wins. |
+| `coverage.bindings`, `.commands`, `.autocmds` | number 0..1 | `0` | Gate thresholds of `testing surface` per kind; `0` = report only. |
 | `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | Reserved (snapshots). |
 | `backends.luals`, `.pty`, `.playwright`, `.webdriver` | boolean | `false` | Reserved (optional backends). |
 
-"Reserved" keys are validated and kept, but nothing acts on them yet.
+"Reserved" keys are validated and kept, but nothing acts on them yet. A key of the tables above that is invalid
+is reported with its name and the default stays (a bad `conformance.gate` never switches a gate on).
 
 ### Child editors
 

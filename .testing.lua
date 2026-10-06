@@ -16,6 +16,9 @@ return {
   minit = "TESTS/minimal_init.lua",
   -- lib.nvim is resolved by the runner itself (it cannot run without it), so `deps` stays empty.
   deps = {},
+  -- pool_run_spec runs real warm-pool children for about a minute on a loaded machine (59.5 s of the default 60 s
+  -- file deadline measured on Windows): the deadline is a safety net against a hang, not a performance gate.
+  timeouts = { file_ms = 180000 },
   -- Dogfood: every guard is an ERROR here. A spec of this repository that leaves an autocmd, a buffer,
   -- a stub in package.preload or a runtimepath entry behind fails its own case, named precisely.
   -- Guards are safety nets for accidents, not a sandbox (docs/GUARDS.md).
@@ -26,6 +29,22 @@ return {
     prompt = "error",
     deprecation = "error",
     process_net = "error",
+  },
+  -- `testing conformance .` on this repository: the two entry scripts of the child editor end the editor when they
+  -- are required (that is what an entry script of a child is), which K1 reports as a module that cannot be required.
+  conformance = {
+    waivers = {
+      {
+        check = "K1",
+        file = "lua/testing/child/boot.lua",
+        reason = "an entry script of the child editor: it ends the editor on purpose when it is required",
+      },
+      {
+        check = "K1",
+        file = "lua/testing/child/rpc_init.lua",
+        reason = "an entry script of the RPC child editor: it ends the editor on purpose when it is required",
+      },
+    },
   },
   -- What the specs of this repository start ON PURPOSE (their subject is the process driver): real child
   -- editors (`nvim`), the process-tree kill of the driver (`taskkill`, `powershell` for the Windows process table), `git` for the run header,

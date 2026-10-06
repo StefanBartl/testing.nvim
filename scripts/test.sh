@@ -11,6 +11,12 @@
 #
 # Every option of `scripts/testing.lua --help` is passed through unchanged.
 #
+#   scripts/test.sh --cached           reuse the results of unchanged spec files (docs/CACHE.md); the cache
+#                                      lives in $TESTING_CACHE_HOME (default: a throwaway directory, so a
+#                                      second invocation starts cold unless you point it somewhere)
+#   TESTING_CACHE_HOME=~/.cache/tn scripts/test.sh --cached
+#   scripts/test.sh --changed          only the specs the working tree can reach (a partial run)
+#
 # Exit code: 0 all green, 1 a spec failed, 2 usage or configuration error, 3 infrastructure error
 # (nvim is not on PATH, or lib.nvim was not found: the runner then names all four places it looked
 # in: $LIB_NVIM_DIR, <repo>/.deps/lib.nvim, <repo>/../lib.nvim, stdpath('data')/lazy/lib.nvim).
@@ -33,7 +39,7 @@ if command -v cygpath >/dev/null 2>&1; then
   scratch="$(cygpath -m "$scratch")"
 fi
 export XDG_STATE_HOME="$scratch/state"
-export XDG_CACHE_HOME="$scratch/cache"
+export XDG_CACHE_HOME="${TESTING_CACHE_HOME:-$scratch/cache}"
 
 # No `exec`: the trap must remove the scratch directory afterwards.
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . "$@"

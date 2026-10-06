@@ -1,0 +1,73 @@
+{
+  "cases": {
+    "cache_hash_500": {
+      "max_ms": 28.057,
+      "median_ms": 24.376,
+      "min_ms": 23.467,
+      "runs": 9
+    },
+    "cache_key_100": {
+      "max_ms": 153.448,
+      "median_ms": 71.056,
+      "min_ms": 70.184,
+      "runs": 5
+    },
+    "child_kill": {
+      "max_ms": 1774.049,
+      "median_ms": 1743.956,
+      "min_ms": 1636.027,
+      "runs": 9
+    },
+    "child_spawn_cold": {
+      "max_ms": 135.142,
+      "median_ms": 121.697,
+      "min_ms": 117.763,
+      "runs": 9
+    },
+    "child_spawn_warm": {
+      "max_ms": 0.197,
+      "median_ms": 0.117,
+      "min_ms": 0.098,
+      "runs": 9
+    },
+    "discover_100": {
+      "max_ms": 47.037,
+      "median_ms": 42.556,
+      "min_ms": 36.719,
+      "runs": 9
+    },
+    "doctor_startup": {
+      "max_ms": 130.901,
+      "median_ms": 105.301,
+      "min_ms": 100.181,
+      "runs": 9
+    },
+    "history_append": {
+      "max_ms": 11.064,
+      "median_ms": 8.112,
+      "min_ms": 3.605,
+      "runs": 9
+    },
+    "ir_encode_10k": {
+      "max_ms": 188.753,
+      "median_ms": 174.676,
+      "min_ms": 162.864,
+      "runs": 9
+    }
+  },
+  "date": "2026-10-06T20:45:39Z",
+  "machine": {
+    "arch": "x86_64",
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12400F",
+    "cpus": 12,
+    "memory_gb": 48,
+    "nvim": "0.12.2",
+    "os": "Windows_NT",
+    "release": "10.0.26200"
+  },
+  "method": {
+    "runs": 5,
+    "warmup": 1
+  },
+  "version": 1
+}

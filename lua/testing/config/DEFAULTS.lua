@@ -38,7 +38,7 @@ local DEFAULTS = {
     -- Modules the soft isolation never unloads (exact names or `prefix*`), on top of `testing*`,
     -- `lib.nvim*` and everything that was loaded before the run started.
     soft_keep = {},
-    -- Parallel child processes of an isolated run.
+    -- Parallel child processes of an isolated run: an integer, or "auto" (cores minus one).
     jobs = 1,
     -- Guards (safety nets, NOT a sandbox: Lua code can bypass every monkeypatch). Per guard "off",
     -- "warn" (a finding in the report) or "error" (a finding fails the case). `clock` is opt-in.
@@ -80,11 +80,42 @@ local DEFAULTS = {
     deps = {},
     -- Options the conformance suite calls the plugin's setup() with.
     setup = {},
-    conformance = { load_budget_ms = 40 },
+    -- `testing conformance`: gate = true makes a failed check exit 1 (report-only until the findings of
+    -- the repository are triaged); skip = check ids that do not run; waivers = accepted findings, each with
+    -- a reason; keymaps_off = what K3 passes to setup() on top of `setup`; timeout_ms of one child call.
+    conformance = {
+      load_budget_ms = 40,
+      gate = false,
+      skip = {},
+      waivers = {},
+      keymaps_off = { keymaps = false },
+      timeout_ms = 20000,
+      rules_bridge = { families = { "NEW", "REL" } },
+    },
+    -- `testing surface`: track = true makes the runner count which handlers the specs exercised;
+    -- threshold 0 = only report (see docs/SURFACE.md).
+    surface = {
+      track = false,
+      threshold = 0,
+      kinds = { "binding", "command", "autocmd" },
+      ignore = {},
+    },
+    -- The result cache (docs/CACHE.md): `enabled = true` reuses results without `--cached` (never in CI).
+    cache = { enabled = false },
     -- Gate thresholds 0..1; 0 = report only.
-    coverage = { bindings = 0, commands = 0 },
+    coverage = { bindings = 0, commands = 0, autocmds = 0 },
     timeouts = { case_ms = 10000, file_ms = 60000 },
     snapshots = { dir = "TESTS/__snapshots__" },
+    -- `--shard i/n`: how the spec files are distributed. "size" (file bytes: the same on every job of a
+    -- matrix), "count", "hash" (stable under added files) or "history" (measured durations: every job must
+    -- see the same ones, see `shard.durations`, which has no default: it is opt-in).
+    shard = { balance = "size" },
+    -- `--watch`: quiet time after the last change before a re-run (a editor save fires several events), and
+    -- the polling interval of the fallback when the file system cannot deliver events.
+    watch = { debounce_ms = 150, poll_ms = 1000 },
+    -- `testing budget`: a measurement may be `factor` times its baseline before the check fails; the
+    -- baseline file (JSON written by `testing budget --update`) lives in the project.
+    budget = { factor = 2.0, baseline = "TESTS/bench/baseline.json" },
     backends = { luals = false, pty = false, playwright = false, webdriver = false },
   },
 }

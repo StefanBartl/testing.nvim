@@ -1,0 +1,8 @@
+*goodp.txt*  A conformant fixture plugin
+
+==============================================================================
+INTRODUCTION                                                         *goodp*
+
+goodp is a fixture of the conformance suite of testing.nvim.
+
+ vim:tw=78:ts=8:ft=help:norl:

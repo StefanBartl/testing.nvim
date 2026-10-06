@@ -31,8 +31,16 @@ is never a pass: the run ends with exit code `3`.
   path in a case id) never discards the verdict: the IR keeps every case and gets a top-level
   `warnings` list (paths of the findings, never the leaked text), and the terminal prints a note.
   `--junit` and `--github` read the same sanitized IR.
-* `effects` of a case (what the code under test did to the editor and the file system) are not
-  collected yet; every case says so in its notes.
+* `effects` of a case (what the code under test did to the editor and the file system) are filled by the guard
+  layer ([GUARDS.md](GUARDS.md)); a case says in its notes when a guard that fills them is off, and an empty list
+  is then not a measurement.
+* Additive fields (`schema_version` stays 1):
+  * `cases[].cached = true`: the case was **not executed** in this run, its result comes from the result cache
+    ([CACHE.md](CACHE.md)); `status` is `pass`, a note says `cached from <run id>`, and no guard or ledger saw it.
+    `run.cache = { mode, files_cached, cases_cached, files_ran, stored }` summarizes it.
+  * `cases[].surface = { hit = { ids... } }`: the keymaps, commands and autocmds the case exercised, with
+    `surface.track = true` ([SURFACE.md](SURFACE.md)).
+  * `run.profile` with `--profile` ([PERFORMANCE.md](PERFORMANCE.md)).
 
 ## `term`
 
@@ -48,6 +56,8 @@ FAIL  TESTS/b_spec.lua
 1 spec(s) failed
 ```
 
+* A file that came from the result cache prints `ok    name (cached)` and the summary says how many cases
+  were not run (`2 pass (2 case(s), 1 cached, not run)`).
 * The `ok    name` / `FAIL  name` / `N spec(s) failed` shapes are those of the transitional lib.nvim
   runner. A file with only skipped cases prints `skip`, never `ok`; an unexpected pass (`xpass`)
   fails its file.

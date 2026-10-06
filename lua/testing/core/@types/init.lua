@@ -21,6 +21,7 @@
 
 ---@class Testing.Result.Run
 --- Header of one run: who ran what, where, how.
+---@field cache? { mode: string, files_cached: integer, cases_cached: integer, files_ran: integer, stored: integer } What the result cache did (`--cached`).
 ---@field id string `<UTC ISO timestamp>-<4 hex>`; unique per run.
 ---@field root string Repository root (a placeholder `<REPO>` after normalization).
 ---@field project_key string Stable key of the project, e.g. `lib.nvim@a1b2`.
@@ -84,6 +85,8 @@
 ---@field notes string[]
 ---@field error? Testing.Result.CaseError Set when `status == "error"`.
 ---@field reason? string Why a case was skipped.
+---@field cached? boolean `true`: not executed in this run, the result comes from the result cache (`testing.cache`).
+---@field surface? { hit: string[] } The keymaps, commands and autocmds the case exercised (`surface.track`).
 
 ---@class Testing.Result.Summary
 --- One counter per status; always all eight keys.
