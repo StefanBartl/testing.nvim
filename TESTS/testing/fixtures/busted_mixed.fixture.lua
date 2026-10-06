@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-field
 -- Fixture (never a spec of this repo). Dialect E (plenary.busted): nested describes, hooks, every
 -- status the shim can produce. Hook order is written to _G.__TESTING_FIXTURE_TRACE.
 -- luacheck: globals describe it before_each after_each pending assert

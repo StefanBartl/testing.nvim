@@ -44,6 +44,26 @@
 ---@field playwright boolean Reserved.
 ---@field webdriver boolean Reserved.
 
+---@alias Testing.GuardMode "off"|"warn"|"error"
+
+---@class Testing.ProjectConfig.Guards
+---@field fs Testing.GuardMode Writes outside the run directory and the repo temp.
+---@field state Testing.GuardMode State a case/file leaves behind (autocmds, keymaps, buffers, globals).
+---@field scheduled_error Testing.GuardMode Errors in `vim.schedule` callbacks, timers and jobs.
+---@field prompt Testing.GuardMode Blocking prompts (`input`, `confirm`, `getchar`, `vim.ui.*`).
+---@field deprecation Testing.GuardMode `vim.deprecate` messages (warn; `--strict` makes them fail).
+---@field process_net Testing.GuardMode Spawned processes and network connections (the ledger is collected whatever this says).
+---@field clock boolean Virtual clock and fixed random seed (opt-in).
+
+---@class Testing.ProjectConfig.GuardAllow
+---@field fs string[] Paths a spec may write to besides the run directory.
+---@field spawn string[] Executables a spec may start.
+---@field network string[] Hosts a spec may connect to.
+
+---@class Testing.ProjectConfig.Pool
+---@field size integer 0..256. Children the warm pool keeps (0 = `jobs`). Consumed by the warm pool.
+---@field reuse boolean Reset and reuse a child between files instead of respawning it.
+
 ---@class Testing.ProjectConfig
 --- The effective content of `.testing.lua`: `DEFAULTS.project` with the valid keys of the file on top.
 --- Paths are relative to the project root, never absolute, never containing `..`.
@@ -52,7 +72,13 @@
 ---@field spec_pattern string[] Lua patterns (against the relative path) that make a file a spec; default `{ "_spec%.lua$" }`.
 ---@field dialect Testing.DialectSetting
 ---@field assertions "error"|"warn" A case without assertions: failure (`error`, default) or pass with a warning (`warn`).
----@field isolated "auto"|"none"|"file" Process isolation: `auto` = `file` for busted, `none` otherwise; resolve with `config.project.isolated_for`.
+---@field isolated "auto"|"none"|"file"|"case"|"soft" Isolation: `auto` = `file` for busted, `none` otherwise; `case` = a child per case (busted; others `file`); `soft` = this process with restore between files; resolve with `config.project.isolated_for`.
+---@field soft_keep string[] Modules the soft isolation never unloads (exact name or `prefix*`).
+---@field guards Testing.ProjectConfig.Guards
+---@field guard_allow Testing.ProjectConfig.GuardAllow
+---@field pool Testing.ProjectConfig.Pool
+---@field determinism boolean Children get a fixed `LANG`/`LC_ALL` and `TZ`.
+---@field trace boolean A child that times out or crashes leaves a trace artifact.
 ---@field jobs integer >= 1. Parallel child processes of an isolated run.
 ---@field host "c"|"l" Child host: `c` = started like plenary's (`--cmd`/`-c`), `l` = `nvim -l`.
 ---@field filetype boolean The host runs `filetype plugin indent on`.

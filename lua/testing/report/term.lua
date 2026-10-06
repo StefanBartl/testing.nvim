@@ -340,6 +340,55 @@ local function case_details(c, indent, lines, o, paint)
   end
 end
 
+---Guard findings (state leaks, writes, prompts, ...) of the run, one line each: a `warn` is a warning, an
+---`error` also failed its case (the failure is listed above; the guard says which guard it was).
+---@param result Testing.Result
+---@param paint fun(kind: string, s: string): string
+---@param width integer
+---@return string[]
+local function guards_block(result, paint, width)
+  local found = util.guard_findings(result)
+  if #found == 0 then
+    return {}
+  end
+  local warns, errors, infos = 0, 0, 0
+  local shown = {}
+  for _, f in ipairs(found) do
+    if f.severity == "error" then
+      errors = errors + 1
+      shown[#shown + 1] = f
+    elseif f.severity == "warn" then
+      warns = warns + 1
+      shown[#shown + 1] = f
+    else
+      infos = infos + 1
+    end
+  end
+  if #shown == 0 then
+    return {}
+  end
+  local head = ("guard findings: %d warning(s), %d failure(s)"):format(warns, errors)
+  if infos > 0 then
+    head = head .. (" (+%d info, see the IR)"):format(infos)
+  end
+  local out = { paint("bold", head) }
+  local max = 40
+  for i, f in ipairs(shown) do
+    if i > max then
+      out[#out + 1] = ("  ... and %d more (all of them, with their stacks: --json <file>)"):format(
+        #shown - max
+      )
+      break
+    end
+    local kind = f.severity == "error" and "red" or "yellow"
+    local label = (f.severity == "error" and "error" or "warn ") .. " [" .. f.guard .. "] "
+    -- the message names the culprit ("spec X leaves autocmd Y in group Z"): a screen-wide cut would hide
+    -- exactly that, so it is shortened only at a generous bound
+    out[#out + 1] = "  " .. paint(kind, label) .. fit(f.message, math.max(width - 2 - #label, 400))
+  end
+  return out
+end
+
 ---@param result Testing.Result
 ---@param n integer
 ---@param paint fun(kind: string, s: string): string
@@ -424,6 +473,14 @@ function M.render(result, opts)
   if failed_files > 0 then
     lines[#lines + 1] = ""
     lines[#lines + 1] = paint("red", ("%d spec(s) failed"):format(failed_files))
+  end
+
+  local guard_lines = guards_block(result, paint, width)
+  if #guard_lines > 0 then
+    lines[#lines + 1] = ""
+    for _, l in ipairs(guard_lines) do
+      lines[#lines + 1] = l
+    end
   end
 
   if (o.durations or 0) > 0 and #(result.cases or {}) > 0 then

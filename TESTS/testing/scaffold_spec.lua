@@ -205,6 +205,17 @@ return function(H)
   has(sh, "DEPS=('testing.nvim' 'lib.nvim')", "test.sh resolves the runner and the dependencies")
   has(sh, 'run . "$@"', "test.sh hands every argument to the driver")
   has(sh, "myplug-tests", "the run gets a throwaway NVIM_APPNAME")
+  has(
+    sh,
+    "export XDG_STATE_HOME=",
+    "a run without child editors does not write into the real state dir"
+  )
+  has(sh, "export XDG_CACHE_HOME=", "nor into the real cache dir")
+  has(sh, "trap 'rm -rf \"$scratch\"' EXIT", "and removes the scratch directory afterwards")
+  ok(
+    not sh:find("\nexec nvim", 1, true),
+    "so the script does not `exec` (the trap would never run)"
+  )
   local minit = texts["TESTS/minimal_init.lua"]
   has(minit, "os.exit(1)", "minimal_init fails with exit code 1")
   has(

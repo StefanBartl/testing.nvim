@@ -531,4 +531,6 @@ return function(H)
   end
 
   vim.fn.delete(tmp, "rf")
+  -- `register()` made :Testing in this editor: leave it as found
+  pcall(vim.api.nvim_del_user_command, "Testing")
 end

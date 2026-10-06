@@ -30,6 +30,7 @@ local result = require("testing.core.result")
 local assert_mod = require("testing.core.assert")
 local select_mod = require("testing.run.select")
 local timeout = require("testing.run.timeout")
+local guards_mod = require("testing.run.guards")
 
 local M = {}
 
@@ -142,6 +143,9 @@ end
 ---@field on_case? fun(case: Testing.Result.Case) Progress hook, called for every recorded case.
 ---@field on_case_early? fun(case: Testing.Result.Case) Called the moment a dialect finishes a case, long before the file is over (a child editor streams these, so a kill keeps them). The case may still be adjusted afterwards (file deadline); `on_case` sees the final one.
 ---@field clock? Testing.Assert.Clock Case clock in ms (default `vim.uv.hrtime`).
+---@field soft? Testing.Isolation.Session Soft isolation (`isolated = "soft"`): the state a file changed is restored before the next file; findings land on the file's last case.
+---@field guard_cfg? Testing.Run.GuardConfig Install the guard layer (`testing.guard`, optional) for this run with this configuration (`options.guard_config`); a child editor gets it from its job.
+---@field guard_session? Testing.Run.GuardSession An already installed guard layer (the caller uninstalls it).
 
 ---@class Testing.Inproc.Report
 ---@field result Testing.Result The finalized IR.
@@ -155,6 +159,9 @@ end
 ---@field stopped boolean `--maxfail` stopped the run.
 ---@field wall_ms number Wall time of the file loop.
 ---@field exit_code integer 0 green, 1 at least one red case (or, under `strict`, a skip / a finding).
+---@field notes string[] Diagnostics of the runner itself (a guard layer that failed), for stderr; never part of the verdict.
+---@field unattached Testing.Result.GuardFinding[] Guard / soft-isolation findings of a file that produced no case to carry them (for stderr).
+---@field pool? Testing.Pool.Stats Statistics of the warm pool (`testing.run.isolated` with `pool.reuse`).
 
 ---The empty IR of a run: header facts (nvim, os, git HEAD of the root) and no cases.
 ---@param root string Project root, no trailing slash.
@@ -232,10 +239,10 @@ function M.attach_findings(res, a, findings, strict, record)
   end
 end
 
----Run the planned files and build the IR.
 ---@param opts Testing.Inproc.Opts
+---@param holder { gsess?: Testing.Run.GuardSession } Receives the guard session this run installed, so that the caller can undo it whatever happens.
 ---@return Testing.Inproc.Report
-function M.run(opts)
+local function run_files(opts, holder)
   local root = slashes(opts.root):gsub("/+$", "")
   local a = assert_mod.new({ clock = opts.clock })
   local dialect = require("testing.dialect")
@@ -264,12 +271,50 @@ function M.run(opts)
   local files_run, files_unrun, files_unselected = 0, 0, 0
   local failed_files = {}
 
+  -- the guard layer (optional): installed for the whole run, asked once per file
+  local gsess = opts.guard_session
+  local own_guard = false
+  if gsess == nil and opts.guard_cfg ~= nil then
+    gsess = guards_mod.install(opts.guard_cfg)
+    holder.gsess = gsess
+    own_guard = true
+  end
+  local notes, unattached = {}, {}
+  -- the cases say "effects: not collected" unless a guard layer really watched them
+  local effects_measured = gsess ~= nil and gsess.active
+
+  ---Findings that had no case to land on, with the file named (they are printed, not stored).
+  ---@param rel string
+  ---@param list Testing.Result.GuardFinding[]
+  ---@return Testing.Result.GuardFinding[]
+  local function prefixed(rel, list)
+    for _, f in ipairs(list) do
+      f.message = rel .. ": " .. tostring(f.message)
+    end
+    return list
+  end
+
   local hrtime = vim.uv.hrtime
   local started = hrtime()
 
   ---@param case Testing.Result.Case
   local function record(case)
-    case.notes[#case.notes + 1] = EFFECTS_NOTE
+    if not effects_measured then
+      case.notes[#case.notes + 1] = EFFECTS_NOTE
+    else
+      for _, note in ipairs(guards_mod.unmeasured_notes(opts.guard_cfg)) do
+        if not vim.tbl_contains(case.notes, note) then
+          case.notes[#case.notes + 1] = note
+        end
+      end
+    end
+    if gsess and gsess.error then
+      -- the guard layer broke (it could not install, or failed in a case window): say so ON the case
+      local why = "guards: " .. gsess.error
+      if not vim.tbl_contains(case.notes, why) then
+        case.notes[#case.notes + 1] = why
+      end
+    end
     case.tags = select_mod.union(select_mod.tags_of_id(case.id), header_tags(case.file))
     result.add_case(res, case)
     if M.BAD[case.status] then
@@ -293,6 +338,11 @@ function M.run(opts)
         lf_ids = select_mod.lf_ids(rel, opts.lf)
       end
 
+      local heavy_done = false
+
+      ---Is this case selected? For busted this is also THE moment a case starts (an `it` body runs
+      ---right where it is registered, right after the dialect asked), so the guard window of a case
+      ---opens here, with the case's own id, after the shim's globals are installed.
       ---@param id string
       ---@return boolean
       local function accept(id)
@@ -302,7 +352,12 @@ function M.run(opts)
         if lf_ids ~= nil and not lf_ids[id] then
           return false
         end
-        return selector.case_ok(id, rel)
+        local selected = selector.case_ok(id, rel)
+        if selected and gsess and is_busted then
+          gsess:open({ id = id, file = rel }, { heavy = not heavy_done })
+          heavy_done = true
+        end
+        return selected
       end
 
       if not is_busted and not accept(file_id) then
@@ -310,6 +365,11 @@ function M.run(opts)
       else
         files_run = files_run + 1
         local bad_before = bad_total
+        local frame = opts.soft and opts.soft:enter(rel)
+        if gsess and not is_busted then
+          -- a one-case dialect: ONE window around the file (busted opens one per `it`, see `accept`)
+          gsess:open({ id = file_id, file = rel }, { heavy = true })
+        end
         local guard = timeout.start({
           label = rel,
           file_ms = timeouts.file_ms,
@@ -351,6 +411,15 @@ function M.run(opts)
                 end
                 seen_in_file = seen_in_file + 1
                 guard:arm_case()
+                if gsess then
+                  -- the case is over: what the guards saw goes into it BEFORE the runner's own hooks
+                  -- (a child streams the case to its parent below) run outside the window
+                  -- (the deadline the spec just exceeded must not cut the guard layer's own checks short)
+                  local gf, ge = guard:suspend(function()
+                    return gsess:close()
+                  end)
+                  vim.list_extend(unattached, prefixed(rel, guards_mod.attach({ case }, gf, ge)))
+                end
                 if opts.on_case_early then
                   pcall(opts.on_case_early, case)
                 end
@@ -418,6 +487,19 @@ function M.run(opts)
           end
         end
 
+        -- what the guards saw and what the soft isolation had to undo: on the file's cases
+        local findings, effects = {}, nil
+        if gsess then
+          -- what happened after the last case (an `after_all`, a late timer) lands on the last case
+          findings, effects = gsess:close()
+        end
+        if opts.soft then
+          vim.list_extend(findings, opts.soft:leave(frame).findings)
+        end
+        if #findings > 0 or effects ~= nil then
+          vim.list_extend(unattached, prefixed(rel, guards_mod.attach(cases, findings, effects)))
+        end
+
         for _, c in ipairs(cases) do
           record(c)
         end
@@ -441,6 +523,18 @@ function M.run(opts)
 
   M.attach_findings(res, a, opts.findings or {}, opts.strict, record)
 
+  if gsess then
+    if own_guard then
+      gsess:uninstall()
+    end
+    for _, n in ipairs(gsess.notes) do
+      notes[#notes + 1] = n
+    end
+    if gsess.error then
+      notes[#notes + 1] = gsess.error
+    end
+  end
+
   res.run.duration_ms = math.floor(wall_ms * 1000 + 0.5) / 1000
   result.finalize(res)
 
@@ -462,7 +556,28 @@ function M.run(opts)
     stopped = stopped,
     wall_ms = wall_ms,
     exit_code = exit_code,
+    notes = notes,
+    unattached = unattached,
   }
+end
+
+---Run the planned files and build the IR.
+---
+---The guard layer this run installed is undone on EVERY path out of here, also when something between
+---the file loop and the end raises (a malformed case, a bug in a shim): a per-file child ends with its
+---process, but a warm pool member lives on and would stack a second layer of wrappers on the first.
+---@param opts Testing.Inproc.Opts
+---@return Testing.Inproc.Report
+function M.run(opts)
+  local holder = {}
+  local ok, report = pcall(run_files, opts, holder)
+  if holder.gsess then
+    pcall(holder.gsess.uninstall, holder.gsess) -- idempotent: the normal path did it already
+  end
+  if not ok then
+    error(report, 0)
+  end
+  return report
 end
 
 -- =========================================================
@@ -654,6 +769,9 @@ function M.scrub_texts(res, root)
     end
     for i, note in ipairs(case.notes) do
       case.notes[i] = scrub(note)
+    end
+    for _, g in ipairs(case.guards or {}) do
+      g.message = scrub(g.message)
     end
     if case.error then
       case.error.message = scrub(case.error.message)

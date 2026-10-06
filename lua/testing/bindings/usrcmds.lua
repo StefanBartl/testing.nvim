@@ -389,7 +389,8 @@ end
 ---Register `:Testing`. Safe to call twice.
 ---@return boolean ok False when lib.nvim is missing; the error is shown once.
 function M.register()
-  if registered then
+  -- the flag alone would lie once the command was removed again (a spec cleaning up after `setup()`)
+  if registered and vim.fn.exists(":Testing") == 2 then
     return true
   end
   local ok, err = pcall(function()

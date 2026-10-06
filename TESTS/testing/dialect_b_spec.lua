@@ -2,6 +2,11 @@
 -- calling convention, ALL failures are collected, the helpers behave like the originals.
 
 return function(H)
+  -- the specs of the shim open buffers; the editor is left as found
+  local bufs_before = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    bufs_before[b] = true
+  end
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)
   local function eq(actual, expected, msg)
@@ -158,4 +163,9 @@ return function(H)
   vim.fn.delete(seen.root, "rf")
   vim.fn.delete(seen.dir, "rf")
   vim.fn.delete(seen.dir2, "rf")
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if not bufs_before[b] then
+      pcall(vim.api.nvim_buf_delete, b, { force = true })
+    end
+  end
 end

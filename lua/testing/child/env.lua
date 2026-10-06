@@ -17,6 +17,9 @@
 ---
 --- Matching is case-insensitive (Windows treats `Path` and `PATH` as one variable).
 ---
+--- Determinism: unless the caller opts out (`deterministic = false`) `LANG`/`LC_ALL=C.UTF-8` and
+--- `TZ=UTC` are SET in the child (`apply_determinism`), whatever the parent has.
+---
 --- Residual write places, by design NOT redirected: `HOME`/`USERPROFILE`, `APPDATA`/`LOCALAPPDATA`.
 --- Tools that a spec runs (git) need the user's identity; the places Neovim itself writes to
 --- (`stdpath` data/state/cache/config/run) and the temp directories ARE redirected (`sandbox_env`).
@@ -170,6 +173,32 @@ function M.sanitize(parent, opts)
     end
   end
   return { env = env, dropped = dropped }
+end
+
+---Determinism variables a child gets instead of the parent's locale and time zone: a spec that
+---formats a date, sorts, or compares a message must not depend on the machine it runs on (`de_AT`
+---on the author's workstation, `UTC` + `C.UTF-8` on CI). The parent's `LANG`, `LANGUAGE`, `LC_*` and
+---`TZ` are NOT passed on; these three are SET. Opt out with `deterministic = false` (a spec that
+---needs the machine's own locale).
+---@type table<string, string>
+M.DETERMINISTIC = { LANG = "C.UTF-8", LC_ALL = "C.UTF-8", TZ = "UTC" }
+
+---Replace the locale and time zone variables of `env` (in place) by `M.DETERMINISTIC`. Names are
+---matched case-insensitively (`Tz` on Windows); `LANGUAGE` and every other `LC_*` are removed:
+---`LC_ALL` would win over them anyway, and a stray `LANGUAGE=de` still changes gettext messages.
+---@param env table<string, string>
+---@return table<string, string> env The same table.
+function M.apply_determinism(env)
+  for name in pairs(env) do
+    local up = name:upper()
+    if up == "LANG" or up == "LANGUAGE" or up == "TZ" or up:sub(1, 3) == "LC_" then
+      env[name] = nil
+    end
+  end
+  for name, value in pairs(M.DETERMINISTIC) do
+    env[name] = value
+  end
+  return env
 end
 
 ---The directories of a child's sandbox, below `base`, and the environment variables that point

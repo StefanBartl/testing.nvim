@@ -1,15 +1,26 @@
 # `testing.child`
 
-Per-file process isolation (M2 `testing.child` v1): one spec file runs in a **fresh child editor**,
-the way plenary ran one `nvim` per file. The pool that runs many of them and merges what they report
-is [`testing.run.isolated`](../run/isolated.lua); the child side is [`boot.lua`](boot.lua).
+Two kinds of child editor live here:
+
+* **A child per spec file** (M2 `testing.child` v1): one spec file runs in a **fresh child editor**,
+  the way plenary ran one `nvim` per file. The pool that runs many of them and merges what they report
+  is [`testing.run.isolated`](../run/isolated.lua); the child side is [`boot.lua`](boot.lua).
+* **An RPC child** you drive (M2 `testing.rpc`): `nvim --embed`, msgpack-rpc over its stdio, a handle
+  with `lua`, `api`, `fn`, `feed`, `input`, `mouse`, `settle`, `screen`, `notifies`, ... The driver is
+  [`testing.rpc`](../rpc/init.lua), the in-child half is [`rpc_boot.lua`](rpc_boot.lua) and
+  [`rpc_init.lua`](rpc_init.lua). Public surface: [docs/CHILD.md](../../../docs/CHILD.md). It shares
+  the environment, the sandbox, the process start and the process-tree kill of this module.
 
 | Module | Purpose |
 |--------|---------|
-| [`testing.child`](init.lua) | `build` (argv, environment, sandbox, job; pure), `prepare`, `spawn`, `kill_tree`, `cleanup`, `describe_exit` |
-| [`testing.child.env`](env.lua) | The environment allowlist and the sandbox variables (pure) |
+| [`testing.child`](init.lua) | `build` (argv, environment, sandbox, job; pure), `environment` (sandbox + env, shared with `testing.rpc`), `prepare`, `spawn` (also the RPC mode: `on_stdout`), `kill_tree`, `cleanup`, `describe_exit` |
+| [`testing.child.env`](env.lua) | The environment allowlist, the determinism variables and the sandbox variables (pure) |
 | [`testing.child.fragment`](fragment.lua) | The result file a child writes (NDJSON) and the validation of it |
-| [`testing.child.boot`](boot.lua) | Runs INSIDE the child: reads the job, sets the editor up, runs the file, reports |
+| [`testing.child.boot`](boot.lua) | Runs INSIDE a per-file child: reads the job, sets the editor up, runs the file, reports |
+| [`testing.child.runner`](runner.lua) | Runs ONE spec file and writes its records (selector, `--lf`, timeouts, the guard layer of the job, soft isolation): shared by `boot` and the warm pool |
+| [`testing.child.pool_boot`](pool_boot.lua) | Runs INSIDE a warm pool member: `run` (one file), `finish` (restore, reset, option and sandbox cleanup, structure check) |
+| [`testing.child.rpc_init`](rpc_init.lua) | The `-u` file of an RPC child: runtimepath, then the project's minit |
+| [`testing.child.rpc_boot`](rpc_boot.lua) | Runs INSIDE an RPC child: notify/prompt capture, guard hook, settle probe, reset, screen |
 
 ## What a child is
 
@@ -58,6 +69,13 @@ A child does **not** inherit the environment. It gets:
   `--env-allow <name>` (exact names or a `PREFIX*`; a bare `*` and everything starting with `NVIM` are
   refused);
 * the sandbox variables below.
+
+**Determinism.** `LANG`, `LANGUAGE`, `LC_*` and `TZ` of the parent are *not* passed on (the list above
+names them for completeness: they are allowed, then replaced): the child gets `LANG=C.UTF-8`,
+`LC_ALL=C.UTF-8`, `TZ=UTC` ([`env.apply_determinism`](env.lua)), so a spec that formats a date or
+compares a message gives the same answer on the author's `de_AT` workstation and on CI. Opt out with
+`deterministic = false` in the child spec (`testing.child.build`, `testing.rpc.spawn`); the run
+options key is `determinism` (`testing.run.options`); whoever builds the child spec maps it to `deterministic`.
 
 So `GITHUB_TOKEN`, `*_API_KEY`, cloud credentials, `$NVIM` and `$NVIM_LISTEN_ADDRESS` (which would
 point a spec at the editor that runs the tests) never reach a spec. `NVIM*` can not be allowed.
@@ -108,10 +126,15 @@ would turn a green file into a timeout or hang the run. A process that is still 
 ## Killing
 
 A timeout kills the whole **process tree** (a spec that started language servers or other editors must
-not leave them behind): Windows `taskkill /PID <pid> /T /F`, POSIX the process group (the child is
-started detached, `kill(-pid, SIGKILL)`). The root is killed directly if that fails. The children
-are also killed when the editor quits (`VimLeavePre`). **Limits:** a parent that is itself killed
-cannot clean up; on POSIX a grandchild that starts its own session (`setsid`) leaves the group; on
+not leave them behind): Windows `taskkill /PID <pid> /T /F`; POSIX the root is frozen (`SIGSTOP`),
+its descendants are read from one `ps -A -o pid= -o ppid=` call, then the process group (the child is
+started detached, `kill(-pid, SIGKILL)`) **and every descendant** get `SIGKILL`. The descendant walk
+is needed because `jobstart` puts every job in a session of its own (measured on Linux: PGID = SID =
+the helper's pid), so the group kill alone leaves a spec's `jobstart`ed helper alive. The root is killed
+directly if that fails. The children are also killed when the editor quits (`VimLeavePre`; the
+autocmd exists only while a child does). **Limits:** a parent that is itself killed
+cannot clean up; a descendant that was reparented before the walk (its parent died on its own) is
+not found by the walk (POSIX: unless it kept the group); without `ps` only the group dies; on
 Windows a grandchild that broke away from its parent's job and whose parent is already dead is not
 found by `/T`, and a helper left behind by a child that ended normally is not killed at all (POSIX: the
 process group is killed once the child is gone). It cannot hold the run any more, but it can keep

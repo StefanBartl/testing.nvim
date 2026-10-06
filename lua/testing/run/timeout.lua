@@ -222,6 +222,28 @@ function Guard:take_case()
   return fired
 end
 
+---Run `fn` with this guard's deadlines out of the way and put them back afterwards: the runner's own
+---bookkeeping (what the guard layer checks after a case, for instance) must not be cut off by the
+---deadline the spec has just exceeded; the error would be blamed on the guard layer ("diff of env
+---failed: testing: timeout"). The deadlines are persistent: the spec is stopped again as soon as `fn`
+---is over.
+---@param fn fun(): any, any
+---@return any a The first result of `fn`.
+---@return any b The second result of `fn`.
+function Guard:suspend(fn)
+  local file_deadline, case_deadline = self.file_deadline, self.case_deadline
+  self.file_deadline, self.case_deadline = nil, nil
+  local ok, a, b = pcall(fn)
+  if not self.stopped then
+    self.file_deadline = file_deadline
+    self.case_deadline = case_deadline
+  end
+  if not ok then
+    error(a, 0)
+  end
+  return a, b
+end
+
 ---Stop guarding. Safe to call twice. Returns whether the FILE deadline fired.
 ---@return boolean fired_file
 function Guard:stop()

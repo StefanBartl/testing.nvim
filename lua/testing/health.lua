@@ -247,6 +247,7 @@ local function sandbox_eval(path)
 end
 
 ---@param health table
+---@return table|nil project The project's configuration when `.testing.lua` evaluated to a table here.
 local function check_project(health)
   health.start("testing.nvim: project (.testing.lua)")
   local cwd = vim.fs.normalize(M.project_dir())
@@ -257,7 +258,7 @@ local function check_project(health)
         cwd
       )
     )
-    return
+    return nil
   end
   local ok, res, syntax = sandbox_eval(path)
   if ok then
@@ -270,6 +271,7 @@ local function check_project(health)
         problems
       )
     end
+    return res
   elseif syntax then
     health.error(".testing.lua cannot be loaded: " .. tostring(res), {
       "The runner refuses a project whose .testing.lua does not load (exit code 2)",
@@ -280,6 +282,101 @@ local function check_project(health)
         tostring(res),
         cwd
       )
+    )
+  end
+  return nil
+end
+
+---Modules of the guard layer and of the isolation machinery (kernel of M2).
+---@type string[]
+local ISOLATION_MODULES = {
+  "testing.guard",
+  "testing.guard.config",
+  "testing.run.guards",
+  "testing.run.options",
+  "testing.run.isolated",
+  "testing.isolation",
+  "testing.child",
+  "testing.child.runner",
+  "testing.child.pool_boot",
+  "testing.rpc",
+  "testing.run.pool",
+}
+
+---Guards and the warm pool as the project configures them (read-only: nothing is started).
+---@param health table
+---@param project table|nil The project's `.testing.lua` table when it could be evaluated here.
+local function check_isolation(health, project)
+  health.start("testing.nvim: guards and warm pool")
+  local loaded = true
+  for _, name in ipairs(ISOLATION_MODULES) do
+    local ok, err = pcall(require, name)
+    if not ok then
+      loaded = false
+      health.error(("%s failed to load: %s"):format(name, tostring(err)), {
+        "This is a defect of testing.nvim; report it with this message",
+      })
+    end
+  end
+  if not loaded then
+    return
+  end
+  health.ok("the guard layer, the child drivers and the pool load")
+
+  local o = require("testing.run.options").of({ project = project or {}, args = {} })
+  local order =
+    { "fs", "state", "scheduled_error", "prompt", "deprecation", "process_net", "clock" }
+  local parts, on = {}, 0
+  for _, name in ipairs(order) do
+    local mode = o.guards[name]
+    if name == "clock" then
+      mode = mode and "on" or "off"
+    end
+    parts[#parts + 1] = ("%s=%s"):format(name, tostring(mode))
+    if mode ~= "off" then
+      on = on + 1
+    end
+  end
+  if on == 0 then
+    health.warn("every guard is off: a spec that leaks state or spawns a process is not noticed", {
+      "Guards are safety nets for accidents (not a sandbox); see docs/GUARDS.md",
+      "Turn them on with `guards = { state = 'warn', ... }` in .testing.lua or `--guard name=mode`",
+    })
+  else
+    health.ok(("guards: %s"):format(table.concat(parts, " ")))
+  end
+  local allowed = #o.guard_allow.fs + #o.guard_allow.spawn + #o.guard_allow.network
+  if allowed > 0 then
+    health.info(
+      ("allowed on purpose: %d path(s) for writes, %d executable(s), %d host(s)"):format(
+        #o.guard_allow.fs,
+        #o.guard_allow.spawn,
+        #o.guard_allow.network
+      )
+    )
+  end
+  health.info(
+    ("isolation: %s; child environment: %s, trace artifact on a dead child: %s"):format(
+      o.isolated,
+      o.determinism and "LANG/TZ fixed" or "LANG/TZ of the parent",
+      o.trace and "on" or "off"
+    )
+  )
+  if o.pool.reuse then
+    local size = o.pool.size > 0 and o.pool.size or math.min(o.jobs, 4)
+    health.ok(
+      ("warm pool: on (up to %d editor(s) at a time, each reset and verified clean between files)"):format(
+        math.max(1, math.min(size, o.jobs))
+      )
+    )
+    if o.jobs == 1 then
+      health.info(
+        "jobs = 1: the pool keeps ONE editor for all files; raise `jobs` to run files in parallel"
+      )
+    end
+  else
+    health.info(
+      "warm pool: off (`pool = { reuse = true }` or --pool-reuse): a child editor per file"
     )
   end
 end
@@ -326,7 +423,8 @@ function M.check()
   check_kernel(health)
   check_registries(health)
   check_deps(health)
-  check_project(health)
+  local project = check_project(health)
+  check_isolation(health, project)
 
   health.start("testing.nvim: configuration")
   local config = require("testing.config")

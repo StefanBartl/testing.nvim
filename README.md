@@ -1,7 +1,8 @@
-> **Pre-alpha, milestone M1.** A test runner for Neovim plugins that runs the spec styles of the
-> author's plugins unchanged, tells the truth about a run, and tests itself with itself. Spec files
-> can run in a child editor of their own. No editor UI beyond `:Testing`, and the fleet has been
-> measured but not yet migrated. Expect breaking changes; do not depend on it.
+> **Pre-alpha, milestone M2 in progress (M1 is done).** A test runner for Neovim plugins that runs
+> the spec styles of the author's plugins unchanged, tells the truth about a run, and tests itself
+> with itself. Spec files can run in a child editor of their own, guards name what a spec leaves
+> behind, and an opt-in warm pool reuses editors between files. No editor UI beyond `:Testing`. Expect
+> breaking changes; do not depend on it.
 
 # testing.nvim
 
@@ -70,9 +71,24 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   line; a missing dependency is reported with all four places that were searched.
 - **Child editors** ([CONFIG.md](docs/CONFIG.md#child-editors)): `isolated = "file"` (default for busted
   files and for scripts) runs every spec file in an editor of its own, `jobs` of them at once, with an
-  environment allowlist and a sandboxed `stdpath`. A file that crashes the editor is one `crash` case,
-  a file that hangs is killed with its process tree and is one `timeout` case, a prompt nobody can
-  answer is cancelled; the other files run on.
+  environment allowlist, fixed `LANG`/`TZ` and a sandboxed `stdpath`. A file that crashes the editor is
+  one `crash` case, a file that hangs is killed with its process tree and is one `timeout` case, each
+  with a trace artifact; a prompt nobody can answer is cancelled; the other files run on.
+  `isolated = "case"` gives every case a child, `"soft"` restores what a file changed in this editor
+  ([docs/ISOLATION.md](docs/ISOLATION.md)).
+- **Guards** ([docs/GUARDS.md](docs/GUARDS.md)): safety nets, not a sandbox. They name what a spec
+  leaves behind ("spec X leaves autocmd Y in group Z", a stub in `package.preload`, a running job), what
+  it writes outside the run folder, an error in a scheduled callback, a prompt nobody answers, a
+  deprecation, and a process or connection (`process_net`, off by default). They run in this editor
+  and in every child; findings are in the terminal report, JUnit, GitHub and the IR (`case.guards`,
+  `case.effects`). This repository's own suite runs with every guard on `error`.
+- **The RPC child** ([docs/CHILD.md](docs/CHILD.md)): `testing.rpc` starts an embedded, headless,
+  sandboxed editor that a spec drives like a user (`feed`, `input`, `settle`, `screen`, ...).
+- **Warm pool** (opt-in, `--pool-reuse`): child editors that run file after file, each reset and
+  checked clean in between; a member that cannot prove it is clean is replaced and a finding says why.
+  Measured, not promised: six times faster for 40 trivial files, between 3 % (lib.nvim) and about a
+  third (lsp.nvim) at `--jobs 4` for the two real suites tried, and no gain worth naming at `--jobs 1`
+  ([docs/ISOLATION.md](docs/ISOLATION.md#the-warm-pool)).
 - **Migration** ([docs/MIGRATING.md](docs/MIGRATING.md)): `testing migrate` plans (dry run, default) or
   writes the move of a repository to testing.nvim; specs, `TESTS/harness.lua` and `TESTS/run.lua` are
   never touched.
@@ -97,11 +113,21 @@ Known limits, not hidden:
   objects from Lua); on POSIX its process group is.
 - The runner itself is started with `nvim -l` (`v:vim_did_enter` is `1`, `expand("<cfile>")` raises);
   specs that need the host of a `-c` command must run in a child (`isolated = "file"`, host `c`).
-- `effects` of a case (processes, network, writes) are not measured yet; every case says so.
+- `effects` of a case are filled by the guards: with `process_net` off (the default) no process or
+  connection is seen, with `fs` off no write, and the case says so in its notes; an empty list is not a
+  measurement then.
 - The `init` subcommand exists only as `:Testing init`, not on the command line.
-- Not implemented at all: a test UI, snapshots, coverage, conformance checks, guards against
-  state leaks, adapters for other test frameworks. Keys for some of these exist in `.testing.lua`
-  and are validated, but nothing acts on them.
+- The warm pool and `isolated = "soft"` restore and check what they can see (modules, globals,
+  autocmds, mappings, commands, options, environment, the editor's LSP and diagnostic registries,
+  running jobs and handles, the sandbox); the pool also puts back registers, abbreviations and `t:` /
+  `w:` variables and names a replaced function of the editor API or the standard library. Quickfix
+  lists, marks, highlight groups, `v:vim_did_enter` and state inside a C library they cannot. A child
+  per file is the exact isolation.
+- The state guard has nothing to protect in a child that runs one case (it dies with its case) and is off
+  there; the cases say so. A `script` file runs without any guard, and says so as well.
+- Not implemented at all: a test UI, snapshots, coverage, conformance checks, adapters for other test
+  frameworks. Keys for some of these exist in `.testing.lua` and are validated, but nothing acts on
+  them.
 
 ## Fleet status
 
@@ -231,6 +257,10 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
 - [docs/CONFIG.md](docs/CONFIG.md): `.testing.lua` keys with types, dependency resolution, `setup()` options.
+- [docs/ISOLATION.md](docs/ISOLATION.md): the isolation modes (`none`, `soft`, `file`, `case`), the guard
+  settings and the other isolation keys.
+- [docs/GUARDS.md](docs/GUARDS.md): the guards (safety nets, not a sandbox) and the effects ledger.
+- [docs/CHILD.md](docs/CHILD.md): the RPC child driver `testing.rpc` and the warm pool.
 - [docs/EXIT-CODES.md](docs/EXIT-CODES.md): what `0`, `1`, `2` and `3` promise.
 - [docs/DIALECTS.md](docs/DIALECTS.md): which spec styles run, and exactly what each shim supports.
 - [docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md): reporters and the Result-IR.

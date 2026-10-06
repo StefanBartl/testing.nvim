@@ -113,6 +113,24 @@ local function doctor(plan, loaded, say)
     )
   )
 
+  local guard_modes = {}
+  for _, name in ipairs(require("testing.run.options").GUARD_NAMES) do
+    guard_modes[#guard_modes + 1] = ("%s=%s"):format(name, tostring(run_opts.guards[name]))
+  end
+  say(("guards: %s"):format(table.concat(guard_modes, " ")))
+  say(
+    ("guard_allow: fs=%d spawn=%d network=%d; pool: size=%d reuse=%s; determinism=%s trace=%s; soft_keep=%s"):format(
+      #run_opts.guard_allow.fs,
+      #run_opts.guard_allow.spawn,
+      #run_opts.guard_allow.network,
+      run_opts.pool.size,
+      tostring(run_opts.pool.reuse),
+      tostring(run_opts.determinism),
+      tostring(run_opts.trace),
+      #run_opts.soft_keep > 0 and table.concat(run_opts.soft_keep, ",") or "-"
+    )
+  )
+
   say("dependencies:")
   local code = M.EXIT_OK
   ---@param row table
@@ -277,12 +295,20 @@ function M.main(argv, services)
     end,
   }, services or {})
 
+  -- a run adds the project, its dependencies and `--rtp` to the runtimepath; an editor that hosts the
+  -- run (a spec of this project calls `main`) is left as it was found
+  local rtp_before = vim.o.rtp
   local ok, code = xpcall(execute, function(e)
     if vim.env.TESTING_DEBUG and vim.env.TESTING_DEBUG ~= "" then
       return debug.traceback(tostring(e), 2)
     end
     return tostring(e)
   end, clean_argv(argv or {}), sv)
+  if vim.o.rtp ~= rtp_before then
+    pcall(function()
+      vim.o.rtp = rtp_before
+    end)
+  end
   if not ok then
     pcall(sv.err, "testing: internal error: " .. tostring(code))
     return M.EXIT_INFRA

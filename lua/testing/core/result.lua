@@ -111,6 +111,79 @@ function M.new_case(opts)
   }
 end
 
+---@type table<string, true>
+local SEVERITIES = { info = true, warn = true, error = true }
+
+---Severities of a guard finding: `info` is listed only, `warn` is a warning, `error` fails the case.
+---@type string[]
+M.GUARD_SEVERITIES = { "info", "warn", "error" }
+
+---Most findings kept on one case; the rest is counted in a last finding (a runaway guard must not
+---make a megabyte IR).
+M.MAX_GUARD_FINDINGS = 50
+
+---Record a guard finding on a case: it lands in `case.guards` (a list, created on the first one;
+---absent = no finding, so an IR without findings is byte-identical to the one before the guards).
+---A finding of severity `error` also fails the case: a failed assertion of kind `guard` is added
+---and a `pass` becomes `fail`, so the verdict never depends on a reporter reading `guards`. The same
+---(guard, severity, message) is recorded once per case.
+---@param case Testing.Result.Case
+---@param finding Testing.Result.GuardFinding
+---@return boolean recorded False when it was a duplicate or beyond the cap.
+function M.add_guard_finding(case, finding)
+  local guard = tostring(finding.guard or "guard")
+  local severity = SEVERITIES[finding.severity] and finding.severity or "warn"
+  local message = tostring(finding.message or "")
+  local id = type(finding.id) == "string" and finding.id or nil
+  case.guards = case.guards or {}
+  for _, g in ipairs(case.guards) do
+    if g.guard == guard and g.severity == severity and g.message == message and g.id == id then
+      return false
+    end
+  end
+  if #case.guards >= M.MAX_GUARD_FINDINGS then
+    return false
+  end
+  local stack = type(finding.stack) == "string"
+      and finding.stack ~= ""
+      and finding.stack:sub(1, 2000)
+    or nil
+  case.guards[#case.guards + 1] =
+    { guard = guard, severity = severity, message = message, id = id, stack = stack }
+  if severity == "error" and (case.status == "pass" or case.status == "fail") then
+    case.assertions[#case.assertions + 1] =
+      { ok = false, kind = "guard", msg = ("guard %s: %s"):format(guard, message) }
+    case.status = "fail"
+  end
+  return true
+end
+
+---Add the effects a guard ledger measured to a case (`spawned`, `network`, `fs_outside_tmp`; other
+---keys and non-strings are ignored). Entries are kept once, in order, up to `M.MAX_EFFECTS` per list.
+---@param case Testing.Result.Case
+---@param effects table<string, string[]>|nil
+function M.merge_effects(case, effects)
+  if type(effects) ~= "table" then
+    return
+  end
+  for _, key in ipairs({ "spawned", "network", "fs_outside_tmp" }) do
+    local list = case.effects[key]
+    local seen = {}
+    for _, v in ipairs(list) do
+      seen[v] = true
+    end
+    for _, v in ipairs(type(effects[key]) == "table" and effects[key] or {}) do
+      if type(v) == "string" and not seen[v] and #list < M.MAX_EFFECTS then
+        seen[v] = true
+        list[#list + 1] = v
+      end
+    end
+  end
+end
+
+---Most entries of one `effects` list.
+M.MAX_EFFECTS = 200
+
 ---An empty result: header, no cases, all counters zero.
 ---@param opts? Testing.Result.RunOpts
 ---@return Testing.Result
@@ -485,6 +558,9 @@ local function redact_result(value, r, ci)
     for i, n in ipairs(c.notes or {}) do
       c.notes[i] = red(n)
     end
+    for _, g in ipairs(c.guards or {}) do
+      g.message = red(g.message)
+    end
   end
   return copy
 end
@@ -581,6 +657,7 @@ local function scan_leaks(value, path, opts, problems, depth)
     -- on a CI runner whose user is `runner`)
     local free_text = path:find("%.assertions%.")
       or path:find("%.notes%.")
+      or path:find("%.guards%.")
       or path:find("%.error%.")
       or path:find("%.reason$")
     for _, bad in ipairs((free_text or not opts.forbid_free_text_only) and opts.forbid or {}) do
@@ -712,6 +789,47 @@ local function validate_verdict(c, at, problems)
   end
 end
 
+---`case.guards` (optional): a list of `{ guard, severity, message }`. A finding of severity `error`
+---on a case that passed is a contradiction (`add_guard_finding` fails the case), so it is a problem.
+---@param c Testing.Result.Case
+---@param at string
+---@param problems string[]
+local function validate_guards(c, at, problems)
+  if not is_list(c.guards) then
+    problems[#problems + 1] = at .. ".guards: must be a list"
+    return
+  end
+  for j, g in ipairs(c.guards) do
+    local where = ("%s.guards[%d]"):format(at, j)
+    if type(g) ~= "table" then
+      problems[#problems + 1] = where .. ": must be a table"
+    else
+      if type(g.guard) ~= "string" or g.guard == "" then
+        problems[#problems + 1] = where .. ".guard: must be a non-empty string"
+      end
+      if not SEVERITIES[g.severity] then
+        problems[#problems + 1] = ("%s.severity: %q is not one of info|warn|error"):format(
+          where,
+          tostring(g.severity)
+        )
+      end
+      if type(g.message) ~= "string" then
+        problems[#problems + 1] = where .. ".message: must be a string"
+      end
+      if g.id ~= nil and type(g.id) ~= "string" then
+        problems[#problems + 1] = where .. ".id: must be a string"
+      end
+      if g.stack ~= nil and type(g.stack) ~= "string" then
+        problems[#problems + 1] = where .. ".stack: must be a string"
+      end
+      if g.severity == "error" and c.status == "pass" then
+        problems[#problems + 1] = where
+          .. ": a guard error on a case with status 'pass' (the case must fail)"
+      end
+    end
+  end
+end
+
 ---@param cases any
 ---@param problems string[]
 local function validate_cases(cases, problems)
@@ -760,6 +878,9 @@ local function validate_cases(cases, problems)
       end
       if not is_list(c.artifacts) then
         problems[#problems + 1] = at .. ".artifacts: must be a list"
+      end
+      if c.guards ~= nil then
+        validate_guards(c, at, problems)
       end
       if type(c.effects) ~= "table" then
         problems[#problems + 1] = at .. ".effects: must be a table"

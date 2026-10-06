@@ -25,7 +25,7 @@
 ---     `$TESTING_CHILD_BOOT`, so no user text is ever parsed as a command;
 ---   * stdin is the null device: a spec that asks a question never blocks the run (`boot` also
 ---     answers `input()`/`inputlist()`/`confirm()` with "cancelled");
----   * the environment is an allowlist (`testing.child.env`) plus the sandbox: `XDG_*` and the temp
+---   * the environment is an allowlist (`testing.child.env`) plus the determinism variables (`LANG`/`LC_ALL=C.UTF-8`, `TZ=UTC`, opt out with `deterministic = false`) plus the sandbox: `XDG_*` and the temp
 ---     variables point into one directory below the parent's temp dir, so `stdpath('data'|'state'|
 ---     'cache'|'config')` and `tempname()` of a spec never touch the user's real ones. The sandbox
 ---     is deleted when the child is done;
@@ -34,7 +34,9 @@
 --- KILLING. A timeout kills the whole process TREE: a spec that spawned helpers (language servers,
 --- `nvim --headless` workers) must not leave them behind. Windows: `taskkill /PID <pid> /T /F` (an argv
 --- call; killing the root first would hide the tree from `/T`). POSIX: the child is started
---- detached (own process group) and the group gets SIGKILL. If the OS call fails the root is killed
+--- detached (own process group); the root is frozen (SIGSTOP), its descendants are read from one
+--- `ps` call, the group and every descendant get SIGKILL (a `jobstart`ed helper has a process group of
+--- its own, the group kill alone would miss it). If the OS call fails the root is killed
 --- directly. A parent that is itself killed cannot clean up after itself (documented limit).
 --- A grandchild a spec left behind AFTER the child ended normally is killed on POSIX (the process
 --- group outlives its leader); on Windows it is not (no job objects from Lua; documented limit), but
@@ -87,6 +89,9 @@ M.HOST_C_COMMAND =
 ---@field nvim? string Executable (default `vim.v.progpath`).
 ---@field base? string Directory below which the sandbox is created (default: the parent's temp dir).
 ---@field name? string Sandbox directory name (default unique).
+---@field deterministic? boolean `LANG`/`LC_ALL=C.UTF-8` and `TZ=UTC` are set (default true; `false`: the parent's are passed on).
+---@field guard? table Configuration of the guard layer (`testing.run.options.guard_config`, JSON-safe): installed in the child for the file (`testing.child.runner`). Nil: no guards.
+---@field trace? boolean A child that times out or dies leaves a trace artifact (default true; the parent writes it, the job only carries the choice).
 
 ---@class Testing.Child.Plan
 ---@field argv string[]
@@ -120,13 +125,18 @@ local function parent_tmp()
   return (vim.fs.normalize(vim.fs.dirname(vim.fn.tempname())):gsub("/+$", ""))
 end
 
----Build the plan of a child. Pure apart from reading the environment and a counter: nothing is
----created and nothing is started, so a spec can inspect the argv, the environment and the job.
----@param spec Testing.Child.Spec
----@return Testing.Child.Plan
-function M.build(spec)
-  local host = spec.host or "c"
-  assert(host == "c" or host == "l", "testing.child: host must be 'c' or 'l'")
+---@class Testing.Child.Environment
+---@field env table<string, string>
+---@field dropped_env string[]
+---@field sandbox string
+---@field dirs table<string, string>
+
+---The sandbox directory, the sanitized environment, the determinism variables and the sandbox
+---variables of a child (shared by the per-file child and the RPC driver `testing.rpc`). Pure apart
+---from reading the environment and a counter: nothing is created.
+---@param spec { parent_env?: table<string, string>, env_allow?: string[], extra_env?: table<string, string>, deterministic?: boolean, base?: string, name?: string }
+---@return Testing.Child.Environment
+function M.environment(spec)
   seq = seq + 1
   local base = spec.base or parent_tmp()
   local name = spec.name or ("testing-child-%d-%d"):format(vim.fn.getpid(), seq)
@@ -135,6 +145,9 @@ function M.build(spec)
 
   local clean = env_mod.sanitize(spec.parent_env or vim.fn.environ(), { allow = spec.env_allow })
   local env = clean.env
+  if spec.deterministic ~= false then
+    env_mod.apply_determinism(env)
+  end
   -- the sandbox variables replace whatever case the parent spelled them in (`Temp` vs `TEMP`)
   for key, value in pairs(sandbox_vars) do
     for existing in pairs(env) do
@@ -148,6 +161,49 @@ function M.build(spec)
   for key, value in pairs(spec.extra_env or {}) do
     env[key] = native(value)
   end
+  return { env = env, dropped_env = clean.dropped, sandbox = sandbox, dirs = dirs }
+end
+
+---The job of a file: what the child's runner reads (`testing.child.boot`, `testing.child.pool_boot`).
+---Pure: nothing is written.
+---@param spec Testing.Child.Spec
+---@param fragment string Where the result records go.
+---@param minit? string
+---@return table job
+function M.job(spec, fragment, minit)
+  return {
+    version = 1,
+    kind = spec.kind or "cases",
+    entry = spec.entry,
+    root = spec.root,
+    rtp_prepend = spec.rtp_prepend or {},
+    rtp = spec.rtp or {},
+    filetype = spec.filetype ~= false,
+    minit = minit,
+    disable_first_run = spec.disable_first_run ~= false,
+    assertions = spec.assertions,
+    fragment = fragment,
+    selector = spec.selector or {},
+    lf_ids = spec.lf_ids,
+    timeouts = spec.timeouts or {},
+    seed = spec.seed,
+    script_args = spec.script_args,
+    -- the guard layer's configuration (`testing.run.options.guard_config`): `testing.child.runner` installs it
+    guard = spec.guard,
+    trace = spec.trace ~= false,
+  }
+end
+
+---Build the plan of a child. Pure apart from reading the environment and a counter: nothing is
+---created and nothing is started, so a spec can inspect the argv, the environment and the job.
+---@param spec Testing.Child.Spec
+---@return Testing.Child.Plan
+function M.build(spec)
+  local host = spec.host or "c"
+  assert(host == "c" or host == "l", "testing.child: host must be 'c' or 'l'")
+  local e = M.environment(spec)
+  local env, sandbox, dirs = e.env, e.sandbox, e.dirs
+  local clean = { dropped = e.dropped_env }
 
   local job_file = sandbox .. "/job.json"
   local fragment = sandbox .. "/result.ndjson"
@@ -161,24 +217,7 @@ function M.build(spec)
     vim.list_extend(argv, { "-l", native(boot) })
   end
 
-  local job = {
-    version = 1,
-    kind = spec.kind or "cases",
-    entry = spec.entry,
-    root = spec.root,
-    rtp_prepend = spec.rtp_prepend or {},
-    rtp = spec.rtp or {},
-    filetype = spec.filetype ~= false,
-    minit = spec.minit,
-    disable_first_run = spec.disable_first_run ~= false,
-    assertions = spec.assertions,
-    fragment = fragment,
-    selector = spec.selector or {},
-    lf_ids = spec.lf_ids,
-    timeouts = spec.timeouts or {},
-    seed = spec.seed,
-    script_args = spec.script_args,
-  }
+  local job = M.job(spec, fragment, spec.minit)
   return {
     argv = argv,
     cwd = native(spec.root),
@@ -259,6 +298,7 @@ end
 ---@field out Testing.Child.Buffer Everything the child printed (stdout and stderr, arrival order).
 ---@field stdout Testing.Child.Buffer What it wrote to stdout.
 ---@field err Testing.Child.Buffer What it wrote to stderr.
+---@field stdin? uv.uv_pipe_t RPC mode only: the write end of the child's stdin (closed when the handle is finished).
 
 ---Cap of the captured output per stream and child (bytes); the newest output is kept.
 M.OUTPUT_CAP = 256 * 1024
@@ -311,19 +351,34 @@ local function hook_leave()
   })
 end
 
+---Remove the `VimLeavePre` reaper when no child is left to reap: a spec that runs real children
+---in-process must not leave an autocmd behind (the state guard names it), and an idle editor needs
+---none. The next `spawn` hooks it again.
+local function unhook_leave()
+  if leave_hooked and next(live) == nil then
+    leave_hooked = false
+    pcall(vim.api.nvim_del_augroup_by_name, "TestingChildReaper")
+  end
+end
+
 ---How long after the PROCESS ended the pipes are still read (ms). A spec that left a grandchild
 ---behind (a language server, a `start /b` helper) leaves it holding the inherited ends of the pipes:
 ---waiting for end-of-file would wait for that orphan, not for the child.
 M.DRAIN_MS = 200
+
+---@class Testing.Child.SpawnOpts
+---@field on_stdout? fun(data: string) RPC mode: stdout is a binary stream handed to this function (called in a libuv callback, fast context: no `vim.api`), stdin is a pipe (`h.stdin`) instead of the null device, and stdout is not buffered.
 
 ---Start a prepared child. The child is finished when its PROCESS has exited (plus a short drain of
 ---what is still in the pipes), never when the pipes reach end-of-file (`vim.system` waits for that,
 ---which an orphan can delay for ever).
 ---@param plan Testing.Child.Plan
 ---@param on_exit fun(h: Testing.Child.Handle) Called ON THE MAIN LOOP (scheduled) when the process ended.
+---@param popts? Testing.Child.SpawnOpts
 ---@return Testing.Child.Handle|nil handle
 ---@return string|nil err
-function M.spawn(plan, on_exit)
+function M.spawn(plan, on_exit, popts)
+  popts = popts or {}
   local uv = vim.uv
   ---@diagnostic disable-next-line: missing-fields
   local h = {
@@ -337,7 +392,12 @@ function M.spawn(plan, on_exit)
   } --[[@as Testing.Child.Handle]]
 
   local out_pipe, err_pipe = uv.new_pipe(false), uv.new_pipe(false)
-  if not out_pipe or not err_pipe then
+  local in_pipe = popts.on_stdout and uv.new_pipe(false) or nil
+  h.stdin = in_pipe
+  if not out_pipe or not err_pipe or (popts.on_stdout and not in_pipe) then
+    if in_pipe then
+      in_pipe:close()
+    end
     if out_pipe then
       out_pipe:close()
     end
@@ -371,12 +431,14 @@ function M.spawn(plan, on_exit)
     close(timer)
     close(out_pipe)
     close(err_pipe)
+    close(in_pipe)
     h.exited = true
     if h.ended then
       live[h.pid] = nil
     end
     vim.schedule(function()
       on_exit(h)
+      unhook_leave()
     end)
   end
   h.finish = finish
@@ -385,7 +447,7 @@ function M.spawn(plan, on_exit)
     args = args,
     cwd = plan.cwd,
     env = env,
-    stdio = { nil, out_pipe, err_pipe },
+    stdio = { in_pipe, out_pipe, err_pipe },
     detached = plan.detached,
     hide = true,
   }, function(code, signal)
@@ -411,6 +473,7 @@ function M.spawn(plan, on_exit)
   if not handle then
     close(out_pipe)
     close(err_pipe)
+    close(in_pipe)
     return nil, ("cannot start %s: %s"):format(tostring(plan.argv[1]), tostring(pid))
   end
   h.uv_handle = handle
@@ -420,9 +483,13 @@ function M.spawn(plan, on_exit)
 
   ---@param pipe uv.uv_pipe_t
   ---@param sinks Testing.Child.Buffer[]
-  local function read(pipe, sinks)
+  ---@param stream? fun(data: string)
+  local function read(pipe, sinks, stream)
     pipe:read_start(function(_, data)
       if data then
+        if stream then
+          stream(data)
+        end
         for _, sink in ipairs(sinks) do
           keep(sink, data)
         end
@@ -437,7 +504,11 @@ function M.spawn(plan, on_exit)
       end
     end)
   end
-  read(out_pipe, { h.out, h.stdout })
+  if popts.on_stdout then
+    read(out_pipe, {}, popts.on_stdout)
+  else
+    read(out_pipe, { h.out, h.stdout })
+  end
   read(err_pipe, { h.err, h.out })
   return h, nil
 end
@@ -456,6 +527,40 @@ function M.abandon(h)
   else
     h.exited = true
   end
+end
+
+---POSIX: the pids of everything below `pid` (children, grandchildren, ...) whatever their process
+---group. `jobstart` puts every job in a session of its own (measured on Linux: its PGID and SID are its
+---own pid), so a spec's `jobstart`ed helper is NOT in the child's group and the group kill misses it.
+---One `ps` call; an empty list when it cannot be run (then only the group dies, as before).
+---@param pid integer
+---@return integer[]
+local function descendants(pid)
+  local ok, res = pcall(function()
+    return vim.system({ "ps", "-A", "-o", "pid=", "-o", "ppid=" }, { text = true }):wait(3000)
+  end)
+  if not ok or type(res) ~= "table" or res.code ~= 0 or type(res.stdout) ~= "string" then
+    return {}
+  end
+  local kids = {}
+  for p, pp in res.stdout:gmatch("(%d+)%s+(%d+)") do
+    local parent = tonumber(pp) or 0
+    local list = kids[parent] or {}
+    kids[parent] = list
+    list[#list + 1] = tonumber(p)
+  end
+  local out, queue, seen = {}, { pid }, { [pid] = true }
+  while #queue > 0 do
+    local cur = table.remove(queue)
+    for _, k in ipairs(kids[cur] or {}) do
+      if not seen[k] then
+        seen[k] = true
+        out[#out + 1] = k
+        queue[#queue + 1] = k
+      end
+    end
+  end
+  return out
 end
 
 ---Kill the process tree of a child (see the module header). Idempotent; never raises.
@@ -485,8 +590,15 @@ function M.kill_tree(h)
     end
     root_kill()
   else
+    -- freeze the root so it cannot start anything while the tree is read, then kill the tree (the
+    -- group, and every descendant that is in a group of its own)
+    pcall(vim.uv.kill, h.pid, "sigstop")
+    local below = descendants(h.pid)
     if not pcall(vim.uv.kill, -h.pid, "sigkill") then
       root_kill()
+    end
+    for _, pid in ipairs(below) do
+      pcall(vim.uv.kill, pid, "sigkill")
     end
     root_kill()
   end

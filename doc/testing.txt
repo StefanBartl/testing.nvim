@@ -122,8 +122,10 @@ lib.nvim modules the plugin calls, plus two behaviors it relies on (safe_call
 keeps non-string errors, fs.write.atomic refuses an invalid call), each probed
 without writing anything; whether the kernel modules load; the dialect and
 reporter registries; whether the command-line runner can find lib.nvim; the
-`.testing.lua` of the current directory; the effective configuration; and
-whether |:Testing| is registered.
+`.testing.lua` of the current directory; the guards and the warm pool as that
+file configures them (modes, allowances, pool size; a warning when every guard
+is off, an error when a module of the isolation machinery does not load); the
+effective configuration; and whether |:Testing| is registered.
 
 It is read-only, starts no process and loads no plugin that is lazy-loaded.
 `.testing.lua` is a Lua file and loading it executes it, so the health check
@@ -171,12 +173,28 @@ Control ~
                      `vim.wait`, not a spec that blocks inside C); in a child
                      editor hard: the child and its process tree are killed.
   --strict           A skipped case or a discovery finding makes the run red.
-  --isolated {none|file}
+  --isolated {none|file|case|soft}
                      `file`: every spec file in a child editor of its own (a
-                     crash, a hang or a prompt ends that file only). Default
+                     crash, a hang or a prompt ends that file only). `case`:
+                     a child per case (busted). `soft`: this editor, what a
+                     file changed is restored before the next. Default
                      `auto`: busted files `file`, the others `none`; a
                      `script` is always a child.
   --jobs {n}         Child editors at once; the report is the same for any n.
+  --pool-reuse, --no-pool-reuse
+                     The warm pool: with `--isolated file` the files share
+                     child editors that are reset and verified clean between
+                     files (a member that cannot prove it is clean is
+                     replaced and a finding says why). `script` files and
+                     `case` never use it.
+  --pool-size {n}    Editors the pool keeps (default min(--jobs, 4)).
+  --guard {name}={mode}
+                     Guards: fs, state, scheduled_error, prompt, deprecation,
+                     process_net (off|warn|error), clock (on|off).
+  --allow-fs {path}, --allow-spawn {exe}, --allow-network {host}
+                     What the guards let through (repeatable).
+  --no-determinism   A child keeps the parent's LANG/LC_ALL/TZ.
+  --no-trace         No trace artifact for a child that timed out or died.
   --host {c|l}       A child starts like plenary's host (`c`, default) or like
                      `nvim -l`.
   --env-allow {name} An environment variable (or PREFIX*) a child may inherit.
@@ -211,7 +229,14 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
                             name, ["*"] = name }.
   assertions   string       "error" (default): a case without assertions
                             fails; "warn": it passes and is listed.
-  isolated     string       "auto" (default), "none", "file".
+  isolated     string       "auto" (default), "none", "file", "case", "soft".
+  guards       table        fs, state, deprecation, scheduled_error, prompt,
+                            process_net: "off"|"warn"|"error"; clock: boolean.
+  guard_allow  table        { fs, spawn, network } string lists.
+  pool         table        { size = n, reuse = boolean }: the warm pool.
+  determinism  boolean      Fixed LANG/LC_ALL/TZ in a child. Default true.
+  trace        boolean      Trace artifact of a child that died. Default true.
+  soft_keep    string[]     Modules the soft isolation never unloads.
   jobs         integer      Child editors at once. Default 1.
   host         string       "c" (default) or "l".
   filetype     boolean      Children run `filetype plugin indent on`.

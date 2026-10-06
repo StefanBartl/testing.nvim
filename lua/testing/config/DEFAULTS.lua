@@ -30,10 +30,38 @@ local DEFAULTS = {
     -- A case without assertions: "error" = failure, "warn" = pass with a warning.
     assertions = "error",
     -- "auto" = one child process per file for busted specs, one shared process otherwise;
-    -- or "none" / "file" for every dialect (resolve with config.project.isolated_for).
+    -- "none" = everything in this process; "file" = one child per spec file; "case" = one child per
+    -- CASE (busted files; every other dialect degrades to "file" with a note); "soft" = everything in
+    -- this process, with what a file changed restored between the files (resolve with
+    -- config.project.isolated_for).
     isolated = "auto",
+    -- Modules the soft isolation never unloads (exact names or `prefix*`), on top of `testing*`,
+    -- `lib.nvim*` and everything that was loaded before the run started.
+    soft_keep = {},
     -- Parallel child processes of an isolated run.
     jobs = 1,
+    -- Guards (safety nets, NOT a sandbox: Lua code can bypass every monkeypatch). Per guard "off",
+    -- "warn" (a finding in the report) or "error" (a finding fails the case). `clock` is opt-in.
+    -- `process_net` is off by default for now; its LEDGER (`effects`) is always collected.
+    guards = {
+      fs = "warn",
+      state = "warn",
+      scheduled_error = "error",
+      prompt = "error",
+      deprecation = "warn",
+      process_net = "off",
+      clock = false,
+    },
+    -- What the guards let through, each a list: writes below these paths (fs), these executables
+    -- (spawn), these hosts (network). Shown in the report, never silent.
+    guard_allow = { fs = {}, spawn = {}, network = {} },
+    -- Warm child pool (round 2): `size` children kept alive (0 = `jobs`), `reuse` = reset and reuse
+    -- a child between files instead of respawning it.
+    pool = { size = 0, reuse = false },
+    -- Child editors start with a fixed `LANG`/`LC_ALL` and `TZ` (the same output on every machine).
+    determinism = true,
+    -- A child that times out or crashes leaves a trace of what it did (artifact of the case).
+    trace = true,
     -- Host of a child process: "c" = started like plenary (--cmd/-c, vim_did_enter == 0), "l" = nvim -l.
     host = "c",
     -- The host runs `filetype plugin indent on` (plenary's minimal init does).

@@ -149,6 +149,24 @@ local function problem(c)
   return element, first or status, kind, table.concat(texts, "\n")
 end
 
+---The guard findings of a case as text (a `warn` of a green case is only visible here; the `error`
+---ones also failed the case, which `problem` already reports), or nil when there are none.
+---@param c Testing.Result.Case
+---@return string|nil
+local function guard_out(c)
+  if type(c.guards) ~= "table" or #c.guards == 0 then
+    return nil
+  end
+  local lines = {}
+  for _, g in ipairs(c.guards) do
+    -- `info` findings are listed in the IR only (a CI viewer would show one line per loaded module)
+    if g.severity ~= "info" then
+      lines[#lines + 1] = ("guard [%s %s] %s"):format(g.guard, g.severity, g.message)
+    end
+  end
+  return #lines > 0 and table.concat(lines, "\n") or nil
+end
+
 ---@class Testing.Report.JunitSuite
 ---@field tests integer
 ---@field failures integer
@@ -172,13 +190,18 @@ function M.render(result, opts)
       suite.tests = suite.tests + 1
       suite.time = suite.time + (c.duration_ms or 0)
       local element, message, kind, text = problem(c)
+      local guard_text = guard_out(c)
       local attrs = ('classname="%s" name="%s"'):format(M.attr(g.file), M.attr(util.short_name(c)))
       if c.line then
         attrs = attrs .. (' line="%d"'):format(c.line)
       end
       attrs = attrs .. (' time="%s"'):format(util.seconds(c.duration_ms))
-      if element == "" then
+      if element == "" and guard_text == nil then
         cases[#cases + 1] = ("    <testcase %s/>"):format(attrs)
+      elseif element == "" then
+        cases[#cases + 1] = ("    <testcase %s>"):format(attrs)
+        cases[#cases + 1] = "      <system-out>" .. body(guard_text or "", o) .. "</system-out>"
+        cases[#cases + 1] = "    </testcase>"
       else
         if element == "failure" then
           suite.failures = suite.failures + 1
@@ -198,6 +221,9 @@ function M.render(result, opts)
         end
         cases[#cases + 1] = ("    <testcase %s>"):format(attrs)
         cases[#cases + 1] = "      " .. inner
+        if guard_text then
+          cases[#cases + 1] = "      <system-out>" .. body(guard_text, o) .. "</system-out>"
+        end
         cases[#cases + 1] = "    </testcase>"
       end
     end

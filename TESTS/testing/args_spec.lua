@@ -153,7 +153,11 @@ return function(H)
   eq({ a.isolated, a.jobs, a.host }, { "none", 2, "c" }, "the = form")
   a = assert(parse({ "r", "--env-allow", "A", "--env-allow", "LUA_*" }))
   eq(a.env_allow, { "A", "LUA_*" }, "--env-allow is repeatable")
-  has(refused({ "r", "--isolated", "maybe" }), "'none' or 'file'", "--isolated maybe")
+  has(
+    refused({ "r", "--isolated", "maybe" }),
+    "'none', 'file', 'case' or 'soft'",
+    "--isolated maybe"
+  )
   has(refused({ "r", "--isolated" }), "needs a value", "--isolated without a value")
   has(refused({ "r", "--jobs", "0" }), "integer >= 1", "--jobs 0")
   has(refused({ "r", "--jobs", "many" }), "integer >= 1", "--jobs many")

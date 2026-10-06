@@ -60,7 +60,17 @@
 ---@field message string First line of the thrown error.
 ---@field traceback string The full traceback (`lib.lua.error.safe_call`).
 
+---@class Testing.Result.GuardFinding
+--- One finding of a guard (or of the soft isolation between files): what leaked, wrote or blocked.
+---@field guard string Guard name: `fs`, `state`, `scheduled_error`, `prompt`, `deprecation`, `process_net`, `clock`, ...
+---@field severity "info"|"warn"|"error" `info` is listed only, `warn` is a warning, `error` also fails the case (`result.add_guard_finding` adds the failed `guard` assertion).
+---@field id? string Stable id of the finding kind (`state.autocmd`, `process.spawn_blocked`, ...).
+---@field case? string Id of the case the guard layer saw it in (the runner puts it on that case; without one it lands on the last case of the file).
+---@field message string Names the culprit precisely ("spec X leaves autocmd Y in group Z").
+---@field stack? string Where it happened (a deprecated call, an unanswered prompt, a scheduled error): the caller's stack, paths redacted, at most 2000 bytes.
+
 ---@class Testing.Result.Case
+---@field guards? Testing.Result.GuardFinding[] Guard findings; absent when there are none.
 ---@field id string Stable id `file::describe::case[#param]`.
 ---@field file string File of the case, relative to the root.
 ---@field line? integer Definition line of the case.
@@ -156,6 +166,11 @@
 ---@field new fun(opts?: Testing.Result.RunOpts): Testing.Result
 ---@field add_case fun(result: Testing.Result, case: Testing.Result.Case): Testing.Result.Case
 ---@field finish_case fun(case: Testing.Result.Case, opts?: Testing.Result.FinishOpts): Testing.Result.Case
+---@field add_guard_finding fun(case: Testing.Result.Case, finding: Testing.Result.GuardFinding): boolean Record a guard finding; severity `error` also fails the case.
+---@field merge_effects fun(case: Testing.Result.Case, effects: table<string, string[]>|nil) Merge a ledger's `spawned`/`network`/`fs_outside_tmp` lists into the case.
+---@field GUARD_SEVERITIES string[] `info`, `warn`, `error`.
+---@field MAX_GUARD_FINDINGS integer Findings kept per case.
+---@field MAX_EFFECTS integer Entries kept per effects list.
 ---@field summarize fun(cases: Testing.Result.Case[]): Testing.Result.Summary
 ---@field finalize fun(result: Testing.Result): Testing.Result
 ---@field normalize fun(value: any, roots: Testing.Result.PathRoots, opts?: Testing.Result.NormalizeOpts): any

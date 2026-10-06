@@ -113,5 +113,15 @@ done
 
 # Throwaway app name: the run gets its own stdpath("config"/"data"/"state"), never the developer's.
 export NVIM_APPNAME="${NVIM_APPNAME:-@@PLUGIN@@-tests}"
+# A run with `isolated = "none"` writes the plugin's state where Neovim keeps it: point state and
+# cache at a scratch directory, removed afterwards (a child editor has a sandbox of its own).
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+if command -v cygpath >/dev/null 2>&1; then
+  scratch="$(cygpath -m "$scratch")"
+fi
+export XDG_STATE_HOME="$scratch/state"
+export XDG_CACHE_HOME="$scratch/cache"
 
-exec nvim -n -i NONE --headless -u NONE -l "$DRIVER" run .@@RUN_ARGS|raw@@ "$@"
+# No `exec`: the trap must remove the scratch directory afterwards (`set -e` keeps the exit code).
+nvim -n -i NONE --headless -u NONE -l "$DRIVER" run .@@RUN_ARGS|raw@@ "$@"

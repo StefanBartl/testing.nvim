@@ -11,7 +11,11 @@
 ---   3. selection and order (`testing.run.select`): `--file`, paths, `--lf`/`--ff` (history),
 ---      `--shuffle`/`--seed`; `--filter`/`--tags`/`--exclude-tags` are applied per case by the driver;
 ---   4. `--list`: print what would run, exit 0 (exit 2 when nothing is selected);
----   5. the run (`testing.run.inproc`) under the exit guard (a spec cannot end the run with `os.exit`);
+---   5. the run (`testing.run.inproc`, or the isolated driver for child editors: a child per file or per
+---      case, see `testing.run.options`) under the exit guard (a spec cannot end the run with
+---      `os.exit`). The guard layer is configured here by ONE adapter (`options.guard_config`);
+---      `isolated = "soft"` adds the soft isolation (`testing.isolation`), which restores what a file
+---      changed before the next file runs;
 ---   6. reporters (`testing.report`): the terminal gets the real IR (clickable paths), files and CI
 ---      output get the sanitized IR (placeholders, redaction, validated); a reporter that fails is
 ---      exit code 3;
@@ -214,6 +218,19 @@ local function term_options(sv, args, ncases)
   return { color = color, durations = durations }
 end
 
+---One line of the captured output of a child, made safe for a terminal and a CI log: control
+---characters (ESC, OSC and CSI sequences, BEL, bare CR) and bidi overrides become a visible `\xNN` /
+---`\u{NNNN}` (the spec's own `print` must not be able to clear the screen, retitle the window, or
+---forge a link), and a leading `::` (a GitHub workflow command such as `::error::` or
+---`::stop-commands::`) is written as `\x3A:` so that no runner executes it, whatever a reporter does with the
+---indent later.
+---@param line string
+---@return string
+local function safe_output_line(line)
+  local clean = util.clean(line, { bidi = true, c1 = true })
+  return (clean:gsub("^(%s*)::", "%1\\x3A:"))
+end
+
 ---The captured output of a child, as the lines printed before the report: capped, one header.
 ---@param rel string
 ---@param text string
@@ -235,9 +252,9 @@ local function output_block(rel, text)
     )
     vim.list_extend(shown, vim.list_slice(lines, #lines - max / 2 + 1, #lines))
   end
-  local out = { ("output of %s:"):format(rel) }
+  local out = { safe(("output of %s:"):format(rel)) }
   for _, l in ipairs(shown) do
-    out[#out + 1] = "  " .. l
+    out[#out + 1] = "  " .. safe_output_line(l)
   end
   return table.concat(out, "\n")
 end
@@ -504,7 +521,41 @@ function M.execute_run(plan, sv, run_opts, err)
     findings = findings,
     strict = args.strict,
     assertions = run_opts.assertions,
+    -- the guard layer (`testing.guard`, optional) is configured from ONE adapter; with no such module
+    -- the runner measures nothing and says so in the notes of the cases
+    guard_cfg = options_mod.guard_config(run_opts, { root = root, seed = seed }),
   }
+  local soft
+  if options_mod.is_soft(run_opts) then
+    -- `isolated = "soft"`: what a file changed is restored before the next one; `guards.state` decides
+    -- whether a leak is reported (warn), fails the case (error) or is only undone (off)
+    local mode = run_opts.guards.state
+    soft = require("testing.isolation").new({
+      keep = run_opts.soft_keep,
+      severity = (mode == "warn" or mode == "error") and mode or nil,
+      -- with a guard layer its `state` guard names every leak per case: this layer then reports only
+      -- what it could not restore
+      report_restored = not require("testing.run.guards").available(),
+    })
+    common.soft = soft
+  end
+  do
+    -- `--isolated=case` degrades to a child per file for every dialect but busted: say so once
+    local degraded = 0
+    for _, f in ipairs(files) do
+      local _, note = options_mod.isolation_of(run_opts, f)
+      if note then
+        degraded = degraded + 1
+      end
+    end
+    if degraded > 0 then
+      err(
+        ("testing: note: --isolated=case: %d spec file(s) are not busted (one case per file) and run as one child per file"):format(
+          degraded
+        )
+      )
+    end
+  end
   local ok, report
   if options_mod.any_isolated(run_opts, files) then
     local prepend, append, child_env = options_mod.child_rtp(plan)
@@ -525,6 +576,26 @@ function M.execute_run(plan, sv, run_opts, err)
   if not ok then
     err("testing: internal error: " .. tostring(report))
     return M.EXIT_INFRA
+  end
+  for _, note in ipairs(report.notes or {}) do
+    err("testing: note: " .. note)
+  end
+  for _, f in ipairs(report.unattached or {}) do
+    -- findings of a file that has no case to carry them (everything filtered out, ...)
+    err(safe(("testing: guard [%s %s] %s"):format(f.guard, f.severity, f.message)))
+  end
+  if soft then
+    local t = soft:totals()
+    if t.leaky_files > 0 then
+      err(
+        ("testing: note: soft isolation: %d of %d file(s) changed state (%d difference(s) restored, %d not restorable)"):format(
+          t.leaky_files,
+          t.files,
+          t.restored,
+          t.unrestored
+        )
+      )
+    end
   end
   local res = report.result
   if #res.cases == 0 then

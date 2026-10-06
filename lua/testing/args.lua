@@ -57,7 +57,15 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field case_timeout_ms? integer `--case-timeout <ms>`
 ---@field file_timeout_ms? integer `--file-timeout <ms>`
 ---@field sentinel? string `--sentinel <name>` (transitional: last line of a green run)
----@field isolated? "none"|"file" `--isolated none|file`: run each spec file in a child editor of its own
+---@field isolated? "none"|"file"|"case"|"soft" `--isolated none|file|case|soft`: a child editor per spec file / per case, or this editor with a restore between files
+---@field guard string[] `--guard <name>=<mode>`, repeatable (validated by `check_guard`)
+---@field allow_fs string[] `--allow-fs <path>`, repeatable
+---@field allow_spawn string[] `--allow-spawn <exe>`, repeatable
+---@field allow_network string[] `--allow-network <host>`, repeatable
+---@field pool_size? integer `--pool-size <n>`
+---@field pool_reuse? boolean `--pool-reuse` (true) / `--no-pool-reuse` (false); nil = the config decides
+---@field determinism? boolean `--no-determinism` (false); nil = the config decides
+---@field trace? boolean `--no-trace` (false); nil = the config decides
 ---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
 ---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
 ---@field env_allow string[] `--env-allow <name>`, repeatable: environment names a child may inherit
@@ -274,14 +282,99 @@ local OPTIONS = {
     long = "isolated",
     kind = "value",
     field = "isolated",
-    arg = "<none|file>",
-    help = "file: every spec file runs in a child editor of its own (default for busted files)",
+    arg = "<none|file|case|soft>",
+    help = "file: a child editor per spec file (default for busted files); case: a child per CASE (busted; slow, exact); soft: this editor, state restored between files",
     check = function(v)
-      if v == "none" or v == "file" then
+      if v == "none" or v == "file" or v == "case" or v == "soft" then
         return nil
       end
-      return ("--isolated must be 'none' or 'file', got '%s'"):format(v)
+      return ("--isolated must be 'none', 'file', 'case' or 'soft', got '%s'"):format(v)
     end,
+  },
+  {
+    name = "guard",
+    long = "guard",
+    kind = "list",
+    field = "guard",
+    arg = "<name>=<mode>",
+    help = "set a guard (fs, state, scheduled_error, prompt, deprecation, process_net: off|warn|error; clock: on|off); repeatable",
+    check = function(v)
+      return M.check_guard(v)
+    end,
+  },
+  {
+    name = "allow_fs",
+    long = "allow-fs",
+    kind = "list",
+    field = "allow_fs",
+    arg = "<path>",
+    help = "the fs guard lets writes below <path> through; repeatable",
+    check = function(v)
+      return M.check_allow("--allow-fs", v)
+    end,
+  },
+  {
+    name = "allow_spawn",
+    long = "allow-spawn",
+    kind = "list",
+    field = "allow_spawn",
+    arg = "<exe>",
+    help = "the process guard lets <exe> be started; repeatable",
+    check = function(v)
+      return M.check_allow("--allow-spawn", v)
+    end,
+  },
+  {
+    name = "allow_network",
+    long = "allow-network",
+    kind = "list",
+    field = "allow_network",
+    arg = "<host>",
+    help = "the network guard lets connections to <host> through; repeatable",
+    check = function(v)
+      return M.check_allow("--allow-network", v)
+    end,
+  },
+  {
+    name = "pool_size",
+    long = "pool-size",
+    kind = "int",
+    field = "pool_size",
+    arg = "<n>",
+    min = 0,
+    help = "children the warm pool keeps (0 = --jobs)",
+  },
+  {
+    name = "pool_reuse",
+    long = "pool-reuse",
+    kind = "flag",
+    field = "pool_reuse",
+    const = true,
+    help = "reset and reuse a child between files instead of respawning it",
+  },
+  {
+    name = "pool_reuse",
+    long = "no-pool-reuse",
+    kind = "flag",
+    field = "pool_reuse",
+    const = false,
+    help = "respawn a child for every file (the default)",
+  },
+  {
+    name = "determinism",
+    long = "no-determinism",
+    kind = "flag",
+    field = "determinism",
+    const = false,
+    help = "children keep the parent's LANG/LC_ALL/TZ instead of fixed ones",
+  },
+  {
+    name = "trace",
+    long = "no-trace",
+    kind = "flag",
+    field = "trace",
+    const = false,
+    help = "no trace artifact for a child that times out or crashes",
   },
   {
     name = "jobs",
@@ -338,6 +431,45 @@ local OPTIONS = {
     help = "do not print the timing line",
   },
 }
+
+---Guards that `--guard <name>=<mode>` names (underscores or dashes).
+---@type string[]
+M.GUARD_NAMES =
+  { "fs", "state", "scheduled_error", "prompt", "deprecation", "process_net", "clock" }
+
+---@param v string
+---@return string|nil problem
+function M.check_guard(v)
+  local name, mode = v:match("^([%w_%-]+)=([%w]+)$")
+  if not name then
+    return ("--guard '%s': expected <name>=<mode>, e.g. fs=error"):format(v)
+  end
+  name = name:gsub("%-", "_")
+  if not vim.tbl_contains(M.GUARD_NAMES, name) then
+    return ("--guard: unknown guard '%s' (one of: %s)"):format(
+      name,
+      table.concat(M.GUARD_NAMES, ", ")
+    )
+  end
+  if name == "clock" then
+    if mode ~= "on" and mode ~= "off" then
+      return ("--guard clock: the mode is 'on' or 'off', got '%s'"):format(mode)
+    end
+  elseif mode ~= "off" and mode ~= "warn" and mode ~= "error" then
+    return ("--guard %s: the mode is 'off', 'warn' or 'error', got '%s'"):format(name, mode)
+  end
+  return nil
+end
+
+---@param flag string
+---@param v string
+---@return string|nil problem
+function M.check_allow(flag, v)
+  if #v > 400 or v:find("%c") then
+    return ("%s: not a valid value (too long or control characters)"):format(flag)
+  end
+  return nil
+end
 
 ---@type table<string, Testing.Args.Option>
 local BY_LONG, BY_SHORT = {}, {}
@@ -399,6 +531,10 @@ local function new_args()
     strict = false,
     rtp = {},
     env_allow = {},
+    guard = {},
+    allow_fs = {},
+    allow_spawn = {},
+    allow_network = {},
     first_run = false,
     timings = true,
     given = {},

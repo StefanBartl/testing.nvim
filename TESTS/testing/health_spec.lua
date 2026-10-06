@@ -25,7 +25,17 @@ return function(H)
       vim.cmd("checkhealth testing")
     end)
     ok(ran, "`:checkhealth testing` runs: " .. tostring(err))
-    return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
+    -- the report opens a tab with a buffer of its own: close both, the editor is left as found
+    pcall(function()
+      vim.cmd("silent! bwipeout!")
+    end)
+    if #vim.api.nvim_list_tabpages() > 1 then
+      pcall(function()
+        vim.cmd("silent! tabclose")
+      end)
+    end
+    return text
   end
 
   local health = require("testing.health")

@@ -151,6 +151,21 @@ function M.render(result, opts)
       }
     end
   end
+  -- guard findings: a `warn` is a warning annotation on the case's file; an `error` already failed the
+  -- case (its failed `guard` assertion is an error annotation above), so it is not repeated
+  for _, f in ipairs(util.guard_findings(result)) do
+    if f.severity == "warn" then
+      entries[#entries + 1] = {
+        level = "warning",
+        props = {
+          file = annotation_path(f.case.file),
+          line = f.case.line,
+          title = ("%s [%s]"):format(f.case.id or "case", f.guard),
+        },
+        message = f.message,
+      }
+    end
+  end
   local lines = {}
   local max = o.max_annotations
   for i, e in ipairs(entries) do
@@ -257,6 +272,29 @@ function M.summary_markdown(result)
         M.md_escape(c.id or "?"),
         c.status,
         M.md_escape(util.cap(tostring(detail or "no detail recorded"), 300))
+      )
+    end
+  end
+  local guards = {}
+  for _, f in ipairs(util.guard_findings(result)) do
+    if f.severity ~= "info" then
+      guards[#guards + 1] = f
+    end
+  end
+  if #guards > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "### Guard findings"
+    lines[#lines + 1] = ""
+    for i, f in ipairs(guards) do
+      if i > 25 then
+        lines[#lines + 1] = ("- ... %d more"):format(#guards - 25)
+        break
+      end
+      lines[#lines + 1] = ("- %s [%s] %s: %s"):format(
+        f.severity == "error" and "FAIL" or "warn",
+        M.md_escape(f.guard),
+        M.md_escape(f.case.id or "?"),
+        M.md_escape(util.cap(tostring(f.message), 300))
       )
     end
   end

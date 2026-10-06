@@ -18,6 +18,9 @@
 ---   fragment    where the result records go (`testing.child.fragment`)
 ---   selector    { filter, tags, exclude_tags }, lf_ids (list|nil), timeouts { case_ms, file_ms }
 ---   script_args arguments of a `script` (`arg[1..]`)
+---   guard       configuration of the guard layer (`testing.guard`), installed for the file by
+---               `testing.child.runner`; absent = no guards
+---   trace       the parent writes a trace artifact when this child times out or dies (informational)
 ---
 --- Interactive prompts cannot be answered in a child (stdin is closed): `input`, `inputlist`,
 --- `inputdialog`, `inputsecret` and `confirm` answer with "cancelled" and the case that was running
@@ -121,109 +124,14 @@ if job.kind == "script" then
 end
 
 -- kind == "cases"
-local okm, inproc = pcall(require, "testing.run.inproc")
+local okm, runner = pcall(require, "testing.child.runner")
 if not okm then
-  finish(3, "cannot load testing.run.inproc: " .. tostring(inproc))
-end
-local select_mod = require("testing.run.select")
-local project = require("testing.run.project")
-local fragment = require("testing.child.fragment")
-
-local rel = entry.rel
-local sel = job.selector or {}
-local header_cache
-local selector = select_mod.new({
-  filter = sel.filter,
-  tags = sel.tags,
-  exclude_tags = sel.exclude_tags,
-  header_tags = function(r)
-    if header_cache == nil then
-      header_cache = select_mod.file_header_tags(job.root .. "/" .. r)
-    end
-    return header_cache
-  end,
-})
-
-local lf
-if job.lf_ids then
-  local ids = {}
-  for _, id in ipairs(job.lf_ids) do
-    ids[id] = true
-  end
-  lf = { [rel] = ids }
+  finish(3, "cannot load testing.child.runner: " .. tostring(runner))
+  return
 end
 
-local noted = 0
-local write_failed
-
----Fix up a case before it is written: the `<late>` bucket belongs to this file, and the prompts that were
----answered with "cancelled" since the last case are named on it.
----@param case Testing.Result.Case
-local function annotate(case)
-  if case.file == "<late>" then
-    case.file = rel
-    case.id = rel .. "::late assertions"
-  end
-  if #prompts > noted then
-    local counts = {}
-    for i = noted + 1, #prompts do
-      counts[prompts[i]] = (counts[prompts[i]] or 0) + 1
-    end
-    local names = vim.tbl_keys(counts)
-    table.sort(names)
-    for _, name in ipairs(names) do
-      case.notes[#case.notes + 1] = ("%s() was called %d time(s) and answered with 'cancelled' (a child has no stdin)"):format(
-        name,
-        counts[name]
-      )
-    end
-    noted = #prompts
-  end
-end
-
----@param kind "case"|"progress"
----@param case Testing.Result.Case
-local function write(kind, case)
-  annotate(case)
-  local ok, err = fragment.append(job.fragment, { k = kind, case = case })
-  if not ok then
-    write_failed = err
-  end
-end
-
-local release = project.guard_exit()
-local ran, report = pcall(inproc.run, {
-  root = job.root,
-  files = { entry },
-  selector = selector,
-  lf = lf,
-  timeouts = job.timeouts or {},
-  assertions = job.assertions,
-  seed = job.seed,
-  skip_facts = true,
-  -- streamed while the file runs: what a kill by the pool leaves behind
-  on_case_early = function(case)
-    write("progress", case)
-  end,
-  -- the final cases, when the file is over
-  on_case = function(case)
-    write("case", case)
-  end,
-})
-release()
-if not ran then
-  finish(3, "the driver failed: " .. tostring(report))
-end
-if write_failed then
-  finish(3, "cannot write the fragment: " .. tostring(write_failed))
-end
-local dok, derr = fragment.append(job.fragment, {
-  k = "done",
-  files_run = report.files_run,
-  files_unselected = report.files_unselected,
-  total = report.total,
-})
-if not dok then
-  finish(3, "cannot write the fragment: " .. tostring(derr))
+local ran = runner.run(job, { prompts = prompts })
+if not ran.ok then
+  finish(3, ran.err)
 end
 finish(0)

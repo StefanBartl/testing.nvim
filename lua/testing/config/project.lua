@@ -27,9 +27,19 @@
 ---                 "auto", "testing", "a", "b", "c", "d", "h" (the project's own harness), "busted",
 ---                 "script" (a self-running script, run in its own process)
 ---   assertions    "error" (a case without assertions fails) or "warn" (it passes with a warning)
----   isolated      "none" (everything in one process), "file" (one child process per spec file) or
----                 "auto" (default): "file" for busted files, "none" for the others;
+---   isolated      "none" (everything in one process), "file" (one child process per spec file),
+---                 "case" (one child process per case: busted files; the other dialects run one case
+---                 per file and degrade to "file"), "soft" (one process, what a file changed is
+---                 restored before the next file, see `testing.isolation`) or "auto" (default):
+---                 "file" for busted files, "none" for the others;
 ---                 `M.isolated_for(config, dialect)` resolves it
+---   soft_keep     modules ("name" or "prefix*") that "soft" never unloads
+---   guards        { fs, state, scheduled_error, prompt, deprecation, process_net = "off"|"warn"|"error",
+---                 clock = bool }: the guards (`testing.guard`; safety nets, not a sandbox)
+---   guard_allow   { fs, spawn, network = string[] }: what the guards let through
+---   pool          { size = 0..256 (0 = jobs), reuse = bool }: the warm child pool
+---   determinism   true (default): children start with a fixed LANG/LC_ALL and TZ
+---   trace         true (default): a child that times out or crashes leaves a trace artifact
 ---   jobs          integer >= 1, parallel child processes of an isolated run
 ---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
 ---                 `vim.v.vim_did_enter` is 0 while the specs run) or "l" (`nvim -l`)
@@ -139,6 +149,26 @@ local function is_jobs(v)
   return type(v) == "number" and v == math.floor(v) and v >= 1 and v <= 256
 end
 
+---@param v any
+---@return boolean
+local function is_guard_mode(v)
+  return v == "off" or v == "warn" or v == "error"
+end
+
+---A path, executable or host the guards let through: plain text, no control characters.
+---@param v any
+---@return boolean
+local function is_allow_entry(v)
+  return type(v) == "string" and v ~= "" and #v <= 400 and not v:find("%c")
+end
+
+---A module name the soft isolation keeps: letters, digits and `_ . -`, optionally ending in `*`.
+---@param v any
+---@return boolean
+local function is_module_pattern(v)
+  return type(v) == "string" and #v <= 100 and v:match("^[%w_.%-]+%*?$") ~= nil
+end
+
 ---Schema: a leaf (`check` + `expect`) or a group of named nodes. Keys of the file that the
 ---schema does not name are reported as unknown.
 ---@type table<string, table>
@@ -165,10 +195,48 @@ local SCHEMA = {
   },
   isolated = {
     check = function(v)
-      return v == "auto" or v == "none" or v == "file"
+      return v == "auto" or v == "none" or v == "file" or v == "case" or v == "soft"
     end,
-    expect = '"auto", "none" (one process) or "file" (one child process per spec file)',
+    expect = '"auto", "none" (one process), "file" (a child process per spec file), "case" (a child process per case, busted files) or "soft" (one process, state restored between files)',
   },
+  soft_keep = {
+    check = list_of(is_module_pattern, 0),
+    expect = 'a list of module names, each optionally ending in "*" (e.g. { "my.plugin.cache", "my.shared*" })',
+  },
+  guards = {
+    fs = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    state = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    scheduled_error = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    prompt = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    deprecation = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    process_net = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    clock = { check = is_bool, expect = "true or false" },
+  },
+  guard_allow = {
+    fs = {
+      check = list_of(is_allow_entry, 0),
+      expect = "a list of paths (text without control characters)",
+    },
+    spawn = {
+      check = list_of(is_allow_entry, 0),
+      expect = "a list of executable names (text without control characters)",
+    },
+    network = {
+      check = list_of(is_allow_entry, 0),
+      expect = "a list of host names (text without control characters)",
+    },
+  },
+  pool = {
+    size = {
+      check = function(v)
+        return type(v) == "number" and v == math.floor(v) and v >= 0 and v <= 256
+      end,
+      expect = "an integer between 0 (= jobs) and 256",
+    },
+    reuse = { check = is_bool, expect = "true or false" },
+  },
+  determinism = { check = is_bool, expect = "true or false" },
+  trace = { check = is_bool, expect = "true or false" },
   jobs = { check = is_jobs, expect = "an integer between 1 and 256" },
   host = {
     check = function(v)
@@ -341,9 +409,13 @@ end
 ---for `"auto"` one child process per file for busted specs (plenary ran one nvim per file and busted
 ---specs were written against that) and the shared process for every other dialect. A `script` is
 ---always its own process: it ends the process it runs in.
+---`"case"` (a child per case) is possible for busted files only, where a case is something the
+---runner can pick out (`it`); the other dialects run ONE case per file, so for them `"case"` is
+---`"file"` (see `M.degraded_case`). `"soft"` runs in this process like `"none"`; the restore between
+---the files is a separate layer (`testing.isolation`), not a process mode.
 ---@param config Testing.ProjectConfig
 ---@param dialect string
----@return "none"|"file" mode
+---@return "none"|"file"|"case" mode
 function M.isolated_for(config, dialect)
   if dialect == "script" then
     return "file"
@@ -351,10 +423,21 @@ function M.isolated_for(config, dialect)
   local mode = config.isolated
   if mode == "file" then
     return "file"
-  elseif mode == "none" then
+  elseif mode == "case" then
+    return dialect == "busted" and "case" or "file"
+  elseif mode == "none" or mode == "soft" then
     return "none"
   end
   return dialect == "busted" and "file" or "none"
+end
+
+---Does `isolated = "case"` degrade to one child per FILE for this dialect? (Every dialect but busted;
+---a `script` is a file in a child anyway and is not reported.)
+---@param config Testing.ProjectConfig
+---@param dialect string
+---@return boolean
+function M.degraded_case(config, dialect)
+  return config.isolated == "case" and dialect ~= "busted" and dialect ~= "script"
 end
 
 ---Default `plugin` when the file does not name it.

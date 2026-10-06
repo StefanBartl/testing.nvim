@@ -9,6 +9,19 @@
 
 local M = {}
 
+---Every guard finding of a result, flattened, in IR order: the finding plus the case it sits on.
+---@param result Testing.Result
+---@return { case: Testing.Result.Case, guard: string, severity: "warn"|"error", message: string }[]
+function M.guard_findings(result)
+  local out = {}
+  for _, c in ipairs(result.cases or {}) do
+    for _, g in ipairs(c.guards or {}) do
+      out[#out + 1] = { case = c, guard = g.guard, severity = g.severity, message = g.message }
+    end
+  end
+  return out
+end
+
 ---@alias Testing.Report.Class "ok"|"bad"|"skip"
 
 ---Status to class: `bad` fails the run, `skip` is never green, `ok` is green. `xfail` (an expected

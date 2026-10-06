@@ -1,3 +1,4 @@
+---@diagnostic disable: undefined-field
 -- Fixture (never a spec of this repo). Dialect E: constructs the shim does not implement must fail
 -- loudly and name themselves; they must never pass.
 -- luacheck: globals describe it assert stub spy

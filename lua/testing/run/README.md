@@ -8,7 +8,10 @@ IR; nothing here prints test results itself.
 | [`testing.run.project`](project.lua) | One `testing run`: minit, discovery, selection and order, the run, reporters, history, sentinel, exit code |
 | [`testing.run.inproc`](inproc.lua) | The driver: runs the planned files in their dialect under a timeout guard, builds the IR; `list`, `sanitize`, `write_json` |
 | [`testing.run.isolated`](isolated.lua) | The isolated driver: one child editor per spec file, a pool of them (`--jobs`), results merged in file order, hard timeouts, crash classification |
-| [`testing.run.options`](options.lua) | The isolation options (`isolated`, `jobs`, `host`, `filetype`, `assertions`, `env_allow`) read from ONE place: flags win over `.testing.lua` |
+| [`testing.run.pool`](pool.lua) | The warm pool: embedded child editors lent out one file at a time (size, FIFO waiters, reuse, discard, shutdown); the verification is `testing.child.pool_boot` |
+| [`testing.run.options`](options.lua) | The isolation and guard options (`isolated`, `soft_keep`, `guards`, `guard_allow`, `pool`, `determinism`, `trace`, `jobs`, `host`, `filetype`, `assertions`, `env_allow`) read from ONE place: flags win over `.testing.lua`; `guard_config` is the ONE adapter to the guard layer |
+| [`testing.run.guards`](guards.lua) | The runner's seam to the guard layer: install it, open/close the window of a case, put findings and effects into the IR cases |
+| [`testing.isolation`](../isolation/init.lua) | Soft isolation (`isolated = "soft"`): the state a spec file changed in this editor is restored before the next file, every difference is a named finding ([docs/ISOLATION.md](../../../docs/ISOLATION.md)) |
 | [`testing.child`](../child/README.md) | One child editor: argv, sandbox, environment, start, process-tree kill; `boot.lua` runs inside it |
 | [`testing.run.select`](select.lua) | Pure: `--file`/`--filter`/`--tags` matching, `--lf` grouping, deterministic shuffle |
 | [`testing.run.timeout`](timeout.lua) | Best-effort in-process timeouts (count hook, `vim.wait` clamp) |
@@ -113,8 +116,20 @@ usually ends the file with the precise message.
 `io.read`, a blocking `vim.fn.system`, a stuck RPC call) is not stopped in this editor. Run it in a
 child (`--isolated file`): that is what the kill is for.
 
+## Isolation modes and guards (M2)
+
+`isolated` (`--isolated`, `.testing.lua`): `none` (everything in this editor), `file` (a child per
+spec file), `case` (a child per CASE: busted files; the other dialects have one case per file and
+run as `file`, with a note), `soft` (this editor; what a file changed is restored before the next
+one), `auto` (default: `file` for busted, `none` otherwise). `case` is exact and slow (about 0.3 s of
+process start per case on Windows); the cases of a file are listed first in this editor, each gets a
+child that runs only its id, and the results are merged in source order for any `--jobs`. The
+guards (`guards`, `--guard name=mode`) are safety nets, not a sandbox: see
+[docs/ISOLATION.md](../../../docs/ISOLATION.md) and [docs/GUARDS.md](../../../docs/GUARDS.md).
+
 ## Output shapes
 
 The terminal reporter keeps the lines of the old runner (`ok    TESTS/x_spec.lua`,
-`FAIL  TESTS/x_spec.lua` plus indented detail, `N spec(s) failed`), then a summary, then the findings
+`FAIL  TESTS/x_spec.lua` plus indented detail, `N spec(s) failed`), then the guard findings
+(`guard findings: N warning(s), M failure(s)`, one line each), a summary, then the findings
 (`finding [NEW-48 warn] ...`), the `timings:` line (`--no-timings` removes it) and the sentinel.

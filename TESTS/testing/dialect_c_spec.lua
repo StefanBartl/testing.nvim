@@ -2,6 +2,11 @@
 -- tmpdir(fn) / write on collecting assertions; a non-string haystack fails instead of raising.
 
 return function(H)
+  -- the specs of the shim open buffers; the editor is left as found
+  local bufs_before = {}
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    bufs_before[b] = true
+  end
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)
   local function eq(actual, expected, msg)
@@ -102,4 +107,9 @@ return function(H)
   eq(h2.ok, a.ok, "H.ok is the context's ok")
   eq(h2.falsy, a.not_ok, "H.falsy is the context's not_ok")
   eq(h2.contains, a.has, "H.contains is the context's has")
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if not bufs_before[b] then
+      pcall(vim.api.nvim_buf_delete, b, { force = true })
+    end
+  end
 end

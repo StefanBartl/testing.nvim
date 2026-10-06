@@ -356,6 +356,7 @@ return function(H)
     ["TESTS/1_spec.lua"] = 'return function(H) H.eq(vim.g.minit_ran_in, "child", "minit ran in the child") end\n',
   }, 'return { dialect = "a", minit = "TESTS/minimal_init.lua" }\n')
   local minit_run = go({ minit_root, "--isolated", "file" })
+  vim.g.minit_ran_in = nil -- the in-process part of the run executed the minit here too
   eq(
     minit_run.code,
     0,

@@ -38,4 +38,6 @@ return function(H)
   eq(require("testing.bindings.keymaps").register(config.get()), false, "no keymap is bound")
 
   config.reset()
+  -- `setup()` registered :Testing in this editor: leave it as found
+  pcall(vim.api.nvim_del_user_command, "Testing")
 end
