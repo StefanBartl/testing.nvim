@@ -258,6 +258,41 @@ name is collected (more variables in the key, never fewer), but it cannot hide a
 string has to be an argument of such a call; a literal that is first kept in a variable
 (`local p = "$NAME/x"; vim.fn.expand(p)`) is not followed.
 
+### Line endings
+
+The content hash of a text file reads CRLF as LF. Git's `core.autocrlf` writes the same commit with CRLF on one
+machine (the Windows runners of GitHub have it on) and with LF on another, and the key of a spec must not depend on
+that: a `git reset --hard` or a fresh checkout there used to give another key for an unchanged commit, which cost the
+hit and made a stamp written on one checkout unverifiable on the other. (OS and architecture are still part of the key,
+so a stamp is never carried between operating systems; what changed is that two checkouts of one system agree.) The
+rules:
+
+- Only the pair CR LF becomes LF; a lone CR stays, so a file with old Mac line endings is another file. A mixed file is
+  read line by line. The normalization applies to every hash that joins a key: the spec, the closure, the files a spec
+  reads, fixture trees, the runner digest.
+- A **binary** file is hashed as it is. A file is binary when a NUL byte is among its first 8192 bytes
+  (`testing.cache.hash.BINARY_PROBE`), the way git decides.
+- A spec that **looks at line endings itself** stays conservative. Then the key is made from the raw hashes (a key line
+  `eol raw`), and an LF checkout and a CRLF checkout have different keys again, as before. That is the case when
+  - a file of the closure (the spec, a module it requires, a file the editor loads by itself) contains a carriage return
+    escape in a string (`\r`, `\13`, `\x0d`, `\u{d}`; the escaped backslash of `"C:\\repos"` does not count), or one of
+    the words `crlf`, `autocrlf`, `fileformat`, `fixendofline`, `fixeol`, `eol` (comments do not count). This is a
+    heuristic that over-approximates: a hit that has nothing to do with line endings costs only the advantage of the
+    normalization for that spec, never a wrong hit;
+  - a file the spec reads as data has CRLF line endings: an input (`-- @cache-inputs`, a path literal), a fixture tree,
+    the data next to a module that reads files, the spec root of a spec that reads files, or the whole project for a spec
+    that loads code by an ex command. Such a spec may assert on the content it reads (its length, a comparison with a
+    literal), and on a CRLF checkout that content is different. (On a runner with `core.autocrlf=true` every text file
+    has CRLF, so a spec that reads files keeps a checkout-specific key there; a spec that only requires code, the large
+    majority, gets the shared key.)
+- The index (`index.json`) keeps the raw hash next to the normalized one (`r`, only for a text with CRLF) and a flag `k`.
+  Its layout version is 3: an older index is ignored once and written again. The key version is 4 (every old entry is a
+  miss once), the analysis version 12 (new marker `eol`).
+
+Not covered: a spec that depends on line endings without any of the words above and without reading a CRLF file, for
+example one that runs a program that writes CRLF itself, or one that reads a file through a path computed at run time
+(declare that with `-- @cache-inputs`, so that the key sees the file and its line endings).
+
 ### When there is no key (the file is never cached)
 
 `cache.key` returns `nil, reason` when the inputs cannot be known. When in doubt, do not cache. Never cached:
@@ -443,6 +478,12 @@ whether that ref is trusted), runner digest, Neovim version with API level, OS a
 digest, and per spec file either its cache key or `uncacheable: <reason>` (no absolute path: the root is `<root>`; no
 environment value). A `digest` is the sha256 of the canonical text of all that, and an optional `hmac`. Environment
 variables are never written, only their names appear in a reason.
+
+**Line endings and the stamp.** The keys read CRLF as LF ([Line endings](#line-endings)), so a stamp written on a
+checkout with LF verifies on a checkout of the same commit with CRLF (and the other way round) for every spec file that
+does not look at line endings itself. Those that do (and the ones that read a file with CRLF) have a key that depends
+on the checkout; `verify` reports them as `changed` on a checkout with other line endings, never as `verified`. The
+stamp is still bound to one OS and architecture: `testing stamp` on Linux and `testing verify` on Windows is `rejected`.
 
 **When it is written**: only for the verdict `green` of a run that selected every file and every case (`stamp` refuses
 `--changed`, `--filter`, a path, `--maxfail`, ... up front), never for `green-partial` or `red`, never after a

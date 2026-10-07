@@ -13,13 +13,20 @@
 --- is hashed again) and never trusted partially. A wrong index entry can only cost a re-hash if the
 --- stat does not match; if it matches the hash was computed from this very content.
 ---
+--- LINE ENDINGS. A text file is hashed with `\r\n` read as `\n` (`M.normalize`): git's `core.autocrlf` writes the same
+--- commit with CRLF on one machine and with LF on another, and the content hash (so every key) must not depend on that.
+--- A file with a NUL byte in its first `M.BINARY_PROBE` bytes is binary and is hashed as it is. The entry keeps the hash
+--- of the raw bytes as well (`r`, only when it differs) and whether the text had CRLF (`k`): a key that has to stay
+--- conservative (a spec that looks at line endings itself, see `docs/CACHE.md`) asks for the raw hash.
+---
 --- The hasher is an object: `clear` empties its tables IN PLACE (PERF-47), so a holder of the object
 --- never keeps a stale reference.
 
 local M = {}
 
+---(3: the hash of a text file reads CRLF as LF; the entry keeps the raw hash `r` and the flag `k`.)
 ---@type integer
-M.VERSION = 2
+M.VERSION = 3
 ---Seconds a file must be older than its hash for the stat pre-check to be trusted.
 ---@type integer
 M.RACY_SECONDS = 2
@@ -32,6 +39,9 @@ M.MAX_ENTRIES = 20000
 M.MAX_FILE_BYTES = 16 * 1024 * 1024
 ---@type integer
 M.MAX_TREE_FILES = 5000
+---A file with a NUL byte within this many bytes is binary: it is hashed as it is.
+---@type integer
+M.BINARY_PROBE = 8192
 
 ---Most symlinked directories one tree digest follows (more: no digest, so no key).
 M.MAX_LINKS = 64
@@ -43,7 +53,9 @@ M.MAX_LINKS = 64
 ---@field c integer ctime seconds (a content change with a restored mtime still moves it)
 ---@field cn integer ctime nanoseconds
 ---@field i integer inode (0 where the file system has none)
----@field h string sha256 hex
+---@field h string sha256 hex of the text with CRLF read as LF (of the bytes for a binary file)
+---@field r? string sha256 hex of the raw bytes; only when the text had CRLF
+---@field k? boolean The text had CRLF line endings (and is not binary)
 ---@field t integer unix time the hash was computed
 ---@field x? Testing.Scan.Info Static analysis of a Lua file (valid as long as the hash is).
 
@@ -81,9 +93,56 @@ local function valid_entry(raw, keep_analysis)
   if not is_hex64(raw.h) then
     return nil
   end
+  if raw.k ~= nil and type(raw.k) ~= "boolean" then
+    return nil
+  end
+  local crlf = raw.k == true
+  if (crlf and not is_hex64(raw.r)) or (not crlf and raw.r ~= nil) then
+    return nil
+  end
   local x = raw.x ~= nil and keep_analysis and require("testing.affected.scan").valid_info(raw.x)
     or nil
-  return { m = m, n = n, s = s, c = c, cn = cn, i = ino, h = raw.h, t = t, x = x }
+  return {
+    m = m,
+    n = n,
+    s = s,
+    c = c,
+    cn = cn,
+    i = ino,
+    h = raw.h,
+    r = crlf and raw.r or nil,
+    k = crlf or nil,
+    t = t,
+    x = x,
+  }
+end
+
+---The text as it is hashed: `\r\n` read as `\n`, unless the file is binary (a NUL byte in the first
+---`M.BINARY_PROBE` bytes). A lone `\r` stays.
+---@param text string
+---@return string normalized
+---@return boolean crlf The text had CRLF line endings and was changed.
+function M.normalize(text)
+  if not text:find("\r\n", 1, true) then
+    return text, false
+  end
+  if text:sub(1, M.BINARY_PROBE):find("\0", 1, true) then
+    return text, false
+  end
+  return (text:gsub("\r\n", "\n")), true
+end
+
+---Both hashes of a text: of the normalized text, and of the raw bytes when they differ.
+---@param text string
+---@return string h
+---@return string|nil r
+---@return boolean|nil k
+local function hashes_of(text)
+  local norm, crlf = M.normalize(text)
+  if not crlf then
+    return vim.fn.sha256(text), nil, nil
+  end
+  return vim.fn.sha256(norm), vim.fn.sha256(text), true
 end
 
 ---@param path? string Index file; nil keeps the index in memory only.
@@ -148,11 +207,13 @@ function Hasher:load()
   return nil
 end
 
----Hash of the content of one file.
+---Hash of the content of one file (CRLF read as LF, see the header).
 ---@param abs string Absolute path.
+---@param raw? boolean The hash of the bytes as they are.
 ---@return string|nil sha `nil` when the file is missing, not a regular file, or too large.
 ---@return string|nil why
-function Hasher:file(abs)
+---@return boolean|nil crlf The text has CRLF line endings (so the normalized hash differs from the raw one).
+function Hasher:file(abs, raw)
   self:load()
   local key = vim.fs.normalize(abs)
   local st = vim.uv.fs_stat(key)
@@ -178,60 +239,63 @@ function Hasher:file(abs)
     and (e.t - e.m) >= M.RACY_SECONDS
   then
     self.reused = self.reused + 1
-    return e.h
+    return (raw and e.r) or e.h, nil, e.k == true
   end
   local text, err = require("lib.nvim.fs.read")(key)
   if not text then
     return nil, err or "unreadable"
   end
-  local sha = vim.fn.sha256(text)
-  self.hashed = self.hashed + 1
-  self.entries[key] = {
+  local entry = {
     m = mt.sec,
     n = mt.nsec or 0,
     s = st.size,
     c = ct.sec,
     cn = ct.nsec or 0,
     i = ino,
-    h = sha,
     t = self.now(),
   }
+  entry.h, entry.r, entry.k = hashes_of(text)
+  self.hashed = self.hashed + 1
+  self.entries[key] = entry
   self.dirty = true
-  return sha
+  return (raw and entry.r) or entry.h, nil, entry.k == true
 end
 
 ---Hash and static analysis (`testing.affected.scan`) of a Lua file; both come from the index while the
 ---stat still matches, so a dependency closure of thousands of files is not read again.
 ---@param abs string
+---@param raw? boolean The hash of the bytes as they are.
 ---@return string|nil sha
 ---@return Testing.Scan.Info|string info The analysis; a reason string when there is no sha.
-function Hasher:analyzed(abs)
+---@return boolean|nil crlf The text has CRLF line endings.
+function Hasher:analyzed(abs, raw)
   self:load()
   local key = vim.fs.normalize(abs)
-  local sha, why = self:file(key)
+  local sha, why, crlf = self:file(key, raw)
   if not sha then
     return nil, why or "unreadable"
   end
   local e = self.entries[key]
   if e and e.x then
-    return sha, e.x
+    return sha, e.x, crlf
   end
   local text = require("lib.nvim.fs.read")(key)
   if not text then
     return nil, "unreadable"
   end
   -- the file may have changed between the two reads: hash the bytes the analysis comes from
-  local sha2 = vim.fn.sha256(text)
+  local h, r, k = hashes_of(text)
   local info = require("testing.affected.scan").analyze(text)
   if e then
-    e.h = sha2
+    e.h, e.r, e.k = h, r, k
     e.x = info
     self.dirty = true
   end
-  return sha2, info
+  return (raw and r) or h, info, k == true
 end
 
 ---@class Testing.Cache.TreeOpts
+---@field raw? boolean The hashes of the bytes as they are (no CRLF read as LF).
 ---@field skip? fun(rel: string): boolean
 ---@field ignore_dirs? table<string, boolean> Directory NAMES that are not entered (`.git`).
 
@@ -302,6 +366,7 @@ end
 ---@param opts? Testing.Cache.TreeOpts
 ---@return string|nil digest `nil` when the tree is too big or a file cannot be hashed.
 ---@return string|nil why
+---@return boolean|nil crlf Some file of the tree has CRLF line endings.
 function Hasher:tree(dir, opts)
   local skip = opts and opts.skip
   local ignore_dirs = opts and opts.ignore_dirs
@@ -347,14 +412,16 @@ function Hasher:tree(dir, opts)
   for _, line in ipairs(link_lines) do
     parts[#parts + 1] = line
   end
+  local any_crlf = false
   for _, rel in ipairs(rels) do
-    local sha, why = self:file(dir .. "/" .. rel)
+    local sha, why, crlf = self:file(dir .. "/" .. rel, opts and opts.raw)
     if not sha then
       return nil, ("%s: %s"):format(rel, tostring(why))
     end
+    any_crlf = any_crlf or crlf == true
     parts[#parts + 1] = rel .. "\0" .. sha
   end
-  return vim.fn.sha256(table.concat(parts, "\n"))
+  return vim.fn.sha256(table.concat(parts, "\n")), nil, any_crlf
 end
 
 ---Write the index back when something changed (bounded, atomic).

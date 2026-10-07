@@ -67,9 +67,10 @@ local M = {}
 
 ---Bumped when the layout of the key or of an entry changes: every old entry becomes a miss.
 ---(2: the `runtime <dir>/=<digest>` lines, the runtime directories of the project root. 3: the `runtime <file>=<digest>`
----lines, the files of the project root that an editor loads by itself: `M.RUNTIME_FILES`.)
+---lines, the files of the project root that an editor loads by itself: `M.RUNTIME_FILES`. 4: the hash of a text file reads
+---CRLF as LF, and a spec that looks at line endings keeps the raw hashes: the `eol raw` line.)
 ---@type integer
-M.KEY_VERSION = 3
+M.KEY_VERSION = 4
 
 ---Directories of the project root that an editor loads WITHOUT a `require`: filetype plugins, indent and syntax files,
 ---Tree-sitter queries, `after/`, colour schemes, compilers, autoload functions, LSP configurations, parsers,
@@ -577,6 +578,21 @@ local function memo_table(ctx, name)
   return t
 end
 
+---The key being made (`M.key`): what it learned about line endings on the way. A hash of a text file reads CRLF as LF,
+---which is right for code and for data a spec only passes on, and wrong for a spec whose result depends on the line
+---endings of a file it reads: `eol` is set when the key must be made again from the raw hashes.
+---@type { eol: boolean }|nil
+local active = nil
+
+---A data input (a file the spec may read) had CRLF line endings: the key stays conservative.
+---@param crlf boolean|nil
+---@param data boolean|nil The file or tree is data, not code of the closure.
+local function note_crlf(crlf, data)
+  if crlf and data and active then
+    active.eol = true
+  end
+end
+
 ---`hasher:analyzed` once per file and run (two `stat` calls and a normalization are the cost of a key).
 ---@param ctx Testing.Cache.Ctx
 ---@param hasher Testing.Cache.Hasher
@@ -589,7 +605,7 @@ local function analyzed(ctx, hasher, abs)
   if hit then
     return hit[1], hit[2]
   end
-  local sha, info = hasher:analyzed(abs)
+  local sha, info = hasher:analyzed(abs, ctx.raw_eol)
   t[abs] = { sha, info }
   return sha, info
 end
@@ -598,17 +614,19 @@ end
 ---@param ctx Testing.Cache.Ctx
 ---@param hasher Testing.Cache.Hasher
 ---@param abs string
+---@param data? boolean A data input of the spec: CRLF in it makes the key conservative.
 ---@return string|nil sha
 ---@return string|nil why
-local function sha_of(ctx, hasher, abs)
+local function sha_of(ctx, hasher, abs, data)
   local t = memo_table(ctx, "#sha")
   local hit = t[abs]
-  if hit then
-    return hit[1], hit[2]
+  if not hit then
+    local sha, why, crlf = hasher:file(abs, ctx.raw_eol)
+    hit = { sha, why, crlf }
+    t[abs] = hit
   end
-  local sha, why = hasher:file(abs)
-  t[abs] = { sha, why }
-  return sha, why
+  note_crlf(hit[3], data)
+  return hit[1], hit[2]
 end
 
 ---`hasher:tree` once per directory and run.
@@ -617,18 +635,24 @@ end
 ---@param dir string
 ---@param variant string Names the `opts` (the memo key).
 ---@param opts? table
+---@param data? boolean A data input of the spec: CRLF in it makes the key conservative.
 ---@return string|nil digest
 ---@return string|nil why
-local function tree_of(ctx, hasher, dir, variant, opts)
+local function tree_of(ctx, hasher, dir, variant, opts, data)
   local t = memo_table(ctx, "#tree")
   local k = variant .. "|" .. dir
   local hit = t[k]
-  if hit then
-    return hit[1], hit[2]
+  if not hit then
+    local o = opts
+    if ctx.raw_eol then
+      o = vim.tbl_extend("force", opts or {}, { raw = true })
+    end
+    local dig, why, crlf = hasher:tree(dir, o)
+    hit = { dig, why, crlf }
+    t[k] = hit
   end
-  local dig, why = hasher:tree(dir, opts)
-  t[k] = { dig, why }
-  return dig, why
+  note_crlf(hit[3], data)
+  return hit[1], hit[2]
 end
 
 ---Directory names a digest of the whole project does not enter.
@@ -899,6 +923,7 @@ end
 ---@field pathmod boolean Project code changes the module search path or the runtime path.
 ---@field outside boolean Project code names a place outside the project.
 ---@field outside_literals { lit: string, dir: string }[] What it names, and the directory of the file that names it (a relative literal is read from there as well as from the root).
+---@field eol boolean Some file of the closure looks at line endings itself (see `Testing.Scan.Markers.eol`).
 ---@field readers Testing.Cache.Member[] Project files of the closure that read files.
 ---@field vouched Testing.Cache.Vouched[] The directives of the project files of the closure.
 ---@field env table<string, true> Environment variables that modules of the project read by a literal name and the configuration does not list: their values join the key.
@@ -1030,6 +1055,7 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
     pathmod = false,
     outside = false,
     outside_literals = {},
+    eol = false,
     readers = {},
     vouched = {},
     env = {},
@@ -1072,6 +1098,9 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
       return say(what)
     end
     local m = info.markers
+    if m.eol then
+      agg.eol = true
+    end
     if info.directives.off then
       detail = { kind = "off", file = who }
       return who and say("has `-- @cache off`") or "`-- @cache off`"
@@ -1219,7 +1248,7 @@ local function input_lines(file_info, spec_info, ctx, hasher, agg, force_tree)
   -- spec itself sets): every file of the project is an input
   local whole_project = agg.dynload or (agg.pathmod and force_tree)
   if whole_project then
-    local dig, why = tree_of(ctx, hasher, root, "project", { ignore_dirs = PROJECT_IGNORE })
+    local dig, why = tree_of(ctx, hasher, root, "project", { ignore_dirs = PROJECT_IGNORE }, true)
     if not dig then
       return nil,
         "loads files the key cannot follow, and the project is too large to hash: " .. tostring(why)
@@ -1253,13 +1282,13 @@ local function input_lines(file_info, spec_info, ctx, hasher, agg, force_tree)
       return nil
     end
     if st.type == "file" then
-      local sha, why = sha_of(ctx, hasher, abs)
+      local sha, why = sha_of(ctx, hasher, abs, true)
       if not sha then
         return ("input %s: %s"):format(rel, tostring(why))
       end
       lines[#lines + 1] = ("input %s=%s"):format(rel, sha)
     elseif st.type == "directory" then
-      local dig, why = tree_of(ctx, hasher, abs, variant, tree_opts)
+      local dig, why = tree_of(ctx, hasher, abs, variant, tree_opts, true)
       if not dig then
         return ("input %s: %s"):format(rel, tostring(why))
       end
@@ -1319,7 +1348,7 @@ local function input_lines(file_info, spec_info, ctx, hasher, agg, force_tree)
           skip = function(r)
             return r:sub(-4) == ".lua" -- code is covered by the closure
           end,
-        })
+        }, true)
         if not dig then
           return nil, ("input %s: %s"):format(rel, tostring(why))
         end
@@ -1340,14 +1369,14 @@ local function input_lines(file_info, spec_info, ctx, hasher, agg, force_tree)
   return lines
 end
 
----The key of a spec file, or nil and the reason why it cannot be cached.
+---One pass of `M.key` (see there).
 ---@param file_info Testing.Cache.FileInfo
 ---@param ctx Testing.Cache.Ctx
 ---@return string|nil key
 ---@return string|nil reason
----@return string[]|nil parts The lines the key is the hash of: the ONE source of the explanation (`testing explain`, the entry's `parts`). Also returned with a `nondeterministic` refusal (then the key is in `detail.key`); nil for every other refusal.
----@return Testing.Cache.Detail|nil detail Why there is no key, in a form a program can read; with a key: `allow_nondeterministic` (the spec declares `-- @cache-allow nondeterministic`) and `flipped` (the results the key has given when they differ, and the spec may be cached all the same).
-function M.key(file_info, ctx)
+---@return string[]|nil parts
+---@return Testing.Cache.Detail|nil detail
+local function key_once(file_info, ctx)
   if
     type(file_info) ~= "table"
     or type(file_info.file) ~= "string"
@@ -1379,6 +1408,11 @@ function M.key(file_info, ctx)
     aggregate(info, root .. "/" .. rel, members, ctx, file_info.child_env ~= nil)
   if not agg then
     return nil, why_agg, nil, agg_detail
+  end
+  -- a file of the closure looks at line endings itself, or the closure is not known file by file: the hashes of this
+  -- key must not read CRLF as LF (`M.key` makes the key again from the raw ones)
+  if active and (agg.eol or file_info.deps_complete) then
+    active.eol = true
   end
   local outside_lines = {}
   if agg.io and agg.outside then
@@ -1441,6 +1475,9 @@ function M.key(file_info, ctx)
     "project-config " .. project_cfg,
     "seed " .. (ctx.shuffled and tostring(ctx.seed) or "-"),
   }
+  if ctx.raw_eol then
+    parts[#parts + 1] = "eol raw"
+  end
   vim.list_extend(parts, env)
   if type(file_info.child_env) == "table" then
     -- one line per variable (`NAME=<sha256 of the value>`): `testing explain` names the one that changed
@@ -1477,6 +1514,41 @@ function M.key(file_info, ctx)
       flipped = flip and flip.classes or nil,
       vouched = #agg.vouched > 0 and agg.vouched or nil,
     }
+end
+
+---The key of a spec file, or nil and the reason why it cannot be cached.
+---
+---LINE ENDINGS: the hashes of the files read CRLF as LF, so the same commit has the same key whether git wrote it with
+---CRLF (`core.autocrlf`) or with LF. That is not sound for a spec whose result depends on the line endings of what it
+---reads. The key is then made again from the RAW hashes (the line `eol raw`: a CRLF checkout has another key than an LF
+---one, as before) when a file of the closure looks at line endings itself (`Testing.Scan.Markers.eol`: a carriage
+---return escape in a string, CRLF, `fileformat`, ...), or when a file the spec reads as data (an input, a fixture tree)
+---has CRLF line endings.
+---@param file_info Testing.Cache.FileInfo
+---@param ctx Testing.Cache.Ctx
+---@return string|nil key
+---@return string|nil reason
+---@return string[]|nil parts The lines the key is the hash of: the ONE source of the explanation (`testing explain`, the entry's `parts`). Also returned with a `nondeterministic` refusal (then the key is in `detail.key`); nil for every other refusal.
+---@return Testing.Cache.Detail|nil detail Why there is no key, in a form a program can read; with a key: `allow_nondeterministic` (the spec declares `-- @cache-allow nondeterministic`) and `flipped` (the results the key has given when they differ, and the spec may be cached all the same).
+function M.key(file_info, ctx)
+  if type(ctx) ~= "table" then
+    return key_once(file_info, ctx)
+  end
+  local tracker = { eol = false }
+  local outer = active
+  active = tracker
+  local res = { pcall(key_once, file_info, ctx) }
+  active = outer
+  if not res[1] then
+    error(res[2], 0)
+  end
+  if tracker.eol and not ctx.raw_eol then
+    -- the raw pass has its own memo (a hash is remembered per file and mode) and reads everything else from `ctx`
+    ctx.memo_raw = ctx.memo_raw or {}
+    local raw_ctx = setmetatable({ raw_eol = true, memo = ctx.memo_raw }, { __index = ctx })
+    return M.key(file_info, raw_ctx)
+  end
+  return res[2], res[3], res[4], res[5]
 end
 
 ---@class Testing.Cache.Meta

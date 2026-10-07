@@ -28,7 +28,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 11
+M.VERSION = 12
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -62,6 +62,7 @@ M.BUILTIN = {
 ---@field dynload boolean Files are loaded by an ex command or a runtime-path lookup (`:runtime`, `:source`, `:luafile`, `packadd`).
 ---@field selfscan boolean The file lists directories or loads files AND looks at its own surroundings (`debug.getinfo`, `getcwd`, `stdpath`, the runtime path): it reads the project, not only what its caller hands it.
 ---@field pathmod boolean The module search path or the runtime path is changed (`package.path`, `rtp`).
+---@field eol boolean The file looks at line endings itself (`\r` in a string, CRLF, `fileformat`, ...): its result can depend on whether a file has CRLF or LF.
 ---@field outside boolean A string literal names a place outside the project (`../x`, `C:/x`, `~/x`, `/etc/x`).
 ---@field env string[] Names of environment variables read by a literal name (sorted, unique).
 ---@field env_dynamic boolean A name is computed or the whole environment is read (`env_computed or env_whole`).
@@ -445,6 +446,48 @@ local function scan_env_strings(text, strs, names)
   return computed
 end
 
+---Escapes of a carriage return in a Lua string: `\r`, `\13`, `\013`, `\x0d`, `\u{d}`. The backslash must not itself be
+---escaped (`"C:\\repos"` has no `\r`).
+---@type string[]
+local CR_ESCAPES = { "\\r", "\\0?13%f[%D]", "\\x0[dD]", "\\u{0*[dD]}" }
+
+---Words that say a file looks at its line endings: the options and the names around them.
+---@type string[]
+local EOL_WORDS = { "crlf", "autocrlf", "fileformat", "fixendofline", "fixeol", "%f[%w]eol%f[%W]" }
+
+---Does the text look at line endings itself (a `\r` in a string, the word CRLF, the option `fileformat`, ...)? A
+---result that depends on whether a file has CRLF or LF cannot be told from the key if the key reads CRLF as LF, so
+---such a file keeps the raw hashes (`testing.cache`). Conservative: a hit that has nothing to do with it only costs the
+---advantage of the normalization.
+---@param text string Text without comments.
+---@return boolean
+local function looks_at_line_endings(text)
+  for _, esc in ipairs(CR_ESCAPES) do
+    local pos = 1
+    while true do
+      local s = text:find(esc, pos)
+      if not s then
+        break
+      end
+      local slashes = 0
+      while s - slashes - 1 >= 1 and text:sub(s - slashes - 1, s - slashes - 1) == "\\" do
+        slashes = slashes + 1
+      end
+      if slashes % 2 == 0 then
+        return true
+      end
+      pos = s + 1
+    end
+  end
+  local lower = text:lower()
+  for _, word in ipairs(EOL_WORDS) do
+    if lower:find(word) then
+      return true
+    end
+  end
+  return false
+end
+
 ---@param code string Text without comments and string contents.
 ---@param text string Text without comments.
 ---@return Testing.Scan.Markers
@@ -613,6 +656,7 @@ local function scan_markers(code, text)
     }),
     selfscan = false,
     outside = false,
+    eol = looks_at_line_endings(text),
     env = {},
     env_dynamic = false,
     env_computed = false,
@@ -1072,6 +1116,7 @@ function M.valid_info(raw)
       selfscan = m.selfscan,
       pathmod = m.pathmod,
       outside = m.outside,
+      eol = m.eol ~= false, -- an analysis without the field: it did not look, so it is assumed to look
       env = vim.list_slice(m.env, 1),
       env_dynamic = env_dynamic,
       env_computed = env_computed,
