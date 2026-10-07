@@ -59,6 +59,10 @@ return function(H)
         "user.email=t@example.invalid",
         "-c",
         "commit.gpgsign=false",
+        -- the Windows runners of GitHub have core.autocrlf=true: `reset --hard` and `revert` would write CRLF files
+        -- back, a different content (and so a different key) for the same commit
+        "-c",
+        "core.autocrlf=false",
         ...,
       }, { cwd = root, text = true })
       :wait(30000)
