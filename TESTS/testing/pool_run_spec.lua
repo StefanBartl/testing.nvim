@@ -277,8 +277,10 @@ end)]==],
       ["TESTS/c_spec.lua"] = "return function(H) H.ok(true, 'c') end",
     }
     local order = { "TESTS/a_spec.lua", "TESTS/b_spec.lua", "TESTS/c_spec.lua" }
+    -- the deadline applies to EVERY file of the run: it has to be far above what loading a file takes on a busy
+    -- machine (a deadline of 1500 ms turned a_spec or c_spec into a timeout once, under a second heavy suite)
     local rep =
-      run(files, order, { size = 1, extra = { timeouts = { file_ms = 1500 }, grace_ms = 300 } })
+      run(files, order, { size = 1, extra = { timeouts = { file_ms = 6000 }, grace_ms = 300 } })
     eq(
       statuses(rep),
       { "TESTS/a_spec.lua:pass", "TESTS/b_spec.lua:timeout", "TESTS/c_spec.lua:pass" },
