@@ -196,7 +196,7 @@ Selection ~
                      that passes on a retry is flaky: the run stays red, it is
                      listed and never cached.
   --allow-flaky      With --retry-failed: count such a case as green (still
-                     listed).
+                     listed). The run is then green-partial: no sentinel.
   --list, --dry-run  List what would run, run nothing.
   --shard {i}/{n}    Only shard {i} of {n} (CI matrices).
   --changed, --since {rev}, --affected[={rev}]
@@ -298,8 +298,9 @@ Explain and audit ~
                      docs/CACHE.md.
 
 An option that is parsed but not implemented is refused with exit code 2, never
-ignored. Only a complete green run with no skipped case prints the sentinel; a
-selection, `--maxfail` or a skip prints a distinct last line. The same
+ignored. Only a complete green run (no skipped case, no `--maxfail` stop, no
+case accepted by --allow-flaky) prints the sentinel; anything else prints a
+distinct last line. The same
 distinction is the verdict line of every reporter: green, green-partial, red.
 
 ==============================================================================

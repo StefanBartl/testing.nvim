@@ -76,7 +76,14 @@ One entry per spec **file**: the Result-IR case list of that file. Entries live 
 
 (`<project key>` is `lib.nvim.fs.project_key`, the git root). The directory is per user and per machine and is never
 shared across a trust boundary. It is regenerable: deleting it costs time, never correctness. Writes are atomic
-(`lib.nvim.fs.write.atomic`).
+(`lib.nvim.fs.write.atomic`); a temp file of an interrupted write (`entries/<key>.json.atomic-tmp.*`,
+`index.json.atomic-tmp.*`, `keys.json.atomic-tmp.*`) is removed when it is older than an hour.
+
+**State and cache are two directories.** The cache (`stdpath('cache')`) holds the entries and the hash index; what the
+run remembers about its own history (`stdpath('state')/testing/<project>/`: `keys.json` the key-flip memory,
+`last_green.json`, `order.json`, `runs.jsonl`) lives apart. A CI job that restores only the cache directory starts
+every run with an empty key-flip memory: a flip is then found only inside one run, and the "last green run" of a red
+verdict is "none recorded". Restore the state directory as well when those matter.
 
 Bounds (`cache.prune`, run once per process after the first write): entries older than 30 days go, then the oldest
 until the store is within 64 MB and 5000 entries; a hit renews the age. An entry larger than 4 MB is not stored.
@@ -90,7 +97,14 @@ until the store is within 64 MB and 5000 entries; a hit renews the age. An entry
 - the runner version: a content digest of `lua/testing` (a dirty checkout differs from a clean one),
 - the Neovim version, API level, OS and CPU architecture,
 - name and hashed value of every environment variable the configuration lists (`env_allow`, `PREFIX*` expands over
-  the names that are set; a new variable below a listed prefix changes the key),
+  the names that are set; a new variable below a listed prefix changes the key). Where the system treats names
+  case-insensitively (Windows) a listed `MyVar` finds `MYVAR` and the name is written in upper case; elsewhere
+  `MyVar` and `MYVAR` are two variables. The value is hashed with plain sha256 (no salt), and the key lines are kept
+  in the entries and shown by `testing explain`: **`env_allow` must not list a variable that holds a secret** (a token,
+  a password). A short or guessable value can be recovered from its hash by trying candidates, and the cache directory
+  is a plain file store. (A per-directory salt would only make the lines unusable for a comparison across cache
+  directories; the plain rule, keep secrets out of the key, is simpler and does not depend on a salt file being
+  restored together with the entries.)
 - a digest of the effective configuration and the content of `.testing.lua`,
 - the dialect, and the seed when the run is shuffled.
 
@@ -272,15 +286,21 @@ module (see "Known limit" above). Two cheap procedures find out whether it lies.
 
 **Audit** (`--cache-audit <0..1|all>`, implies `--cached`). The given share of the cache hits runs anyway and is
 compared with the stored result (the cases and their statuses). `all` re-runs every hit; a fraction picks hits by a hash
-of the key and the run, so a run is reproducible. A difference is the finding `cache.stale_pass`: the file, what
+of the key and a salt that is the clock by default, so two runs pick different hits (a series of audits covers the
+cache; a run is reproducible only with a fixed salt, which the specs use). A difference is the finding `cache.stale_pass`: the file, what
 differs, the first key lines, and the two possible causes (an input the key cannot see, or a spec that is not
 deterministic); the run exits 1 and prints no sentinel. The stored entry of that file is deleted and nothing new is
 stored for it. The **measured stale-pass rate** is `differences / audited hits`; it is in the terminal line
 
     cache (use): 0 of 27 spec file(s) were not run ...; audit: 27 of 27 hit(s) ran again, 0 differ (stale-pass rate 0.0%)
 
-and in `run.cache` of the IR: `audit_rate`, `audited`, `stale_pass`, `stale_pass_rate` and the `findings` (code, file,
-key, message, key lines). The audit is statistical: a sample that finds nothing does not prove there is nothing. A
+The first number counts the hits that ran again, the second ALL hits (those that ran again, those that were not
+picked, and those that were picked but gave nothing to compare: the run stopped early or the file lost its cases;
+the line then says `(n picked but skipped: ...)`). The terminal lists at most 20 findings. In `run.cache` of the IR:
+`audit_rate`, `audited`, `audit_skipped`, `stale_pass`, `stale_pass_rate` and the `findings` (code, file, key, message,
+key lines; the first 20, with `findings_total` as the count of all of them). A finding is also a red verdict for the
+other reporters: the JUnit document carries a failed `run verdict` case, the GitHub summary says FAILED and an error
+annotation names the verdict, so a viewer that only counts failed cases does not show a green run. The audit is statistical: a sample that finds nothing does not prove there is nothing. A
 spec that is flaky shows up as a stale pass too; the finding names both causes. With a share of 0 nothing changes
 (the output is the output of a plain `--cached` run). A nightly recipe on the main branch:
 
@@ -288,7 +308,9 @@ spec that is flaky shows up as a stale pass too; the finding names both causes. 
 
 **Key flip** (`testing.cache.keylog`). Per spec file the run remembers `(key, result class)` of the files that ran
 (`stdpath('state')/testing/<project>/keys.json`, at most 12 records per file, bounded and untrusted when read back like
-the history). The same key with two different results (`pass` and `fail`, or a skip) is proof that the file is not
+the history; an unusable file is an empty memory and a note says so). The result class of a file is `fail` when a case
+is red, `flaky` when a case passed only after a retry (`--retry-failed`, also under `--allow-flaky`), `skip` or `pass`;
+when the list of a file is full the record that was used longest ago goes. The same key with two different results (`pass` and `fail`, or a skip) is proof that the file is not
 deterministic: either it is flaky, or an input the key cannot see changed between the runs. The file is marked
 `nondeterministic`: it has no key, nothing is stored for it and its entry is discarded, until the spec declares
 `-- @cache-allow nondeterministic` in its header. A changed input is a new key and a new record, and

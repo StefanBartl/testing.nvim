@@ -170,4 +170,70 @@ function M.is_plain_name(s)
   return type(s) == "string" and #s <= 100 and s:match("^[%w_%-%.]+$") ~= nil
 end
 
+---Files of a repository (text files of a few kinds, three directory levels deep, at most 400 files looked at,
+---no dot directories) that mention the environment variable `name` as a word of its own. Workflows are not looked
+---at (the caller has their text). Read-only, never raises.
+---@param root string
+---@param name string
+---@return string[] rels Sorted, at most 10.
+function M.readers_of(root, name)
+  local found, seen = {}, 0
+  local exts = {
+    lua = true,
+    sh = true,
+    bash = true,
+    ps1 = true,
+    py = true,
+    json = true,
+    toml = true,
+    mk = true,
+  }
+  local function wanted(file)
+    local ext = file:match("%.(%w+)$")
+    return (ext and exts[ext:lower()]) or file == "Makefile" or file == "justfile"
+  end
+  local function scan(dir, rel, depth)
+    local handle = vim.uv.fs_scandir(dir)
+    if not handle then
+      return
+    end
+    while seen < 400 do
+      local entry, kind = vim.uv.fs_scandir_next(handle)
+      if not entry then
+        break
+      end
+      local path, r = dir .. "/" .. entry, (rel ~= "" and (rel .. "/") or "") .. entry
+      if kind == "directory" and depth < 3 and not entry:match("^%.") then
+        if entry ~= "node_modules" then
+          scan(path, r, depth + 1)
+        end
+      elseif kind == "file" and wanted(entry) then
+        seen = seen + 1
+        local stat = vim.uv.fs_stat(path)
+        if stat and stat.size <= 200000 then
+          local src = M.read(path)
+          if src then
+            local from = 1
+            while true do
+              local i, j = src:find(name, from, true)
+              if not i then
+                break
+              end
+              local before = i > 1 and src:sub(i - 1, i - 1) or ""
+              if not before:match("[%w_]") and not src:sub(j + 1, j + 1):match("[%w_]") then
+                found[#found + 1] = r
+                break
+              end
+              from = j + 1
+            end
+          end
+        end
+      end
+    end
+  end
+  scan(root, "", 1)
+  table.sort(found)
+  return vim.list_slice(found, 1, 10)
+end
+
 return M

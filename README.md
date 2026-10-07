@@ -107,8 +107,8 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   partial run that never prints the "all green" last line.
   With `--consumers <dir>` it also names the specs of the other checkouts below `<dir>` that the change reaches
   (a hint from documentation.nvim, never part of what runs). `--retry-failed <n>` runs a red case again; one that
-  passes is **flaky**, the run stays red (`--allow-flaky` is the explicit exception) and a flaky file is never
-  cached. `--order slowest-first` starts the longest files first with `--jobs`.
+  passes is **flaky**, the run stays red (`--allow-flaky` is the explicit exception: exit 0, but the verdict is
+  `green-partial` and there is no sentinel) and a flaky file is never cached. `--order slowest-first` starts the longest files first with `--jobs`.
 - **Conformance and surface** ([docs/CONFORMANCE.md](docs/CONFORMANCE.md),
   [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K15 of the gates on a
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's

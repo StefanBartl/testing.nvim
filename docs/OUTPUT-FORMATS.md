@@ -43,8 +43,8 @@ is never a pass: the run ends with exit code `3`.
     ([CACHE.md](CACHE.md)); `status` is `pass`, a note says `cached from <run id>`, and no guard or ledger saw it.
     `run.cache = { mode, files_cached, cases_cached, files_ran, stored }` summarizes it. With `--cache-audit` (a
     share of the hits ran anyway) it also carries `audit_rate`, `audited`, `stale_pass`, `stale_pass_rate` (the
-    measured stale-pass rate: differences over audited hits) and `findings` (`{ code = "cache.stale_pass", file, key,
-    message, parts }`); `nondeterministic` counts files that were not stored because their key gave another result
+    measured stale-pass rate: differences over audited hits), `audit_skipped` (picked, but nothing to compare) and
+    `findings` (`{ code = "cache.stale_pass", file, key, message, parts }`, the first 20, `findings_total` counts all); `nondeterministic` counts files that were not stored because their key gave another result
     before (only when there were some).
   * `cases[].surface = { hit = { ids... } }`: the keymaps, commands and autocmds the case exercised, with
     `surface.track = true` ([SURFACE.md](SURFACE.md)).
@@ -124,7 +124,7 @@ FAIL TESTS/cfg_spec.lua:42  cfg::parses nested keys
      b = 2,
   - c = 3,
   + c = 9,
-  rerun: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . --file TESTS/cfg_spec.lua --filter "cfg::parses nested keys"
+  rerun: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . --file TESTS/cfg_spec.lua --filter 'cfg::parses nested keys'
 ERROR x40 module 'lib.nvim.foo' not found  (first: lua/x/init.lua:3  case; 39 more: --json <file>)
   rerun: ...
 GUARD x2 TESTS/b_spec.lua  [state warn] leaves autocmd BufEnter in group G
@@ -137,7 +137,13 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   the `last green run:` line ([the verdict](#the-verdict)).
 * **Only failures.** A green file, a passing case and what a green spec printed do not appear; neither do the `ok`
   lines, the timing line, the `partial run` line or the sentinel (the first line says the same). Paths are relative to
-  the project root.
+  the project root. What a green run still has to say is on stdout as well, one line each: `flaky: n case(s) failed and
+  then passed on a retry: ...` (`--retry-failed`), `warning: n case(s) passed without asserting anything
+  (assertions = "warn"): ...` and `warning: n file(s) registered no case on this platform ...` (at most five names
+  each; in `--format jsonl` an object of the kind `flaky`, `unasserted` or `no_case` after the verdict).
+* **A report file that cannot be written** (`--json`, `--junit`): the first line is printed only after the files are
+  written. When one cannot be, the exit code is `3` and the line says so (`INFRA | cannot write ... | exit 3`, in
+  jsonl an object of the kind `infra`), never a verdict with another exit code.
 * **One entry per cause**: failures with the same status, message (first line) and top frame (the assertion site, or
   the first frame of the traceback) are one entry with a counter (`ERROR x40`), the first case, and the hint that the
   rest is in the `--json` file. Several failed assertions of one case: the first, plus a count.
@@ -145,7 +151,10 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   context before it.
 * **`rerun:`** the entry script as it was called, the arguments of the run without what selects or shows (`--file`,
   `--filter`, `--tags`, `--lf`, `--cached`, `--changed`, `--shard`, the reporter and report options, `-x`, `--shuffle`,
-  `--order`, the path positionals), then `--file <file>` and `--filter "<case>"`.
+  `--order`, the path positionals), then `--file <file>` and `--filter '<case>'`. Every word is quoted for bash and PowerShell alike: bare when it only
+  holds `[A-Za-z0-9_./:=+-]`, else in single quotes (nothing inside them is interpreted: `$(...)`, backticks, `$var`
+  and `%` stay literal, spaces are kept as they are). A word with a single quote or a control character has no safe
+  spelling: a `--filter` is left out, and for a file or argument the line says that there is no command.
 * **`--agent-budget <n>`** (default 4000, at least 200) bounds the characters of everything after the verdict lines.
   An entry that does not fit in full is tried in short form (head line and `rerun:`); what still does not fit is
   counted in the last `more:` line, never dropped silently.

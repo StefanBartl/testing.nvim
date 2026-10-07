@@ -101,6 +101,10 @@ switches `process_net` on with `guards = { process_net = "warn" }` and lists wha
 layer through `require("testing.run.options").guard_config`; lists add to the layer's own defaults (a
 project's `ignore_groups` does not drop the editor's `nvim.`), plain values replace them.
 
+A key is checked on its own: a wrong value or an unknown key is one warning that names it
+(`key 'guards.fs.allow' is invalid ...`, `unknown key 'guards.fs.typo'`), and the valid keys of the same table stay,
+the `mode` included. (A table is dropped as a whole, and the guard keeps its default, only when no key of it is valid.)
+
 | Guard | Keys besides `mode` |
 | --- | --- |
 | `fs` | `allow` (directories, added to `guard_allow.fs`), `allow_patterns`, `ignore`, `ignore_patterns` |

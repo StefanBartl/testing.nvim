@@ -43,6 +43,7 @@ M.RETRYABLE = { fail = true, error = true }
 ---@field allow_flaky boolean
 ---@field flaky { id: string, file: string, retry: integer }[] Cases that failed and then passed.
 ---@field red { id: string, file: string, retries: integer }[] Cases that failed on every retry.
+---@field missing { id: string, file: string, absent: integer }[] Cases a retry's output did not contain at all (not run again, neither flaky nor red by retry).
 ---@field files integer Files that ran again.
 ---@field error? string Why the retries stopped early (a runner that raised).
 
@@ -72,6 +73,7 @@ function M.apply(report, o)
     allow_flaky = o.allow_flaky == true,
     flaky = {},
     red = {},
+    missing = {},
     files = 0,
   }
   local in_run = {}
@@ -90,8 +92,10 @@ function M.apply(report, o)
 
   ---@type table<string, { attempt: integer, case: Testing.Result.Case }>
   local passed = {}
-  ---@type table<string, integer>
+  ---@type table<string, integer> retries in which the case ran again and did not pass
   local made = {}
+  ---@type table<string, integer> retries whose output did not contain the case at all
+  local absent = {}
   local ran = {}
   for attempt = 1, math.min(o.retries, M.MAX) do
     local list = {}
@@ -116,11 +120,16 @@ function M.apply(report, o)
       ran[f.rel] = true
       local ids = vim.tbl_keys(pending[f.rel])
       for _, id in ipairs(ids) do
-        made[id] = attempt
         local c2 = by_id[id]
-        if c2 and c2.status == "pass" then
+        if c2 == nil then
+          -- the retry did not report the case (a file that stopped early, a renamed case): it did not run again
+          absent[id] = (absent[id] or 0) + 1
+        elseif c2.status == "pass" then
+          made[id] = (made[id] or 0) + 1
           passed[id] = { attempt = attempt, case = c2 }
           pending[f.rel][id] = nil
+        else
+          made[id] = (made[id] or 0) + 1
         end
       end
     end
@@ -133,7 +142,8 @@ function M.apply(report, o)
   local replaced = false
   for i, c in ipairs(res.cases) do
     local attempts = made[c.id]
-    if attempts and M.RETRYABLE[c.status] and in_run[c.file] then
+    local gone = absent[c.id]
+    if (attempts or gone) and M.RETRYABLE[c.status] and in_run[c.file] then
       local hit = passed[c.id]
       if hit then
         info.flaky[#info.flaky + 1] = { id = c.id, file = c.file, retry = hit.attempt }
@@ -157,6 +167,16 @@ function M.apply(report, o)
             o.retries
           )
         end
+      elseif gone then
+        -- never claim "failed on all N retries" for a case the retries did not even report
+        if attempts then
+          c.retries = attempts
+        end
+        c.notes[#c.notes + 1] = ("missing from the output of %d retr%s: not run again"):format(
+          gone,
+          gone == 1 and "y" or "ies"
+        )
+        info.missing[#info.missing + 1] = { id = c.id, file = c.file, absent = gone }
       else
         c.retries = attempts
         c.notes[#c.notes + 1] = ("failed on all %d retr%s as well"):format(
@@ -215,6 +235,11 @@ function M.lines(info)
       #info.red,
       info.retries,
       info.retries == 1 and "y" or "ies"
+    )
+  end
+  if #info.missing > 0 then
+    lines[#lines + 1] = ("retry: %d case(s) were missing from the output of a retry (not run again, still red)"):format(
+      #info.missing
     )
   end
   if info.error then

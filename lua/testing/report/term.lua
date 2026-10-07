@@ -601,8 +601,16 @@ function M.render(result, opts)
     ncached > 0 and (", %d cached, not run"):format(ncached) or "",
     (run.duration_ms or 0) / 1000
   )
-  lines[#lines + 1] =
-    paint(bad_total > 0 and "red" or (skip_total > 0 and "yellow" or "green"), summary)
+  -- the colour follows the verdict of the run when there is one: an exit code 1 without a red case (a cache audit
+  -- that found a stale pass) is not a green summary
+  local vkind = type(run.verdict) == "table" and run.verdict.kind or nil
+  local tone = "green"
+  if bad_total > 0 or vkind == "red" then
+    tone = "red"
+  elseif skip_total > 0 or vkind == "green-partial" then
+    tone = "yellow"
+  end
+  lines[#lines + 1] = paint(tone, summary)
   -- the three-valued verdict of the run driver (`run.verdict`): green, green-partial or red, and for a red run
   -- the last green run and what changed since
   if type(run.verdict) == "table" then

@@ -14,7 +14,7 @@
 ---        c = 2,
 ---     - expected: c = 2,
 ---     + actual:   c = 3,
----     rerun: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . --file TESTS/cfg_spec.lua --filter "parses nested keys"
+---     rerun: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . --file TESTS/cfg_spec.lua --filter 'parses nested keys'
 ---   FAIL x40 module 'lib.nvim.foo' not found  (first: TESTS/a_spec.lua  a::b; 39 more: --json <file>)
 ---   GUARD TESTS/b_spec.lua  [state] leaves autocmd BufEnter in group G
 ---   more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of them: --json <file> or --agent-budget <n>
@@ -306,17 +306,32 @@ local function value_lines(a, o)
   return out
 end
 
----@param s string
----@return string
-local function quote(s)
-  if s ~= "" and not s:find("[^%w_%.%-/:=,@+%%]") then
+---One word of a command line that is safe in bash AND PowerShell, or nil when no such word exists.
+---
+---A word that is only made of `[%w_./:=+-]` stays bare. Everything else goes in single quotes: nothing is
+---interpreted inside them, in either shell (`$(...)`, backticks, `$var`, `!`, `%`, `;`, `&`, `,` and `@` are all
+---inert), unlike inside double quotes. The one character a single-quoted word cannot hold is the single quote
+---itself, and its escape differs between the shells (backslash-escaped in bash, doubled in PowerShell), so such a word,
+---word with a control character, C1 or bidi character or a newline (it would not stay one line), has no safe
+---spelling here: the caller leaves it out of the line. Whitespace is kept exactly as it is.
+---@param s any
+---@return string|nil
+function M.shell_quote(s)
+  s = tostring(s)
+  if s:find("[%c']") or util.clean(s, { c1 = true, bidi = true }) ~= s then
+    return nil
+  end
+  if s ~= "" and not s:find("[^%w_%./:=+%-]") then
     return s
   end
-  return '"' .. s:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+  return "'" .. s .. "'"
 end
 
 ---The command that repeats one failed case: the arguments of the run without what selects or shows
----(`args.repeat_argv`), then `--file` and, for a case inside a file, `--filter`.
+---(`args.repeat_argv`), then `--file` and, for a case inside a file, `--filter`. Every word passes
+---`M.shell_quote`; a word without a safe spelling (a quote or a control character in a file name, an argument or
+---a case name) is not put in the line: a `--filter` is dropped (the file still runs), anything else turns the
+---line into a note that says why there is no command.
 ---@param result Testing.Result
 ---@param c Testing.Result.Case
 ---@param o table
@@ -325,13 +340,22 @@ local function rerun_command(result, c, o)
   local argv = (result.run and result.run.argv) or {}
   local parts = { o.command }
   for _, a in ipairs(require("testing.args").repeat_argv(argv)) do
-    parts[#parts + 1] = quote(oneline(a, 200))
+    local q = M.shell_quote(a)
+    if not q then
+      return "(no command: an argument of the run holds a quote or a control character; use --file <file> with the options of the run)"
+    end
+    parts[#parts + 1] = q
   end
-  parts[#parts + 1] = "--file " .. quote(oneline(c.file or "", 200))
+  local file = M.shell_quote(c.file or "")
+  if not file then
+    return "(no command: the file name holds a quote or a control character; use --file <file> with the options of the run)"
+  end
+  parts[#parts + 1] = "--file " .. file
   local name = util.short_name(c)
   local own = name ~= "" and name ~= (c.file or ""):match("([^/]+)$")
-  if own and not name:find('[\r\n"\\$`]') then
-    parts[#parts + 1] = "--filter " .. quote(oneline(name, 200))
+  local filter = own and M.shell_quote(name)
+  if filter then
+    parts[#parts + 1] = "--filter " .. filter
   end
   return table.concat(parts, " ")
 end
@@ -509,6 +533,72 @@ local function size_of(lines)
   return n
 end
 
+---What a green run still has to say, in the order of the terminal reporter: the cases a retry rescued
+---(`--retry-failed`), the cases that passed without asserting anything and the busted files without a case
+---(`assertions = "warn"`). Never silent: a reader of the agent report has no other place to see them.
+---@param result Testing.Result
+---@param o table
+---@return { kind: string, count: integer, text: string, items: string[] }[]
+local function notices(result, o)
+  local out = {}
+  local root = result.run and result.run.root
+  local function list(items, shown)
+    local names = {}
+    for i = 1, math.min(#items, shown) do
+      names[i] = oneline(items[i], o.line_max)
+    end
+    local text = table.concat(names, ", ")
+    if #items > shown then
+      text = text .. (", ... %d more"):format(#items - shown)
+    end
+    return text, names
+  end
+  local flaky = util.flaky_cases(result)
+  if #flaky > 0 then
+    local items = {}
+    for _, c in ipairs(flaky) do
+      items[#items + 1] = ("%s (passed on retry %d)"):format(
+        relpath(root, c.file) .. "  " .. util.short_name(c),
+        tonumber(c.retries) or 0
+      )
+    end
+    local text, names = list(items, 5)
+    out[#out + 1] = {
+      kind = "flaky",
+      count = #flaky,
+      text = ("flaky: %d case(s) failed and then passed on a retry: %s"):format(#flaky, text),
+      items = names,
+    }
+  end
+  local ids = util.unasserted_ids(result)
+  if #ids > 0 then
+    local text, names = list(ids, 5)
+    out[#out + 1] = {
+      kind = "unasserted",
+      count = #ids,
+      text = ('warning: %d case(s) passed without asserting anything (assertions = "warn"): %s'):format(
+        #ids,
+        text
+      ),
+      items = names,
+    }
+  end
+  local files = util.no_case_files(result)
+  if #files > 0 then
+    local text, names = list(files, 5)
+    out[#out + 1] = {
+      kind = "no_case",
+      count = #files,
+      text = ('warning: %d file(s) registered no case on this platform (assertions = "warn", skipped): %s'):format(
+        #files,
+        text
+      ),
+      items = names,
+    }
+  end
+  return out
+end
+
 ---@param result Testing.Result
 ---@param v Testing.Verdict
 ---@param groups Testing.Report.AgentGroup[]
@@ -523,6 +613,9 @@ local function render_text(result, v, groups, guards, o)
   end
   for _, l in ipairs(verdict_mod.red_lines(v)) do
     lines[#lines + 1] = guard_command(oneline(l, 400))
+  end
+  for _, n in ipairs(notices(result, o)) do
+    lines[#lines + 1] = guard_command(oneline(n.text, 600))
   end
   local used = size_of(lines)
   local budget = o.budget - TRAILER
@@ -580,6 +673,31 @@ end
 ---@return string[]
 local function render_jsonl(result, v, groups, guards, o)
   local run = result.run or {}
+  local function clean(x)
+    return util.clean(tostring(x), { c1 = true, bidi = true })
+  end
+  local reasons
+  if type(v.reasons) == "table" then
+    reasons = {}
+    for i, r in ipairs(v.reasons) do
+      reasons[i] = clean(r)
+    end
+  end
+  local last_green
+  if type(v.last_green) == "table" then
+    last_green = {
+      ts = v.last_green.ts,
+      sha = v.last_green.sha ~= nil and clean(tostring(v.last_green.sha):sub(1, 40)) or nil,
+    }
+  end
+  local changed_since
+  if type(v.changed_since) == "table" then
+    local files = {}
+    for i, f in ipairs(v.changed_since.files or {}) do
+      files[i] = clean(f)
+    end
+    changed_since = { count = v.changed_since.count, files = files }
+  end
   local head = {
     kind = "verdict",
     verdict = v.kind,
@@ -588,11 +706,14 @@ local function render_jsonl(result, v, groups, guards, o)
     files = v.files,
     cases = v.cases,
     status = count_cases(result),
-    reasons = v.reasons,
-    last_green = v.last_green,
-    changed_since = v.changed_since,
+    reasons = reasons,
+    last_green = last_green,
+    changed_since = changed_since,
   }
   local lines = { json_line(head) }
+  for _, n in ipairs(notices(result, o)) do
+    lines[#lines + 1] = json_line({ kind = n.kind, count = n.count, items = n.items })
+  end
   local used = size_of(lines)
   local budget = o.budget - TRAILER
   local left_groups, left_cases, left_guards = 0, 0, 0

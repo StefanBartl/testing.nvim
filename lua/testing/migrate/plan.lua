@@ -686,6 +686,9 @@ function M.plan(report, opts)
     read_script = function(rel)
       return text.read(report.root .. "/" .. rel)
     end,
+    readers_of = function(name)
+      return text.readers_of(report.root, name)
+    end,
     drop_plenary = not report.plenary.keep_ci,
     sentinel = type(report.harness.sentinel) == "string" and report.harness.sentinel:match(
       "^[%u%d_]+$"

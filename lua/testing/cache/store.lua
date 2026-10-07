@@ -380,6 +380,8 @@ function M.latest_by_file(dir, opts)
         and not raw.file:find("%c")
         and type(raw.ts) == "number"
         and raw.ts == raw.ts
+        and raw.ts >= 0
+        and raw.ts <= 4102444800
         and type(raw.run) == "string"
         and #raw.run <= 100
         and not raw.run:find("%c")
@@ -400,26 +402,29 @@ function M.latest_by_file(dir, opts)
   return out
 end
 
----Remove stray temp files of interrupted writes (older than an hour).
+---Remove stray temp files of interrupted writes (older than an hour): `entries/<key>.json.atomic-tmp.*` and
+---`index.json.atomic-tmp.*` of the cache directory.
 ---@param dir string
 ---@param now integer
 ---@return integer removed
 local function sweep_tmp(dir, now)
-  local handle = uv.fs_scandir(dir .. "/entries")
   local n = 0
-  if not handle then
-    return 0
-  end
-  while true do
-    local name = uv.fs_scandir_next(handle)
-    if not name then
-      break
-    end
-    if name:match("^%x+%.json%.atomic%-tmp%.") then
-      local st = uv.fs_stat(dir .. "/entries/" .. name)
-      if st and st.mtime and now - st.mtime.sec > 3600 then
-        if uv.fs_unlink(dir .. "/entries/" .. name) then
-          n = n + 1
+  for _, spec in ipairs({
+    { dir = dir .. "/entries", pat = "^%x+%.json%.atomic%-tmp%." },
+    { dir = dir, pat = "^index%.json%.atomic%-tmp%." },
+  }) do
+    local handle = uv.fs_scandir(spec.dir)
+    while handle do
+      local name = uv.fs_scandir_next(handle)
+      if not name then
+        break
+      end
+      if name:match(spec.pat) then
+        local st = uv.fs_stat(spec.dir .. "/" .. name)
+        if st and st.mtime and now - st.mtime.sec > 3600 then
+          if uv.fs_unlink(spec.dir .. "/" .. name) then
+            n = n + 1
+          end
         end
       end
     end

@@ -3,7 +3,8 @@
 ---@description
 --- A run is `green` when every spec file ran green in this run or has a valid cache hit (exactly the
 --- run that prints the sentinel), `green-partial` when it exited 0 but did not look at everything (a
---- selection, a case filter, a skipped case: no sentinel), and `red` when the exit code is not 0.
+--- selection, a case filter, a skipped case, a `--maxfail` stop, a case `--allow-flaky` accepted after a retry:
+--- no sentinel), and `red` when the exit code is not 0.
 --- The exit code itself is not touched by any of this (0 green and partial, 1 red, 2 and 3 as before).
 ---
 --- `build` is pure. The run driver fills the facts and stores the result as `run.verdict` of the IR, so
@@ -34,6 +35,7 @@ M.MAX_CHANGED = 12
 ---@field cases_total integer
 ---@field cases_skipped integer
 ---@field selection? string What narrowed the files (`--changed`, `--since <rev>`, `--shard 1/2`, a path), for the reason text.
+---@field flaky_cases? integer Cases `--allow-flaky` counted as green after a retry (the run is never a plain green).
 ---@field case_selection? boolean A case selection (`--filter`, `--tags`, `--lf`) applied.
 ---@field last_green? { ts: integer, sha?: string } The last full green run (red only).
 ---@field changed_since? { count: integer, files: string[] } What changed since then (red only).
@@ -42,7 +44,7 @@ M.MAX_CHANGED = 12
 ---@field kind Testing.Verdict.Kind
 ---@field exit_code integer
 ---@field files { total: integer, selected: integer, cached: integer, ran: integer, skipped: integer, unrun: integer }
----@field cases { total: integer, skipped: integer }
+---@field cases { total: integer, skipped: integer, flaky: integer }
 ---@field reasons? string[] Why a run is not `green` (partial only).
 ---@field last_green? { ts: integer, sha?: string }
 ---@field changed_since? { count: integer, files: string[] }
@@ -79,7 +81,11 @@ function M.build(f)
       skipped = skipped,
       unrun = unrun,
     },
-    cases = { total = int(f.cases_total), skipped = int(f.cases_skipped) },
+    cases = {
+      total = int(f.cases_total),
+      skipped = int(f.cases_skipped),
+      flaky = int(f.flaky_cases),
+    },
   }
   if v.exit_code ~= 0 then
     v.kind = "red"
@@ -102,6 +108,11 @@ function M.build(f)
   end
   if v.cases.skipped > 0 then
     reasons[#reasons + 1] = ("%d case(s) skipped: a skip is never green"):format(v.cases.skipped)
+  end
+  if v.cases.flaky > 0 then
+    reasons[#reasons + 1] = ("%d flaky case(s) accepted (--allow-flaky): a case that needed a retry is not green"):format(
+      v.cases.flaky
+    )
   end
   if #reasons > 0 then
     v.kind = "green-partial"

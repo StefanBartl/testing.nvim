@@ -211,13 +211,22 @@ function M.changed_since(root, rec, opts)
   if not files then
     return nil, tostring(err)
   end
-  local out = {}
+  local out, listed = {}, {}
   for _, rel in ipairs(files) do
+    listed[rel] = true
     local was = rec.dirty[rel]
     if not (was and hash_of(root, rel) == was) then
       out[#out + 1] = rel
     end
   end
+  -- a file that was modified at the green run and that git no longer lists is back at the commit's content: that
+  -- is a change since the green run, unless it is (still) byte-identical to what the green run saw
+  for rel, was in pairs(rec.dirty) do
+    if not listed[rel] and hash_of(root, rel) ~= was then
+      out[#out + 1] = rel
+    end
+  end
+  table.sort(out)
   return out, nil
 end
 

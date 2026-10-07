@@ -351,6 +351,62 @@ return function(H)
     "a hit refreshed the age"
   )
 
+  -- ---------------------------------------------------------------- latest_by_file: the timestamp of an entry is untrusted
+  do
+    fresh()
+    local k_ok, k_far, k_inf = key(701), key(702), key(703)
+    forge(
+      k_ok,
+      assert(json.encode(valid_entry(k_ok, function(e)
+        e.ts = 4102444800
+        e.file = "TESTS/proj/ok_spec.lua"
+      end)))
+    )
+    forge(
+      k_far,
+      assert(json.encode(valid_entry(k_far, function(e)
+        e.ts = 4102444801
+        e.file = "TESTS/proj/far_spec.lua"
+      end)))
+    )
+    -- an infinite number is valid JSON to some decoders: the text is edited by hand
+    local inf_text = assert(json.encode(valid_entry(k_inf, function(e)
+      e.ts = 1
+      e.file = "TESTS/proj/inf_spec.lua"
+    end))):gsub('"ts":1,', '"ts":1e999,', 1)
+    forge(k_inf, inf_text)
+    local latest = store.latest_by_file(sdir)
+    ok(latest["TESTS/proj/ok_spec.lua"] ~= nil, "the last accepted time (year 2100) is accepted")
+    eq(
+      latest["TESTS/proj/far_spec.lua"],
+      nil,
+      "a time beyond it is refused, as `validate` refuses it"
+    )
+    eq(
+      latest["TESTS/proj/inf_spec.lua"],
+      nil,
+      "an infinite time is refused: it would win every comparison"
+    )
+    -- stray temp files of an interrupted write are swept (older than an hour): entries and the hash index
+    local aged = os.time() - 7200
+    local stray_entry = sdir .. "/entries/" .. k_ok .. ".json.atomic-tmp.1.2"
+    local stray_index = sdir .. "/index.json.atomic-tmp.1.2"
+    local fresh_index = sdir .. "/index.json.atomic-tmp.3.4"
+    for _, f in ipairs({ stray_entry, stray_index, fresh_index }) do
+      local fh = assert(io.open(f, "wb"))
+      fh:write("x")
+      fh:close()
+    end
+    vim.uv.fs_utime(stray_entry, aged, aged)
+    vim.uv.fs_utime(stray_index, aged, aged)
+    store.prune(sdir)
+    eq(vim.uv.fs_stat(stray_entry), nil, "an old temp file of an entry is swept")
+    eq(vim.uv.fs_stat(stray_index), nil, "an old temp file of the hash index is swept")
+    ok(vim.uv.fs_stat(fresh_index) ~= nil, "a young one stays: a write may be going on")
+    vim.uv.fs_unlink(fresh_index)
+    fresh()
+  end
+
   -- ---------------------------------------------------------------- stats and clear in place
   fresh()
   put(key(200))
@@ -547,6 +603,46 @@ return function(H)
       vim.uv.fs_symlink(tdir .. "/tree", tdir .. "/tree/real/loop", { dir = true, junction = true })
       local d3 = hash.new(nil):tree(tdir .. "/tree")
       ok(type(d3) == "string", "a symlink loop does not hang the digest")
+    end
+    S.remove(tdir)
+  end
+
+  -- two links to the SAME directory: the walk reads it once, but the digest still knows both links
+  do
+    local tdir = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(tdir .. "/real", "p")
+    vim.fn.mkdir(tdir .. "/tree", "p")
+    S.write(tdir .. "/real/a.txt", "one", false)
+    S.write(tdir .. "/tree/plain.txt", "plain", false)
+    local first_link =
+      vim.uv.fs_symlink(tdir .. "/real", tdir .. "/tree/a_link", { dir = true, junction = true })
+    local second_link =
+      vim.uv.fs_symlink(tdir .. "/real", tdir .. "/tree/b_link", { dir = true, junction = true })
+    if first_link and second_link then
+      local both = hash.new(nil):tree(tdir .. "/tree")
+      ok(type(both) == "string", "two links to one directory have a digest")
+      eq(hash.new(nil):tree(tdir .. "/tree"), both, "and it is stable")
+      -- removing the link the walk did NOT follow (the second one) must still change the digest
+      vim.fn.delete(tdir .. "/tree/b_link")
+      local only_a = hash.new(nil):tree(tdir .. "/tree")
+      ok(
+        only_a ~= both,
+        "removing the second link changes the digest (the first one is still there)"
+      )
+      vim.uv.fs_symlink(tdir .. "/real", tdir .. "/tree/b_link", { dir = true, junction = true })
+      eq(hash.new(nil):tree(tdir .. "/tree"), both, "putting it back restores the digest")
+      vim.fn.delete(tdir .. "/tree/a_link")
+      local only_b = hash.new(nil):tree(tdir .. "/tree")
+      ok(
+        only_b ~= both and only_b ~= only_a,
+        "removing the first link changes it too (and differently)"
+      )
+      -- the content behind the links is still part of it
+      S.write(tdir .. "/real/a.txt", "two", false)
+      ok(
+        hash.new(nil):tree(tdir .. "/tree") ~= only_b,
+        "a changed file behind a link changes the digest"
+      )
     end
     S.remove(tdir)
   end

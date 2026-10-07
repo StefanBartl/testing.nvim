@@ -147,6 +147,32 @@ jobs:
     false,
     "kept_away: another plugin's comment"
   )
+  for _, c in ipairs({
+    { "# my-ui.nvim is not checked out", "ui.nvim", "a longer name that ends like this one" },
+    { "# ui.nvim.old is not checked out", "ui.nvim", "a name that continues with a suffix" },
+    { "# not checked out: ui.nvim", "ui.nvim", "the phrase stands BEFORE the name" },
+    { "# ui.nvim is not kept off", "ui.nvim", "the phrase is negated after the name" },
+    { "# ui.nvim is no longer kept off", "ui.nvim", "the statement is a thing of the past" },
+    { "# ui.nvim and lib.nvim are not checked out", "ui.nvim", "two plugins on one line (first)" },
+    {
+      "# ui.nvim and lib.nvim are not checked out",
+      "lib.nvim",
+      "two plugins on one line (second)",
+    },
+    { "# lib.nvim is checked out. ui.nvim is used", "lib.nvim", "another sentence says nothing" },
+  }) do
+    eq(analyze.kept_away(c[1] .. "\n", c[2]), false, "kept_away: " .. c[3])
+  end
+  eq(
+    analyze.kept_away("# lib.nvim is needed. ui.nvim is kept off the runtimepath.\n", "ui.nvim"),
+    false,
+    "kept_away: a phrase of the next sentence is not about the name (a second name on the line closes nothing)"
+  )
+  eq(
+    analyze.kept_away("# the menu specs: ui.nvim stays off, on purpose\n", "ui.nvim"),
+    true,
+    "kept_away: a clear statement after the name still works"
+  )
 
   local r3 = mk(
     "away.nvim",
@@ -218,6 +244,38 @@ jobs:
     "grep -q SOMETHING_ELSE out.log",
     "a grep for something else stays: the plan cannot vouch for it"
   )
+
+  -- an inverted grep asks the opposite question: it is neither removed nor "covered" by the sentinel check
+  for i, inverted in ipairs({
+    "grep -qv READBACK_TESTS_OK out.log",
+    "grep -q -v READBACK_TESTS_OK out.log",
+    "! grep -q READBACK_TESTS_OK out.log",
+  }) do
+    local rv = mk(
+      "inverted" .. i .. ".nvim",
+      'return require("lib.nvim.notify")\n',
+      CI_HEAD
+        .. "      - name: Tests\n"
+        .. "        run: |\n"
+        .. "          nvim -n -i NONE --headless -u NONE \\\n"
+        .. '            -c "luafile TESTS/run.lua" \\\n'
+        .. '            -c "qa!" > out.log 2>&1\n'
+        .. "          "
+        .. inverted
+        .. "\n"
+    )
+    write(rv .. "/TESTS/run.lua", 'print("READBACK_TESTS_OK")\n')
+    local planv = migrate.run(rv, { fleet_root = fleet_dir })
+    local civ
+    for _, op in ipairs(planv.ops) do
+      if op.path == ".github/workflows/ci.yml" then
+        civ = op.after
+      end
+    end
+    ok(civ ~= nil, "the workflow is rewritten: " .. inverted)
+    has(civ, inverted, "the inverted check stays: " .. inverted)
+    has(table.concat(planv.notes, "\n"), "still reads out.log", "and is reported: " .. inverted)
+  end
 
   -- ---------------------------------------------------------------- spec scripts started from a -c command
 
@@ -302,6 +360,57 @@ end
   has(ci4, "HOVER_NVIM_DIR:", "HOVER_NVIM_PATH is renamed to the name testing.deps reads")
   lacks(ci4, "HOVER_NVIM_PATH", "the old name is gone")
   has(ci4, 'OTHER_FLAG: "1"', "an unrelated variable stays")
+
+  -- <DEP>_DIR set already: no second key (invalid YAML), the old one stays and the plan says so
+  local r6 = mk(
+    "envdup.nvim",
+    'local h = require("hover")\nlocal n = require("lib.nvim.notify")\nreturn { h, n }\n',
+    CI_HEAD
+      .. "      - name: Run\n"
+      .. "        env:\n"
+      .. "          HOVER_NVIM_PATH: ${{ github.workspace }}/../hover.nvim\n"
+      .. "          HOVER_NVIM_DIR: ${{ github.workspace }}/../hover.nvim\n"
+      .. '        run: nvim --headless -u scripts/minimal_init.lua -c "PlenaryBustedDirectory TESTS"\n'
+  )
+  local plan6 = migrate.run(r6, { fleet_root = fleet_dir })
+  local ci6
+  for _, op in ipairs(plan6.ops) do
+    if op.path == ".github/workflows/ci.yml" then
+      ci6 = op.after
+    end
+  end
+  ok(ci6 ~= nil, "the workflow is rewritten (dup)")
+  local _, n_dir = ci6:gsub("HOVER_NVIM_DIR:", "")
+  eq(n_dir, 1, "HOVER_NVIM_DIR appears once: no duplicate key")
+  has(ci6, "HOVER_NVIM_PATH:", "the old key stays")
+  has(
+    table.concat(plan6.notes, "\n"),
+    "HOVER_NVIM_PATH and HOVER_NVIM_DIR are both set",
+    "and the plan says so"
+  )
+
+  -- another reader of <DEP>_PATH (a script of the repository): not renamed, reported
+  local r7 = mk(
+    "envread.nvim",
+    'local h = require("hover")\nlocal n = require("lib.nvim.notify")\nreturn { h, n }\n',
+    CI_HEAD
+      .. "      - name: Run\n"
+      .. "        env:\n"
+      .. "          HOVER_NVIM_PATH: ${{ github.workspace }}/../hover.nvim\n"
+      .. '        run: nvim --headless -u scripts/minimal_init.lua -c "PlenaryBustedDirectory TESTS"\n'
+  )
+  write(r7 .. "/scripts/helper.sh", 'echo "$HOVER_NVIM_PATH"\n')
+  local plan7 = migrate.run(r7, { fleet_root = fleet_dir })
+  local ci7
+  for _, op in ipairs(plan7.ops) do
+    if op.path == ".github/workflows/ci.yml" then
+      ci7 = op.after
+    end
+  end
+  ok(ci7 ~= nil, "the workflow is rewritten (reader)")
+  has(ci7, "HOVER_NVIM_PATH:", "a variable another file reads is not renamed")
+  lacks(ci7, "HOVER_NVIM_DIR:", "and no second spelling appears")
+  has(table.concat(plan7.notes, "\n"), "scripts/helper.sh", "the reader is named in the notes")
 
   vim.fn.delete(tmp, "rf")
 end

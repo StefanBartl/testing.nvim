@@ -247,12 +247,17 @@ function Hasher:tree(dir, opts)
   if vim.fn.isdirectory(dir) ~= 1 then
     return vim.fn.sha256("absent:" .. dir)
   end
-  -- The walker lists a symlinked directory but never enters it (a link can point at an ancestor): the links are
-  -- collected here (the callback sees every directory, so no per-file stat) and followed one by one, each real
-  -- directory once, so a fixture directory that is a link is part of the digest and a loop ends.
+  -- ERR-34 says a recursive walk never enters a symlinked directory (an endless loop through a link to an
+  -- ancestor). This walk deviates on purpose, and keeps what the rule is for: a fixture directory that is a
+  -- link is an INPUT of the spec, so a file below it must change the digest. The walker itself still does not
+  -- enter links; they are collected here (the callback sees every directory, so no per-file stat) and followed
+  -- one by one, EACH REAL DIRECTORY ONCE (`seen`) and at most `M.MAX_LINKS` of them, so a loop ends after one
+  -- round and nothing is read twice. The walk only reads: nothing is written or deleted through a link.
+  -- The traversal is deduplicated, the digest is not: every link is a line of its own (`link <rel> -> <target>`),
+  -- so two links to one directory are two lines, and removing one of them changes the digest.
   local collect = require("lib.nvim.fs.collect_recursive")
   local uv = vim.uv
-  local links = {}
+  local links, all_links = {}, {}
   local function ignore(path, is_dir)
     if not is_dir then
       return false
@@ -263,12 +268,15 @@ function Hasher:tree(dir, opts)
     local lst = uv.fs_lstat(path)
     if lst and lst.type == "link" then
       links[#links + 1] = path
+      all_links[#all_links + 1] = path
     end
     return false
   end
   local files = collect.files(dir, { ignore = ignore })
-  local seen = { [uv.fs_realpath(dir) or dir] = true }
+  local real_dir = uv.fs_realpath(dir) or dir
+  local seen = { [real_dir] = true }
   local followed = 0
+  local link_lines = {}
   while #links > 0 do
     local link = table.remove(links, 1)
     local real = uv.fs_realpath(link)
@@ -279,6 +287,18 @@ function Hasher:tree(dir, opts)
         return nil, ("more than %d symlinked directories below %s"):format(M.MAX_LINKS, dir)
       end
       vim.list_extend(files, collect.files(link, { ignore = ignore }))
+    end
+  end
+  for _, link in ipairs(all_links) do
+    local rel = vim.fs.normalize(link):sub(#dir + 2)
+    if not (skip and skip(rel)) then
+      local real = uv.fs_realpath(link)
+      -- a target below the directory is named relative to it (the digest must not change when the checkout moves)
+      local target = real and vim.fs.normalize(real) or "<unresolved>"
+      if real and target:sub(1, #real_dir + 1) == vim.fs.normalize(real_dir) .. "/" then
+        target = "./" .. target:sub(#real_dir + 2)
+      end
+      link_lines[#link_lines + 1] = "link " .. rel .. " -> " .. target
     end
   end
   local rels = {}
@@ -293,7 +313,11 @@ function Hasher:tree(dir, opts)
     return nil, ("more than %d files below %s"):format(M.MAX_TREE_FILES, dir)
   end
   table.sort(rels)
+  table.sort(link_lines)
   local parts = {}
+  for _, line in ipairs(link_lines) do
+    parts[#parts + 1] = line
+  end
   for _, rel in ipairs(rels) do
     local sha, why = self:file(dir .. "/" .. rel)
     if not sha then

@@ -101,6 +101,18 @@ local function assertion_message(a)
   return msg
 end
 
+---Does the result hold a case that fails the run?
+---@param result Testing.Result
+---@return boolean
+function M.has_bad_case(result)
+  for _, c in ipairs(result.cases or {}) do
+    if util.class_of(c.status) == "bad" then
+      return true
+    end
+  end
+  return false
+end
+
 ---The annotation lines for a result.
 ---@param result Testing.Result
 ---@param opts? Testing.Report.GithubOpts
@@ -180,7 +192,11 @@ function M.render(result, opts)
     lines[#lines + 1] = M.command(e.level, e.props, e.message)
   end
   local verdict = result.run and result.run.verdict
-  if type(verdict) == "table" and verdict.kind == "green-partial" then
+  if type(verdict) == "table" and verdict.kind == "red" and not M.has_bad_case(result) then
+    -- an exit code 1 without a red case (a cache audit that found a stale pass): the log must not stay green
+    lines[#lines + 1] =
+      M.command("error", { title = "testing" }, require("testing.report.verdict").line(verdict))
+  elseif type(verdict) == "table" and verdict.kind == "green-partial" then
     -- a run that did not look at everything must not read as plain green in the log either
     lines[#lines + 1] =
       M.command("notice", { title = "testing" }, require("testing.report.verdict").line(verdict))
@@ -220,8 +236,11 @@ function M.summary_markdown(result)
   end
   local run = result.run or {}
   local verdict = type(run.verdict) == "table" and run.verdict or nil
+  -- the heading follows the verdict of the run when there is one (exit 1 without a red case is not "passed")
   local heading = bad > 0 and "FAILED" or "passed"
-  if bad == 0 and verdict and verdict.kind == "green-partial" then
+  if verdict and verdict.kind == "red" then
+    heading = "FAILED"
+  elseif bad == 0 and verdict and verdict.kind == "green-partial" then
     heading = "passed (partial, not everything was looked at)"
   end
   local lines = { "## testing.nvim: " .. heading, "" }

@@ -189,11 +189,40 @@ return function(H)
   local rok = order.record_state(root, res, { state_dir = state, time = 1000 })
   ok(rok, "the state is written")
   local files_state = order.load_state(root, { state_dir = state })
+  eq(files_state, {
+    ["TESTS/a_spec.lua"] = { ts = 1000, ms = 15 },
+    ["TESTS/b_spec.lua"] = { ts = 1000, ms = 7 },
+  }, "an executed file: when and how long; a cache hit is looked at now too (its stored duration)")
+  -- a cache hit refreshes the time of an entry and keeps the duration that was measured
+  order.record_state(root, res, { state_dir = state, time = 1500 })
   eq(
-    files_state,
-    { ["TESTS/a_spec.lua"] = { ts = 1000, ms = 15 } },
-    "an executed file: when and how long; a cached one did not run"
+    order.load_state(root, { state_dir = state })["TESTS/b_spec.lua"],
+    { ts = 1500, ms = 7 },
+    "a hit refreshes ts: it does not age into 'not run for a long time'"
   )
+  do
+    local hits_only = result.new({
+      id = "r1b",
+      root = root,
+      project_key = "k",
+      nvim = "0.12.0",
+      os = "linux",
+      duration_ms = 1,
+    })
+    local hc = result.new_case({ file = "TESTS/a_spec.lua", name = "c" })
+    hc.duration_ms = 999
+    hc.assertions = { { ok = true, kind = "ok" } }
+    result.finish_case(hc)
+    hc.cached = true
+    result.add_case(hits_only, hc)
+    order.record_state(root, hits_only, { state_dir = state, time = 1600 })
+    eq(
+      order.load_state(root, { state_dir = state })["TESTS/a_spec.lua"],
+      { ts = 1600, ms = 15 },
+      "a file that only came from the cache: new ts, the measured duration stays"
+    )
+  end
+  order.record_state(root, res, { state_dir = state, time = 1000 })
   order.record_state(root, res, { state_dir = state, time = 2000, partial = true })
   files_state = order.load_state(root, { state_dir = state })
   eq(
@@ -230,6 +259,14 @@ return function(H)
     order.load_state(root, { state_dir = state }),
     { ["ok.lua"] = { ts = 5, ms = 1 } },
     "only valid entries survive"
+  )
+  put(
+    '{"v":1,"files":{"edge.lua":{"ts":4102444800},"over.lua":{"ts":4102444801},"zero.lua":{"ts":0}}}'
+  )
+  eq(
+    order.load_state(root, { state_dir = state }),
+    { ["edge.lua"] = { ts = 4102444800, ms = 0 }, ["zero.lua"] = { ts = 0, ms = 0 } },
+    "ts is bounded on both ends: the year 2100 is the last accepted time"
   )
   put(("x"):rep(order.MAX_BYTES + 10))
   local _, big_note = order.load_state(root, { state_dir = state })

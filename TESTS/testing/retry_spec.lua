@@ -382,6 +382,112 @@ end
       end,
     })
     eq(runs, 0, "a timeout and a crash are not repeated")
+
+    -- a case the retry output does not contain was not run again: it is not "failed on all N retries"
+    rep = report_of({ case("a_spec.lua", "x", "fail") })
+    info = retry.apply(rep, {
+      retries = 2,
+      files = files,
+      bad = require("testing.run.inproc").BAD,
+      rerun = function()
+        return report_of({ case("a_spec.lua", "other", "pass") })
+      end,
+    })
+    eq(#info.red, 0, "a missing case is not red by retry")
+    eq(#info.missing, 1, "it is listed as missing")
+    eq(#info.flaky, 0, "and not flaky")
+    ok(
+      not table.concat(rep.result.cases[1].notes, ";"):find("failed on all", 1, true),
+      "no note claims it failed on all retries"
+    )
+    has(
+      table.concat(rep.result.cases[1].notes, ";"),
+      "missing from the output of 2 retries",
+      "the note says what happened"
+    )
+    eq(rep.result.cases[1].retries, 0, "no retry count: it never ran again")
+    has(
+      table.concat(retry.lines(info), "\n"),
+      "missing from the output of a retry",
+      "and the output says so"
+    )
+
+    -- a case that is missing once and fails once did fail on one retry only
+    local round = 0
+    rep = report_of({ case("a_spec.lua", "x", "fail") })
+    info = retry.apply(rep, {
+      retries = 2,
+      files = files,
+      bad = require("testing.run.inproc").BAD,
+      rerun = function()
+        round = round + 1
+        return report_of({
+          round == 1 and case("a_spec.lua", "z", "pass") or case("a_spec.lua", "x", "fail"),
+        })
+      end,
+    })
+    eq(#info.red, 0, "missing once, failing once: not 'all retries'")
+    eq(rep.result.cases[1].retries, 1, "one retry did run it again")
+
+    -- a cached case is never repeated, whatever its status says
+    runs = 0
+    local cached_fail = case("a_spec.lua", "x", "fail")
+    cached_fail.cached = true
+    rep = report_of({ cached_fail })
+    retry.apply(rep, {
+      retries = 2,
+      files = files,
+      bad = require("testing.run.inproc").BAD,
+      rerun = function()
+        runs = runs + 1
+        return report_of({ case("a_spec.lua", "x", "pass") })
+      end,
+    })
+    eq(runs, 0, "a case from the cache is not run again")
+
+    -- --allow-flaky recounts the exit code: --strict still makes a skipped case red
+    for _, strict in ipairs({ false, true }) do
+      rep = report_of({ case("a_spec.lua", "x", "fail"), case("b_spec.lua", "s", "skip") })
+      retry.apply(rep, {
+        retries = 1,
+        allow_flaky = true,
+        strict = strict,
+        files = files,
+        bad = require("testing.run.inproc").BAD,
+        rerun = function()
+          return report_of({ case("a_spec.lua", "x", "pass") })
+        end,
+      })
+      eq(rep.skipped, 1, "the skip is counted")
+      eq(rep.exit_code, strict and 1 or 0, "recount with strict = " .. tostring(strict))
+    end
+  end
+
+  -- ------------------------------------------- --maxfail with --retry-failed: the unrun files keep the verdict partial
+  do
+    local counter = tmp .. "/c8.txt"
+    local root = project({
+      ["TESTS/a_spec.lua"] = counting_spec(counter, 2),
+      ["TESTS/b_spec.lua"] = ALWAYS_GREEN,
+      ["TESTS/c_spec.lua"] = ALWAYS_GREEN,
+    })
+    local r, ir = go_json(root, { "--maxfail", "1", "--retry-failed", "2", "--allow-flaky" })
+    eq(r.code, 0, "the flaky case is accepted: exit 0\n" .. r.out .. r.err)
+    lacks(r.out, "TESTING_OK", "but b and c never ran: no sentinel")
+    eq(ir.run.verdict.kind, "green-partial", "the verdict is green-partial")
+    eq(ir.run.verdict.files.unrun, 2, "two files did not run")
+    has(r.out, "partial run:", "the output says it is partial")
+    has(r.out, "not run (stopped)", "and why")
+    has(r.out, "1 flaky case(s) accepted", "and that a flaky case was accepted")
+    has(
+      r.out,
+      "stopped after 1 failure(s) (--maxfail 1)",
+      "the stop line counts the failure the retry accepted"
+    )
+    -- a red run keeps the stop line and the exit code
+    write(counter, "0")
+    r = go(root, { "--maxfail", "1", "--retry-failed", "1" })
+    eq(r.code, 1, "without --allow-flaky the same run is red")
   end
 
   vim.fn.delete(tmp, "rf")

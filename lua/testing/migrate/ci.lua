@@ -192,6 +192,47 @@ end
 ---@field first integer First physical line.
 ---@field last integer Last physical line.
 
+---Is this script a spec runner (`scripts/ci/headless_tests.lua`, `scripts/run_tests.lua`, `scripts/test.lua`) and
+---not a helper that merely has "test" in its name (`gen_testdata.lua`, `setup_test_env.lua`, a fixture or
+---prepare script)? Only the base name counts, and only a name that STARTS or ENDS like a runner; what is
+---neither is `manual` at best (the migration then asks a person instead of rewriting a command that only
+---looks like a test run).
+---@param path string
+---@return boolean
+function M.is_test_script(path)
+  local base = (path:match("([^/]+)$") or path):lower()
+  if base:find("gen_", 1, true) or base:find("setup", 1, true) or base:find("fixture", 1, true) then
+    return false
+  end
+  if base:find("prepare", 1, true) or base:find("prep_", 1, true) then
+    return false
+  end
+  return base:match("^tests?[%w_%-]*%.lua$") ~= nil
+    or base:match("^test_") ~= nil
+    or base:match("_tests?%.lua$") ~= nil
+    or base:find("headless_test", 1, true) ~= nil
+end
+
+---Does a line mention the environment variable `name` as a word of its own?
+---@param line string
+---@param name string
+---@return boolean
+function M.mentions(line, name)
+  local from = 1
+  while true do
+    local i, j = line:find(name, from, true)
+    if not i then
+      return false
+    end
+    local before = i > 1 and line:sub(i - 1, i - 1) or ""
+    local after = line:sub(j + 1, j + 1)
+    if not before:match("[%w_]") and not after:match("[%w_]") then
+      return true
+    end
+    from = j + 1
+  end
+end
+
 ---Command kind of one logical line.
 ---@param cmd string
 ---@return "testsh"|"legacy"|"manual"|"other"
@@ -225,9 +266,9 @@ function M.classify(cmd)
       return "legacy"
     end
     -- `-c "lua dofile('scripts/ci/headless_tests.lua')"`: a spec script started from a -c command (gopath.nvim)
-    if
-      rest:match("%-c%s+[\"']lua%s+dofile%s*%(%s*[\"']scripts/[%w_%./%-]*test[%w_%-]*%.lua[\"']")
-    then
+    local dofiled =
+      rest:match("%-c%s+[\"']lua%s+dofile%s*%(%s*[\"'](scripts/[%w_%./%-]+%.lua)[\"']")
+    if dofiled and M.is_test_script(dofiled) then
       return "legacy"
     end
     for path in rest:gmatch("[%w_%./%-]+%.lua") do
@@ -451,6 +492,7 @@ end
 ---@field keep_cmd? fun(cmd: string): boolean A runner call that must stay (a test no `spec_pattern` can name).
 ---@field sentinel? string The green-run sentinel the old runner printed: scripts/test.sh passes it (`--sentinel`), so a `grep -q` of it is superfluous.
 ---@field read_script? fun(rel: string): string|nil Text of a repository script (a CI step that calls `scripts/ci.sh tests` wraps the runner).
+---@field readers_of? fun(name: string): string[] Files of the repository (not the workflow itself) that read an environment variable of this name.
 ---@field names? table
 
 ---@class Testing.Migrate.CiEdit
@@ -696,7 +738,22 @@ function M.edit(src, ctx)
               local cmd = vim.trim(c.cmd)
               -- a `grep -q` goes only when the new call checks the very same sentinel (`--sentinel`)
               local greps = cmd:match("^grep%s+%-[%a]*q[%a]*%s+.*%s" .. f .. "$") ~= nil
-              local covered = greps and ctx.sentinel and cmd:find(ctx.sentinel, 1, true) ~= nil
+              -- `grep -qv` / `grep -q -v` / `--invert-match` asks the opposite question (the sentinel must NOT
+              -- be there): it is never "covered" by the sentinel check of the new call, and it is not removed
+              local inverted = false
+              if greps then
+                for flag in cmd:gmatch("%s(%-%-?[%a%-]+)") do
+                  if
+                    flag == "--invert-match" or (flag:sub(1, 2) ~= "--" and flag:find("v", 2, true))
+                  then
+                    inverted = true
+                  end
+                end
+              end
+              local covered = greps
+                and not inverted
+                and ctx.sentinel
+                and cmd:find(ctx.sentinel, 1, true) ~= nil
               if cmd:match("^cat%s+" .. f .. "$") or covered then
                 add(c.first, c.last, {})
                 changed(
@@ -736,6 +793,18 @@ function M.edit(src, ctx)
             local env = require("testing.deps").env_name(dep)
             dir_names[env:gsub("_DIR$", "_PATH")] = env
           end
+          -- every key of the env block of the step (a `<DEP>_DIR` that is set already must not appear twice)
+          local env_keys = {}
+          for i = env_at + 1, step.last do
+            local l = lines[i]
+            if structural(l) and indent_of(l) <= fi then
+              break
+            end
+            local k = structural(l) and l:match("^ +([%w_]+):")
+            if k then
+              env_keys[k] = true
+            end
+          end
           for i = env_at + 1, step.last do
             local l = lines[i]
             if structural(l) and indent_of(l) <= fi then
@@ -759,8 +828,42 @@ function M.edit(src, ctx)
             end
           end
           for _, r in ipairs(renamed) do
-            add(r.line, r.line, { (lines[r.line]:gsub(r.old .. ":", r.new .. ":", 1)) })
-            changed("job %s: %s is now %s (the name testing.deps reads)", job.id, r.old, r.new)
+            -- other readers of the old name (this workflow, the scripts and the init script of the repository)
+            -- would read nothing after a rename: the line stays, and the person decides
+            local readers = {}
+            for i, l in ipairs(lines) do
+              if i ~= r.line and not comment(l) and M.mentions(l, r.old) then
+                readers[#readers + 1] = ("the workflow (line %d)"):format(i)
+                break
+              end
+            end
+            if ctx.readers_of then
+              for _, rel in ipairs(ctx.readers_of(r.old) or {}) do
+                readers[#readers + 1] = rel
+              end
+            end
+            if env_keys[r.new] then
+              result.notes[#result.notes + 1] = ("job %s: %s and %s are both set (line %d): %s is not renamed (a key twice in one mapping is invalid YAML); remove %s by hand when nothing else reads it"):format(
+                job.id,
+                r.old,
+                r.new,
+                r.line,
+                r.old,
+                r.old
+              )
+            elseif #readers > 0 then
+              result.notes[#result.notes + 1] = ("job %s: %s (line %d) is also read by %s: it is not renamed to %s; set %s as well when testing.deps should find the checkout"):format(
+                job.id,
+                r.old,
+                r.line,
+                table.concat(readers, ", "),
+                r.new,
+                r.new
+              )
+            else
+              add(r.line, r.line, { (lines[r.line]:gsub(r.old .. ":", r.new .. ":", 1)) })
+              changed("job %s: %s is now %s (the name testing.deps reads)", job.id, r.old, r.new)
+            end
           end
           if #dropped > 0 then
             if kept == 0 then

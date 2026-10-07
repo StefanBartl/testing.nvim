@@ -241,17 +241,29 @@ end
 function M.record_state(root, res, opts)
   opts = opts or {}
   local files = M.load_state(root, opts)
-  local sums, ran = {}, {}
+  local sums, ran, hits = {}, {}, {}
   for _, c in ipairs(res.cases or {}) do
-    if not c.cached and type(c.file) == "string" then
-      ran[c.file] = true
-      sums[c.file] = (sums[c.file] or 0) + (tonumber(c.duration_ms) or 0)
+    if type(c.file) == "string" then
+      if c.cached then
+        hits[c.file] = (hits[c.file] or 0) + (tonumber(c.duration_ms) or 0)
+      else
+        ran[c.file] = true
+        sums[c.file] = (sums[c.file] or 0) + (tonumber(c.duration_ms) or 0)
+      end
     end
   end
   local now = opts.time or os.time()
   for rel in pairs(ran) do
     local old = files[rel]
     files[rel] = { ts = now, ms = opts.partial and old and old.ms or sums[rel] }
+  end
+  -- a cache hit is a file whose last green result still holds: it was looked at now, so it must not age into
+  -- "not run for 7 days" (stage 4) just because nothing had to execute; the measured duration stays
+  for rel, stored_ms in pairs(hits) do
+    if not ran[rel] then
+      local old = files[rel]
+      files[rel] = { ts = now, ms = old and old.ms or stored_ms }
+    end
   end
   if opts.known_files then
     for rel in pairs(files) do

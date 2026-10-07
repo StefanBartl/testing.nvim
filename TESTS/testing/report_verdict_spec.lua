@@ -190,4 +190,55 @@ return function(H)
     not table.concat(junit.render(F.mixed()), "\n"):find('name="verdict"', 1, true),
     "junit: without a verdict no property (old output unchanged)"
   )
+
+  -- exit 1 without a red case (a cache audit found a stale pass): no reporter may look green -----------------------------------
+  local audit_ir = result.new({
+    id = "y",
+    root = "<REPO>",
+    project_key = "k",
+    nvim = "0.12.0",
+    os = "linux",
+    duration_ms = 1,
+  })
+  F.add(audit_ir, { file = "TESTS/a_spec.lua", name = "a" })
+  audit_ir.run.verdict = verdict.build(facts({ exit_code = 1, last_green = { ts = 0 } }))
+  audit_ir.run.cache = {
+    findings = {
+      {
+        code = "cache.stale_pass",
+        file = "TESTS/a_spec.lua",
+        message = "TESTS/a_spec.lua: the stored result differs",
+      },
+    },
+  }
+  has(
+    table.concat(github.summary_markdown(audit_ir), "\n"),
+    "## testing.nvim: FAILED",
+    "github summary: a red verdict is never headed 'passed'"
+  )
+  has(
+    table.concat(github.render(audit_ir), "\n"),
+    "::error title=testing::verdict: red",
+    "github: and gets an error annotation"
+  )
+  local audit_xml = table.concat(junit.render(audit_ir), "\n")
+  has(audit_xml, 'failures="1"', "junit: the red verdict is one failed case of its own")
+  has(
+    audit_xml,
+    "cache.stale_pass TESTS/a_spec.lua: the stored result differs",
+    "junit: with the finding"
+  )
+  ok(
+    not table.concat(junit.render(F.mixed()), "\n"):find('name="run verdict"', 1, true),
+    "junit: a run with red cases adds nothing"
+  )
+  local colored = term.render(audit_ir, { color = true })
+  local sum
+  for _, l in ipairs(colored) do
+    if l:find("summary:", 1, true) then
+      sum = l
+    end
+  end
+  has(sum, "\27[31m", "term: the summary line of a red verdict is red")
+  ok(not sum:find("\27[32m", 1, true), "term: and not green")
 end

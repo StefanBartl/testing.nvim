@@ -354,9 +354,51 @@ function M.asserts_absence(src, name)
   return false
 end
 
+---Phrases of a workflow comment that say a plugin is kept out of the run on purpose.
+local KEPT_PHRASES = {
+  "not checked out",
+  "deliberately not",
+  "deliberately absent",
+  "kept off",
+  "stays off",
+  "not on the runtimepath",
+}
+---Words in the same sentence that turn such a statement around or make it a thing of the past.
+local KEPT_FLIPS = { "no longer", "anymore", "any more", "used to", "formerly", "unless", "never" }
+
+---Positions after which `name` ends, where it stands as a word of its own (not `my-ui.nvim`, not `ui.nvim.old`).
+---@param line string Lower case.
+---@param name string Lower case.
+---@return integer[] ends
+local function whole_name_ends(line, name)
+  local ends, from = {}, 1
+  while true do
+    local i, j = line:find(name, from, true)
+    if not i then
+      break
+    end
+    local before = i > 1 and line:sub(i - 1, i - 1) or ""
+    local after = line:sub(j + 1, j + 1)
+    local after2 = line:sub(j + 1, j + 2)
+    if
+      not before:match("[%w_%.%-]")
+      and not after:match("[%w_%-]")
+      and not after2:match("^%.[%w_]")
+    then
+      ends[#ends + 1] = j
+    end
+    from = j + 1
+  end
+  return ends
+end
+
 ---Does a workflow COMMENT say that `name` is kept out of the run on purpose ("ui.nvim is deliberately NOT
 ---checked out")? The old CI chose that (a spec simulates the absence, or degrades without it), so the plan
 ---must not add a checkout nor list it in `deps`.
+---
+---The comment must say it of THIS name: the name stands as a word of its own, the phrase comes after it in the
+---same sentence, it is not negated ("is not kept off") or put in the past ("no longer kept off"), and a line
+---that names more than one plugin closes nothing (it is not clear which one the phrase is about).
 ---@param ci_src string The workflows, comments included.
 ---@param name string
 ---@return boolean
@@ -364,15 +406,31 @@ function M.kept_away(ci_src, name)
   local needle = name:lower()
   for line in ci_src:lower():gmatch("[^\n]+") do
     if line:match("^%s*#") and line:find(needle, 1, true) then
-      if
-        line:find("not checked out", 1, true)
-        or line:find("deliberately not", 1, true)
-        or line:find("deliberately absent", 1, true)
-        or line:find("kept off", 1, true)
-        or line:find("stays off", 1, true)
-        or line:find("not on the runtimepath", 1, true)
-      then
-        return true
+      local names = {}
+      for tok in line:gmatch("[%w_%-]+%.n?vim") do
+        names[tok] = true
+      end
+      if vim.tbl_count(names) <= 1 then
+        for _, e in ipairs(whole_name_ends(line, needle)) do
+          local sentence = line:sub(e + 1):match("^(.-)[%.;!?]%s") or line:sub(e + 1)
+          local flipped = false
+          for _, w in ipairs(KEPT_FLIPS) do
+            if sentence:find(w, 1, true) then
+              flipped = true
+            end
+          end
+          if not flipped then
+            for _, phrase in ipairs(KEPT_PHRASES) do
+              local at = sentence:find(phrase, 1, true)
+              if at then
+                local lead = sentence:sub(math.max(1, at - 8), at - 1)
+                if not (lead:match("not%s+$") or lead:match("n't%s+$") or lead:match("no%s+$")) then
+                  return true
+                end
+              end
+            end
+          end
+        end
       end
     end
   end

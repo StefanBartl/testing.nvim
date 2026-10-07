@@ -100,17 +100,23 @@ the workflow never disagree (the plan does not drop a checkout that `scripts/tes
 * The old call wrote its output to a file and the step read it back (`... > out.log 2>&1`, then `cat
   out.log` and `grep -q <SENTINEL> out.log`): the new call writes no such file, so `cat` and the
   `grep` of the sentinel that `scripts/test.sh` passes with `--sentinel` are removed; any other read of
-  the file stays and is a note ("still reads out.log").
+  the file stays and is a note ("still reads out.log"). An inverted check (`grep -qv`, `grep -q -v`, `! grep -q`)
+  asks the opposite question, so it is never removed, only reported.
 * `<DEP>_PATH: ...` in the environment of the run step, for a dependency the plan resolves, becomes
-  `<DEP>_DIR` (the name `testing.deps` reads): `HOVER_NVIM_PATH` is now `HOVER_NVIM_DIR`.
+  `<DEP>_DIR` (the name `testing.deps` reads): `HOVER_NVIM_PATH` is now `HOVER_NVIM_DIR`. Not when the step sets
+  `<DEP>_DIR` already (a key twice in one mapping is invalid YAML) or when another file reads `<DEP>_PATH` (the rest of
+  the workflow, a script, the init script): the line stays and a note names the readers.
 * `-c "lua dofile('scripts/ci/headless_tests.lua')"` (a spec script started from a `-c` command) is
-  mapped to the runner call, with the policy `isolated = "file"`, `host = "c"` (one editor per file,
+  mapped to the runner call (only a script that is named like a runner: `test.lua`, `tests*.lua`, `test_*.lua`,
+  `*_test(s).lua`, `headless_test*`; `gen_testdata.lua` or `setup_test_env.lua` are helpers and are left alone), with the policy `isolated = "file"`, `host = "c"` (one editor per file,
   started like that `-c` command; `nvim -l` would be red for specs that read `<cword>` or
   `vim_did_enter`). The call now runs the WHOLE suite: a note says how to narrow it (`--file
   headless_tests`).
 * A workflow **comment** that says a plugin is deliberately not checked out ("ui.nvim is deliberately
   NOT checked out") keeps it out of `deps` and out of the checkout steps the plan adds; it is listed as
-  optional with a risk, because the old CI is the reference for what the specs need.
+  optional with a risk, because the old CI is the reference for what the specs need. The comment must say it of
+  that name (a word of its own, the phrase after it in the same sentence, not negated, not in the past) and of
+  that name only: a line that names two plugins closes nothing.
 * A harness beside the specs (`scripts/ci/harness.lua` next to `scripts/ci/specs/`) counts as the
   project's own harness, not only `TESTS/harness.lua`.
 

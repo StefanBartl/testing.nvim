@@ -28,9 +28,11 @@
 ---@field nondeterministic? integer Files not stored because the same key gave another result (key flip); only when there were some.
 ---@field audit_rate? number `--cache-audit`: the share of the hits that ran anyway (0..1); the audit fields are only there when it was above 0.
 ---@field audited? integer Hits that ran anyway.
+---@field audit_skipped? integer Hits picked for the audit that gave no result to compare (the run stopped, the file lost its cases).
 ---@field stale_pass? integer Audited hits whose fresh result differed from the stored one (`cache.stale_pass`).
 ---@field stale_pass_rate? number `stale_pass / audited`: the measured stale-pass rate of this run (0 when nothing was audited).
----@field findings? { code: string, file: string, key: string, message: string, parts?: string[] }[] The `cache.stale_pass` findings.
+---@field findings? { code: string, file: string, key: string, message: string, parts?: string[] }[] The `cache.stale_pass` findings (the first 20).
+---@field findings_total? integer All findings, when the list above is cut.
 
 ---@class Testing.Result.Run
 --- Header of one run: who ran what, where, how.

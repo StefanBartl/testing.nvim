@@ -111,7 +111,7 @@ return function(H)
       "  values differ",
       "  expected: 1",
       "  actual: 2",
-      "  rerun: " .. CMD .. ' . --file TESTS/cfg_spec.lua --filter "parses nested keys"',
+      "  rerun: " .. CMD .. " . --file TESTS/cfg_spec.lua --filter 'parses nested keys'",
     },
     "a red run: verdict, last green, the failure with file:line, values, and the command to repeat it"
   )
@@ -426,6 +426,113 @@ return function(H)
     agent.render(F.mixed(), { command = CMD }),
     "a fixture run renders the same lines"
   )
+
+  -- SEC-03: the rerun line is typed into a shell: nothing of it may be interpreted ------------------------------------------------
+  do
+    local evil_file = "TESTS/x$(id)`id`_spec.lua"
+    local sr =
+      new_run({ argv = { "my proj/$(id)", "--reporter", "agent", "--sentinel", "a,b$(id)" } })
+    failing(sr, evil_file, "own name", { msg = "boom" })
+    local line = agent.render(sr, { command = CMD })
+    local rerun = line[#line]
+    has(
+      rerun,
+      "--file '" .. evil_file .. "'",
+      "a file name with $( and a backtick is single-quoted"
+    )
+    ok(
+      not rerun:find('"', 1, true),
+      "no double quote anywhere: $( and backticks stay inert in single quotes"
+    )
+    has(rerun, "--sentinel 'a,b$(id)'", "a comma (an array in PowerShell) and $( are quoted")
+    has(rerun, " 'my proj/$(id)' ", "the root of the run (a path with a space) is one quoted word")
+    has(rerun, "--filter 'own name'", "the filter is single-quoted")
+
+    local sp = new_run()
+    failing(sp, "TESTS/with space/a_spec.lua", "a   b $(x)  c", { msg = "boom" })
+    rerun = agent.render(sp, { command = CMD })
+    rerun = rerun[#rerun]
+    has(rerun, "--file 'TESTS/with space/a_spec.lua'", "a path with a space is one word")
+    has(rerun, "--filter 'a   b $(x)  c'", "runs of spaces in a filter are not collapsed")
+
+    -- quoting itself
+    eq(agent.shell_quote("plain-1.2/x:y=z+w"), "plain-1.2/x:y=z+w", "a plain word stays bare")
+    eq(agent.shell_quote("a b"), "'a b'", "a space")
+    eq(agent.shell_quote("a,b"), "'a,b'", "a comma")
+    eq(agent.shell_quote("50%"), "'50%'", "a percent sign")
+    eq(agent.shell_quote("!x"), "'!x'", "a bang")
+    eq(agent.shell_quote("C:\\x\\y"), "'C:\\x\\y'", "a backslash")
+    eq(agent.shell_quote(""), "''", "the empty word")
+    eq(agent.shell_quote("it's"), nil, "a single quote has no spelling that holds in both shells")
+    eq(agent.shell_quote("a\nb"), nil, "a newline has none either")
+    eq(agent.shell_quote("a\27[2Jb"), nil, "nor an escape sequence")
+
+    local sq = new_run()
+    failing(sq, "TESTS/q_spec.lua", "it's a name", { msg = "boom" })
+    rerun = agent.render(sq, { command = CMD })
+    rerun = rerun[#rerun]
+    has(rerun, "--file TESTS/q_spec.lua", "a case name with a quote is left out of the line ...")
+    ok(not rerun:find("--filter", 1, true), "... the file still reruns without a filter")
+    local sf = new_run()
+    failing(sf, "TESTS/it's_spec.lua", "n", { msg = "boom" })
+    rerun = agent.render(sf, { command = CMD })
+    has(rerun[#rerun], "(no command:", "a file name with a quote: no command, and it says why")
+    ok(not rerun[#rerun]:find("it's", 1, true), "and the name is not in the line")
+  end
+
+  -- a retried case, an unasserted case and a busted file without a case are on stdout of the agent reporter ------------------
+  do
+    local ar = new_run()
+    local flaky = F.add(ar, { file = "TESTS/fl_spec.lua", name = "wobbles", line = 4 })
+    flaky.flaky = true
+    flaky.retries = 2
+    local silent = F.add(ar, {
+      file = "TESTS/si_spec.lua",
+      name = "asserts nothing",
+      assertions = { { ok = true, kind = "no_assertions", msg = "no assertion" } },
+    })
+    local nocase = F.add(ar, { file = "TESTS/nc_spec.lua", name = "nc", status = "skip" })
+    nocase.notes[#nocase.notes + 1] = require("testing.dialect.busted").NO_CASE_WARNING
+    ok(silent ~= nil and nocase ~= nil, "fixture")
+    ok(#require("testing.report.util").flaky_cases(ar) == 1, "one flaky case")
+    local lines = agent.render(ar, { command = CMD })
+    local text = joined(lines)
+    has(
+      text,
+      "flaky: 1 case(s) failed and then passed on a retry: TESTS/fl_spec.lua wobbles (passed on retry 2)",
+      "text: flaky"
+    )
+    has(
+      text,
+      'warning: 1 case(s) passed without asserting anything (assertions = "warn"): TESTS/si_spec.lua::asserts nothing',
+      "text: unasserted"
+    )
+    has(text, "warning: 1 file(s) registered no case on this platform", "text: no case")
+    local notice_lines = agent.render(ar, { command = CMD, format = "jsonl" })
+    local kinds = {}
+    for _, l in ipairs(notice_lines) do
+      kinds[#kinds + 1] = vim.json.decode(l).kind
+    end
+    eq(kinds, { "verdict", "flaky", "unasserted", "no_case" }, "jsonl: one object per notice")
+
+    -- the jsonl header is cleaned like the text lines
+    local cr = new_run()
+    failing(cr, "TESTS/c_spec.lua", "c", { msg = "boom" })
+    cr.run.verdict = verdict.build({
+      exit_code = 1,
+      files_total = 1,
+      files_selected = 1,
+      files_cached = 0,
+      cases_total = 1,
+      cases_skipped = 0,
+      last_green = { ts = 1790000000, sha = "ab\27[31mcd" },
+      changed_since = verdict.changed_since_of({ "lua/a\27]0;x\7.lua" }),
+    })
+    local head = vim.json.decode(agent.render(cr, { command = CMD, format = "jsonl" })[1])
+    ok(not vim.json.encode(head):find("\27", 1, true), "jsonl header: no raw escape character")
+    has(head.changed_since.files[1], "\\x1B", "jsonl header: changed_since.files is cleaned")
+    has(head.last_green.sha, "\\x1B", "jsonl header: so is the sha")
+  end
 
   -- the choice of the reporter -----------------------------------------------------------------------------------------------------------------
   local function choose(explicit, env)

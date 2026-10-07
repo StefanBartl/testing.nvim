@@ -213,6 +213,53 @@ function M.short_name(c)
   return id
 end
 
+---Ids of the cases that passed without asserting anything (`assertions = "warn"` records a passed
+---`no_assertions` assertion and lets the case pass).
+---@param result Testing.Result
+---@return string[]
+function M.unasserted_ids(result)
+  local ids = {}
+  for _, c in ipairs(result.cases or {}) do
+    for _, a in ipairs(c.assertions or {}) do
+      if a.kind == "no_assertions" and a.ok then
+        ids[#ids + 1] = c.id
+        break
+      end
+    end
+  end
+  return ids
+end
+
+---Files of a busted spec that registered no case (`assertions = "warn"` skips them with a note).
+---@param result Testing.Result
+---@return string[]
+function M.no_case_files(result)
+  local files = {}
+  local warning = require("testing.dialect.busted").NO_CASE_WARNING
+  for _, c in ipairs(result.cases or {}) do
+    for _, n in ipairs(c.notes or {}) do
+      if n == warning then
+        files[#files + 1] = c.file or c.id
+        break
+      end
+    end
+  end
+  return files
+end
+
+---Cases a retry rescued (`--retry-failed`): they failed first and passed on a retry.
+---@param result Testing.Result
+---@return Testing.Result.Case[]
+function M.flaky_cases(result)
+  local out = {}
+  for _, c in ipairs(result.cases or {}) do
+    if c.flaky == true then
+      out[#out + 1] = c
+    end
+  end
+  return out
+end
+
 ---Seconds with millisecond resolution, always with a `.` (never the locale's separator).
 ---@param ms number|nil
 ---@return string

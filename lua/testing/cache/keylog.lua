@@ -30,15 +30,17 @@ M.MAX_FILES = 3000
 M.MAX_BYTES = 2 * 1024 * 1024
 
 ---The classes a result can have; two different ones under one key are a flip.
+---`flaky` is a file that passed only after a retry (`--retry-failed`): under `--allow-flaky` its cases read `pass`,
+---so without this class a key that gave a plain pass and, another time, a pass after a retry would not look flipped.
 ---@type table<string, true>
-M.CLASSES = { pass = true, fail = true, skip = true }
+M.CLASSES = { pass = true, fail = true, skip = true, flaky = true }
 
 ---@class Testing.KeyLog.Opts
 ---@field state_dir? string Replaces `stdpath('state')` (specs).
 
 ---@class Testing.KeyLog.Obs
 ---@field key string
----@field class "pass"|"fail"|"skip"
+---@field class "pass"|"fail"|"flaky"|"skip"
 ---@field run string
 ---@field ts integer
 
@@ -54,22 +56,29 @@ M.CLASSES = { pass = true, fail = true, skip = true }
 local Log = {}
 Log.__index = Log
 
----Class of the result of a file from its cases: any bad case makes it `fail`, otherwise a skip makes it `skip`.
+---Class of the result of a file from its cases: any bad case makes it `fail`; a case that needed a retry
+---(`flaky`, or `retries > 0`) makes it `flaky`; otherwise a skip makes it `skip`.
 ---@param cases Testing.Result.Case[]|nil
----@return "pass"|"fail"|"skip"|nil class nil: no cases, nothing to remember
+---@return "pass"|"fail"|"flaky"|"skip"|nil class nil: no cases, nothing to remember
 function M.class_of(cases)
   if type(cases) ~= "table" or #cases == 0 then
     return nil
   end
   local bad = { fail = true, error = true, timeout = true, crash = true, xpass = true }
-  local skip = false
+  local skip, flaky = false, false
   for _, c in ipairs(cases) do
     if bad[c.status] then
       return "fail"
     end
+    if c.flaky == true or (tonumber(c.retries) or 0) > 0 then
+      flaky = true
+    end
     if c.status == "skip" then
       skip = true
     end
+  end
+  if flaky then
+    return "flaky"
   end
   return skip and "skip" or "pass"
 end
@@ -110,6 +119,28 @@ local function valid_obs(raw)
   return { key = raw.key, class = raw.class, run = raw.run, ts = raw.ts }
 end
 
+---Remove stray temp files of interrupted writes of `keys.json` (`keys.json.atomic-tmp.*`, older than an hour).
+---@param dir string
+---@param now integer
+---@return integer removed
+function M.sweep_tmp(dir, now)
+  local n = 0
+  local handle = vim.uv.fs_scandir(dir)
+  while handle do
+    local name = vim.uv.fs_scandir_next(handle)
+    if not name then
+      break
+    end
+    if name:match("^keys%.json%.atomic%-tmp%.") then
+      local st = vim.uv.fs_stat(dir .. "/" .. name)
+      if st and st.mtime and now - st.mtime.sec > 3600 and vim.uv.fs_unlink(dir .. "/" .. name) then
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
 ---Read the key log of a project (an absent or unusable file is an empty log, with a note when it is unusable).
 ---@param root string
 ---@param opts? Testing.KeyLog.Opts
@@ -117,6 +148,7 @@ end
 function M.load(root, opts)
   local path = M.path(root, opts)
   local log = setmetatable({ path = path, files = {}, notes = {}, dirty = false }, Log)
+  M.sweep_tmp(vim.fs.dirname(path), os.time())
   local st = vim.uv.fs_stat(path)
   if not st then
     return log
@@ -191,7 +223,7 @@ end
 ---Remember the result of `file` under `key`; returns the flip this makes visible (or the one that was known).
 ---@param file string
 ---@param key string
----@param class "pass"|"fail"|"skip"
+---@param class "pass"|"fail"|"flaky"|"skip"
 ---@param run string
 ---@param ts? integer
 ---@return Testing.KeyLog.Flip|nil
@@ -203,9 +235,13 @@ function Log:observe(file, key, class, run, ts)
   end
   ts = ts or os.time()
   local replaced = false
-  for _, o in ipairs(list) do
+  for i, o in ipairs(list) do
     if o.key == key and o.class == class then
       o.run, o.ts = run, ts
+      -- the record was used again: it moves to the end, so the one that goes when the list is full is the
+      -- one that was used longest ago (not the one that was first written)
+      table.remove(list, i)
+      list[#list + 1] = o
       replaced = true
       break
     end

@@ -138,6 +138,63 @@ return function(H)
   local text = table.concat(assert(p_env), "\n")
   ok(not text:find("PROJ_TOKEN=t1", 1, true), "the value itself is not in the key text")
   has(text, "env PROJ_TOKEN=" .. vim.fn.sha256("t1"), "its hash is")
+
+  -- names are case-insensitive where the system says so (Windows reports them in upper case): `MyVar` listed,
+  -- `MYVAR` set, a changed value must change the key (`<unset>` before and after would be a stale hit)
+  local mixed = { env_names = { "Proj_Token" }, env_case_insensitive = true }
+  local kc1 = key_of(E, mixed)
+  ok(kc1 ~= nil, "a listed name in mixed case has a key")
+  env.PROJ_TOKEN = "t2"
+  ok(
+    key_of(E, mixed) ~= kc1,
+    "case-insensitive: the value of PROJ_TOKEN changes the key of 'Proj_Token'"
+  )
+  env.PROJ_TOKEN = "t1"
+  eq(key_of(E, mixed), kc1, "and back again")
+  local _, _, p_ci = key_of(E, mixed)
+  has(
+    table.concat(assert(p_ci), "\n"),
+    "env PROJ_TOKEN=" .. vim.fn.sha256("t1"),
+    "the line carries the system's spelling"
+  )
+  local sensitive = { env_names = { "Proj_Token" }, env_case_insensitive = false }
+  local ks1 = key_of(A, sensitive)
+  ok(ks1 ~= nil, "a pure spec has a key whatever the case")
+  env.PROJ_TOKEN = "t2"
+  eq(
+    key_of(A, sensitive),
+    ks1,
+    "case-sensitive (Linux, macOS): 'Proj_Token' is another variable, unset both times"
+  )
+  env.PROJ_TOKEN = "t1"
+  -- a prefix in another case expands over the names that are set
+  local kpp1 = key_of(A, { env_names = { "proj_*" }, env_case_insensitive = true })
+  env.PROJ_NEW = "n"
+  ok(
+    key_of(A, { env_names = { "proj_*" }, env_case_insensitive = true }) ~= kpp1,
+    "a prefix matches names in another case where names are case-insensitive"
+  )
+  env.PROJ_NEW = nil
+  -- the real environment: the system's own lookup decides (case-insensitive on Windows only)
+  vim.env.TN_CI_PROBE = "one"
+  local real =
+    { env_names = { "Tn_Ci_Probe" }, environ = vim.fn.environ, env_case_insensitive = false }
+  local kr1 = key_of(A, real)
+  vim.env.TN_CI_PROBE = "two"
+  real.env_case_insensitive = nil
+  local kr_two = key_of(A, real)
+  vim.env.TN_CI_PROBE = "one"
+  local kr_one = key_of(A, real)
+  vim.env.TN_CI_PROBE = nil
+  if vim.fn.has("win32") == 1 then
+    ok(
+      kr_two ~= kr_one,
+      "Windows: a changed value of a variable listed in another case changes the key"
+    )
+  else
+    eq(kr_two, kr_one, "elsewhere the name is case-sensitive: 'Tn_Ci_Probe' is unset both times")
+  end
+  ok(kr1 ~= nil, "fixture")
   has(
     select(2, key_of("TESTS/proj/envdyn_spec.lua", { env_names = { "PROJ_TOKEN" } })),
     "computed name",

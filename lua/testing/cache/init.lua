@@ -102,6 +102,7 @@ local memo = {}
 ---@field config_digest? string Replaces the hash of `config`.
 ---@field env_names? string[] Environment names (or `PREFIX*`) that are part of the key.
 ---@field environ? fun(): table<string, string> Replaces `vim.fn.environ` (specs).
+---@field env_case_insensitive? boolean Environment names are case-insensitive (default: on Windows only); specs set it.
 ---@field nvim? string Replaces the Neovim version string (specs).
 ---@field runner_version? string Replaces the runner digest (specs).
 ---@field dep_roots? string[] Directories whose `lua/` resolves modules outside the project (default: the runtime path).
@@ -232,30 +233,47 @@ local function nvim_version(ctx)
   )
 end
 
+---Are environment variable names case-insensitive here? On Windows they are (the system reports them in upper
+---case, and `os.getenv("MyVar")` finds `MYVAR`), elsewhere not. `ctx.env_case_insensitive` overrides (specs).
+---@param ctx Testing.Cache.Ctx
+---@return boolean
+local function env_ci(ctx)
+  if ctx.env_case_insensitive ~= nil then
+    return ctx.env_case_insensitive == true
+  end
+  return vim.fn.has("win32") == 1
+end
+
 ---Environment part of the key: `NAME=sha256(value)` for every listed name (a `PREFIX*` entry expands
----over the names that are set).
+---over the names that are set). Where names are case-insensitive (Windows) the name is looked up and written in
+---upper case: a listed `MyVar` must see the value of `MYVAR` (the system's spelling), or a changed value would
+---read as `<unset>` before and after and the key would not change.
 ---@param ctx Testing.Cache.Ctx
 ---@param extra? table<string, true> More names (read by modules of the project).
 ---@return string[] lines
 ---@return table<string, true> names
 local function env_lines(ctx, extra)
   local environ = (ctx.environ or vim.fn.environ)()
+  local ci = env_ci(ctx)
+  local function norm(n)
+    return ci and n:upper() or n
+  end
   local names = {}
   for name in pairs(extra or {}) do
-    names[name] = true
+    names[norm(name)] = true
   end
   for _, entry in ipairs(ctx.env_names or {}) do
     if type(entry) == "string" then
       if entry:sub(-1) == "*" then
-        local prefix = entry:sub(1, -2)
+        local prefix = norm(entry:sub(1, -2))
         for name in pairs(environ) do
-          if name:sub(1, #prefix) == prefix then
-            names[name] = true
+          if norm(name):sub(1, #prefix) == prefix then
+            names[norm(name)] = true
           end
         end
         names["*" .. prefix] = true -- the prefix itself is part of the key: a new variable changes it
       else
-        names[entry] = true
+        names[norm(entry)] = true
       end
     end
   end
@@ -264,9 +282,19 @@ local function env_lines(ctx, extra)
     sorted[#sorted + 1] = n
   end
   table.sort(sorted)
+  local upper
+  if ci then
+    upper = {}
+    for k, v in pairs(environ) do
+      upper[k:upper()] = v
+    end
+  end
   local lines = {}
   for _, n in ipairs(sorted) do
     local v = environ[n]
+    if v == nil and upper then
+      v = upper[n]
+    end
     lines[#lines + 1] = ("env %s=%s"):format(n, v and vim.fn.sha256(v) or "<unset>")
   end
   return lines, names
@@ -277,16 +305,21 @@ end
 ---@param name string
 ---@return boolean
 local function env_listed(ctx, name)
+  local ci = env_ci(ctx)
+  if ci then
+    name = name:upper()
+  end
   for _, entry in ipairs(ctx.env_names or {}) do
-    if entry == name then
-      return true
-    end
-    if
-      type(entry) == "string"
-      and entry:sub(-1) == "*"
-      and name:sub(1, #entry - 1) == entry:sub(1, -2)
-    then
-      return true
+    if type(entry) == "string" then
+      if ci then
+        entry = entry:upper()
+      end
+      if entry == name then
+        return true
+      end
+      if entry:sub(-1) == "*" and name:sub(1, #entry - 1) == entry:sub(1, -2) then
+        return true
+      end
     end
   end
   return false

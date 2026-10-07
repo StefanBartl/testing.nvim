@@ -68,6 +68,7 @@ M.MAX_BYTES = 262144
 ---@class Testing.Config.Leaf
 ---@field check Testing.Config.Check
 ---@field expect string What a valid value looks like, for the warning.
+---@field repair? fun(v: any): table|nil, { key: string, value: any, expect: string, unknown?: boolean }[] For a table value with a wrong key: what is left of it (nil: nothing, the default stays) and the refused keys.
 
 ---@param v any
 ---@return boolean
@@ -237,6 +238,16 @@ local function state_category_names()
   return out
 end
 
+---What each kind of a guard key expects (for the message that names the key).
+---@type table<string, string>
+local GUARD_EXPECT = {
+  list = "a list of texts without control characters",
+  patterns = "a list of Lua patterns",
+  notify = '"error", "warn", "info" or "off"',
+  count = "an integer between 0 and 100000",
+  state_modes = 'a table { <category> = "error"|"warn"|"info"|"off" } of known categories',
+}
+
 ---@param kind string
 ---@param v any
 ---@return boolean
@@ -267,8 +278,45 @@ local function guard_value_ok(kind, v)
   return false
 end
 
+---The key-by-key check of a table form of a guard section: returns the table without the keys that are not
+---valid, and one entry per refused key (`key`, `value`, `expect`). A wrong key must not take a valid `mode`
+---(or another valid key) with it: dropping the mode would silently turn `error` into the default `warn`.
+---@param keys table<string, string> The keys of the guard (`GUARD_KEYS[name]`).
+---@param v table
+---@return table kept
+---@return { key: string, value: any, expect: string }[] refused
+local function guard_table_split(keys, v)
+  local kept, refused = {}, {}
+  local order = {}
+  for k in pairs(v) do
+    order[#order + 1] = k
+  end
+  table.sort(order, function(a, b)
+    return tostring(a) < tostring(b)
+  end)
+  for _, k in ipairs(order) do
+    local val = v[k]
+    if k == "mode" then
+      if is_guard_mode(val) then
+        kept.mode = val
+      else
+        refused[#refused + 1] = { key = "mode", value = val, expect = '"off", "warn" or "error"' }
+      end
+    elseif type(k) ~= "string" or keys[k] == nil then
+      refused[#refused + 1] =
+        { key = tostring(k), value = val, expect = "a known key", unknown = true }
+    elseif guard_value_ok(keys[k], val) then
+      kept[k] = val
+    else
+      refused[#refused + 1] = { key = k, value = val, expect = GUARD_EXPECT[keys[k]] }
+    end
+  end
+  return kept, refused
+end
+
 ---A guard section of `.testing.lua`: a bare mode (`state = "warn"`) or a table
----`{ mode = "warn", <keys of GUARD_KEYS[name]> }`; no key may be unknown.
+---`{ mode = "warn", <keys of GUARD_KEYS[name]> }`; no key may be unknown. A table with a wrong key is
+---not refused as a whole: `repair` keeps the valid keys (and the valid `mode`) and names the others.
 ---@param name string
 ---@return Testing.Config.Leaf
 local function guard_section(name)
@@ -283,16 +331,15 @@ local function guard_section(name)
       if type(v) ~= "table" then
         return false
       end
-      for k, val in pairs(v) do
-        if k == "mode" then
-          if not is_guard_mode(val) then
-            return false
-          end
-        elseif type(k) ~= "string" or keys[k] == nil or not guard_value_ok(keys[k], val) then
-          return false
-        end
+      local _, refused = guard_table_split(keys, v)
+      return #refused == 0
+    end,
+    repair = function(v)
+      if type(v) ~= "table" then
+        return nil, {}
       end
-      return true
+      local kept, refused = guard_table_split(keys, v)
+      return next(kept) ~= nil and kept or nil, refused
     end,
     expect = ('"off", "warn" or "error", or a table { mode = ..., %s }'):format(
       #names > 0 and table.concat(names, ", ") .. " = ..." or "(no further keys)"
@@ -590,6 +637,22 @@ local function apply(raw, schema, out, path, problems)
     elseif is_leaf(node) then
       if node.check(value) then
         out[key] = vim.deepcopy(value)
+      elseif node.repair and (node.repair(value)) ~= nil then
+        -- a table with a wrong key: the valid keys stay, each refused key is named
+        local kept, refused = node.repair(value)
+        out[key] = vim.deepcopy(kept)
+        for _, r in ipairs(refused) do
+          if r.unknown then
+            problems[#problems + 1] = ("unknown key '%s.%s' (ignored)"):format(full, r.key)
+          else
+            problems[#problems + 1] = ("key '%s.%s' is invalid (%s), expected %s; using the default"):format(
+              full,
+              r.key,
+              describe(r.value),
+              r.expect
+            )
+          end
+        end
       else
         problems[#problems + 1] = ("key '%s' is invalid (%s), expected %s; using the default %s"):format(
           full,

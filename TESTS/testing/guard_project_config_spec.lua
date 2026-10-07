@@ -121,6 +121,44 @@ return function(H)
     )
   end
 
+  -- ------------------------------------------------------------------ a wrong key does not take the valid mode with it
+  -- (dropping `mode = "error"` would silently turn it into the default: a safety net weaker than asked for)
+  for _, name in ipairs({ "fs", "process_net" }) do
+    local bad_entry = name == "fs" and { allow = { "" } } or { allow_exec = { "" } }
+    local bad_key = name == "fs" and "allow" or "allow_exec"
+    local c1, p1, o1 = build({ [name] = vim.tbl_extend("force", { mode = "error" }, bad_entry) })
+    eq(o1.guards[name], "error", name .. ": an invalid list entry keeps the valid mode")
+    eq(#p1, 1, name .. ": one warning: " .. vim.inspect(p1))
+    has(p1[1], ("guards.%s.%s"):format(name, bad_key), name .. ": the warning names the wrong key")
+    eq(c1.guards[name].mode, "error", name .. ": and the guard layer gets the mode")
+
+    local _, p2, o_typo = build({ [name] = { mode = "error", typo = 1 } })
+    eq(o_typo.guards[name], "error", name .. ": an unknown key keeps the valid mode")
+    eq(#p2, 1, name .. ": one warning")
+    has(p2[1], ("unknown key 'guards.%s.typo'"):format(name), name .. ": it names the unknown key")
+
+    local _, p3, o3 = build({ [name] = { mode = "loud", typo = 1 } })
+    eq(
+      o3.guards[name],
+      require("testing.config.DEFAULTS").project.guards[name],
+      name .. ": no valid key at all: the default stays"
+    )
+    ok(#p3 >= 1, name .. ": and it is reported")
+  end
+  do
+    -- the valid keys next to a wrong one are kept, not only the mode
+    local cfg, probs = project.validate({
+      guards = { fs = { mode = "warn", allow = { "TESTS/tmp" }, allow_patterns = { "[" } } },
+    })
+    eq(
+      cfg.guards.fs,
+      { mode = "warn", allow = { "TESTS/tmp" } },
+      "valid keys stay: " .. vim.inspect(cfg.guards.fs)
+    )
+    eq(#probs, 1, "one warning for the one wrong key")
+    has(probs[1], "guards.fs.allow_patterns", "it names allow_patterns")
+  end
+
   -- ------------------------------------------------------------------ the state guard honors it
   local function leaks(state_section)
     local gcfg = { guards = {} }

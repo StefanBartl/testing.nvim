@@ -311,14 +311,20 @@ verdict about the expectation). A case that passes on a retry is **flaky**, and 
   **red** (exit `1`, no sentinel);
 * the end of the output lists them: `flaky: 1 case(s) failed and then passed on a retry: the run stays RED`;
 * a case that fails on every retry is plainly red (`retries = n`, the line `retry: ... failed on all n retries as
-  well`);
+  well`); a case that the output of a retry does not contain at all (the file stopped early, the case was renamed)
+  did not run again: it stays red, the line says `missing from the output of a retry`, and it is never reported as
+  "failed on all retries";
 * a file with a flaky case is **never stored in the result cache** (the cache refuses a case with `retries > 0`, and
   the run reports the file as flaky to it): a flaky result is not a proof.
 
 `--allow-flaky` (needs `--retry-failed`) is the explicit choice to count a case that passed on a retry as green: the
 passing result replaces the red one (`status = pass`, `flaky = true`, `retries = k`, a note that holds the first
-failure), the verdict and the exit code are recounted, and the list of flaky cases is printed anyway, never silently.
-They are not cached either. It never turns a case that failed on every retry green.
+failure), the exit code is recounted (`--strict` still makes a skipped case red), and the list of flaky cases is
+printed anyway, never silently. They are not cached either. It never turns a case that failed on every retry green.
+A run that accepted a flaky case is **`green-partial`**, never `green`: the reason `n flaky case(s) accepted
+(--allow-flaky)` is part of the verdict, there is no sentinel (the agent reporter says `PARTIAL`), and the run is not
+recorded as the last green run. So `green` stays exactly the run that prints the sentinel. The same holds for
+`--maxfail`: a stop that left files unrun keeps the verdict partial even when a retry turned the failure green.
 
 The retry runs the whole file again (the driver of the first run: this editor or a child editor) and looks only at
 the cases that were red; what the rest of the file did the first time stands. `--retry-failed` excludes `--list` and
@@ -422,8 +428,8 @@ line-level profile of one slow case is a separate tool.
 5. Print the result, write the requested reports, record the run for `--lf`/`--ff`, exit
    ([EXIT-CODES.md](EXIT-CODES.md)).
 
-The last line of a green run is the sentinel, and only a **complete** green run with no skipped case
-prints it. A selection, `--maxfail` or a skip prints a distinct line instead ("partial run ...", "N
+The last line of a green run is the sentinel, and only the verdict `green` prints it: a **complete** run with no
+skipped case, no `--maxfail` stop and no case that `--allow-flaky` accepted. A selection, `--maxfail` or a skip prints a distinct line instead ("partial run ...", "N
 case(s) skipped ..."), so a script that greps for the sentinel cannot read a partial run as the
 verdict. The same distinction is a line of every reporter, the **verdict** (`green`, `green-partial`, `red`, with
 "n from cache, m ran, k skipped on purpose"), and `green` is exactly the run that prints the sentinel

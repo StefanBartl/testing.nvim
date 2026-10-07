@@ -140,6 +140,101 @@ return function(H)
     )
   end
 
+  -- --maxfail + --retry-failed + --allow-flaky: a fails, passes on the retry, b and c never run -> green-partial, no sentinel
+  do
+    local root2 = vim.fs.normalize(vim.fn.tempname())
+    local counter = root2 .. "/counter.txt"
+    vim.fn.mkdir(root2 .. "/TESTS", "p")
+    local function put2(rel, text)
+      local fh = assert(io.open(root2 .. "/" .. rel, "wb"))
+      fh:write(text)
+      fh:close()
+    end
+    put2(".testing.lua", "return { guards = { fs = 'off' }, isolated = 'none' }" .. string.char(10))
+    put2(
+      "TESTS/a_spec.lua",
+      ([[
+return function(H)
+  local n = 0
+  local f = io.open(%q, "rb")
+  if f then
+    n = tonumber(f:read("*a")) or 0
+    f:close()
+  end
+  f = assert(io.open(%q, "wb"))
+  f:write(tostring(n + 1))
+  f:close()
+  H.ok(n + 1 >= 2, "attempt " .. (n + 1))
+end
+]]):format(counter, counter)
+    )
+    put2("TESTS/b_spec.lua", "return function(H) H.ok(true, 'b') end" .. string.char(10))
+    put2("TESTS/c_spec.lua", "return function(H) H.ok(true, 'c') end" .. string.char(10))
+    local function go2(argv)
+      local out, err = {}, {}
+      local code = cli.main(vim.list_extend({ root2 }, argv), {
+        out = function(l)
+          out[#out + 1] = l
+        end,
+        err = function(l)
+          err[#err + 1] = l
+        end,
+        state_dir = state .. "2",
+        color = false,
+      })
+      return { code = code, out = table.concat(out, string.char(10)), err = table.concat(err) }
+    end
+    for _, reporter in ipairs({ "term", "agent" }) do
+      vim.fn.delete(counter)
+      local x = go2({
+        "--maxfail",
+        "1",
+        "--retry-failed",
+        "2",
+        "--allow-flaky",
+        "--reporter",
+        reporter,
+        "--json",
+        root2 .. "/ir.json",
+      })
+      eq(x.code, 0, reporter .. ": the flaky case is accepted: exit 0" .. x.err)
+      lacks(x.out, "TESTING_OK", reporter .. ": no sentinel after a --maxfail stop")
+      local v = ir_of(root2 .. "/ir.json").run.verdict
+      eq(v.kind, "green-partial", reporter .. ": the verdict is green-partial")
+      eq(v.files.unrun, 2, reporter .. ": b and c never ran")
+      eq(v.cases.flaky, 1, reporter .. ": the accepted flaky case is a fact of the verdict")
+      has(table.concat(v.reasons, ";"), "not run (stopped)", reporter .. ": the stop is a reason")
+      has(
+        table.concat(v.reasons, ";"),
+        "1 flaky case(s) accepted",
+        reporter .. ": so is the flaky case"
+      )
+      if reporter == "term" then
+        has(x.out, "partial run:", "term: the partial line comes from the verdict")
+        has(x.out, "no sentinel", "term: and says there is none")
+      else
+        ok(x.out:find("^PARTIAL |"), "agent: PARTIAL, never GREEN")
+        has(x.out, "flaky", "agent: the flaky case is on stdout")
+      end
+      ok(
+        not require("testing.run.green").load(root2, { state_dir = state .. "2" }),
+        reporter .. ": a run that accepted a flaky case is not recorded as the last green run"
+      )
+    end
+    -- without --maxfail the same flaky case is accepted and the run is still no plain green
+    vim.fn.delete(counter)
+    local y = go2({ "--retry-failed", "2", "--allow-flaky", "--json", root2 .. "/ir.json" })
+    eq(y.code, 0, "--allow-flaky without --maxfail: exit 0")
+    eq(
+      ir_of(root2 .. "/ir.json").run.verdict.kind,
+      "green-partial",
+      "accepted flaky: green-partial"
+    )
+    lacks(y.out, "TESTING_OK", "no sentinel for an accepted flaky case")
+    vim.fn.delete(root2, "rf")
+    vim.fn.delete(state .. "2", "rf")
+  end
+
   -- a skipped case is never green ----------------------------------------------------------------------------------------------------
   put(
     "TESTS/s_spec.lua",
@@ -171,6 +266,19 @@ return function(H)
   lacks(r.out, "ok    ", "agent: no line for a green file")
   lacks(r.out, "timings:", "agent: no timing line")
   lacks(r.out, "TESTING_OK", "agent: no sentinel")
+  -- the script path is a word of the line like any other: a space in it must not split it
+  r = run({ "--reporter", "agent" }, { script = "my dir/scripts/testing.lua" })
+  has(r.out, "-l 'my dir/scripts/testing.lua' ", "agent: a script path with a space is quoted")
+  -- a report file that cannot be written: the agent line must not claim an exit code the run does not have
+  put("blocker", "a file, not a directory")
+  r = run({ "--reporter", "agent", "--json", root .. "/blocker/x.json" })
+  eq(r.code, 3, "agent: a --json file that cannot be written is exit 3")
+  ok(r.out:find("^INFRA | "), "agent: the line says INFRA, not RED/GREEN with another exit code")
+  lacks(r.out, "RED |", "agent: no verdict line with a wrong exit code")
+  has(r.out, "| exit 3", "agent: and the exit code it really has")
+  r = run({ "--reporter", "agent", "--format", "jsonl", "--json", root .. "/blocker/x.json" })
+  eq(vim.json.decode(vim.split(r.out, "\n")[1]).kind, "infra", "agent jsonl: an infra object")
+  drop("blocker")
   r = run({ "--reporter", "agent", "--format", "jsonl", "--agent-budget", "800" })
   local first = vim.json.decode(vim.split(r.out, "\n")[1])
   eq(first.kind, "verdict", "agent --format jsonl: the first object is the verdict")

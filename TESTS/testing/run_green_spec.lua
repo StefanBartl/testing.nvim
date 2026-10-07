@@ -122,6 +122,30 @@ return function(H)
     run = fake_git({ "lua/dirty.lua", "lua/other.lua" }, {}),
   })
   eq(list, { "lua/dirty.lua", "lua/other.lua" }, "but an edit after it is")
+  -- a file that was modified at the green run and that git does not list now: back at the commit's content (or
+  -- gone), which is not what the green run saw
+  list = green.changed_since(root, rec, { run = fake_git({ "lua/other.lua" }, {}) })
+  eq(
+    list,
+    { "lua/dirty.lua", "lua/other.lua" },
+    "a file that was dirty at the green run and is not listed now with another content is a change since"
+  )
+  local same = { v = 1, ts = 1, run = "r", sha = "abc1234", dirty = {} }
+  same.dirty["lua/dirty.lua"] =
+    vim.fn.sha256((require("lib.nvim.fs.read")(root .. "/lua/dirty.lua")))
+  ok(#same.dirty["lua/dirty.lua"] == 64, "fixture: a hash")
+  eq(
+    green.changed_since(root, same, { run = fake_git({}, {}) }),
+    {},
+    "not listed and byte-identical to the green run's content: nothing changed"
+  )
+  local gone =
+    { v = 1, ts = 1, run = "r", sha = "abc1234", dirty = { ["lua/missing.lua"] = ("a"):rep(64) } }
+  eq(
+    green.changed_since(root, gone, { run = fake_git({}, {}) }),
+    { "lua/missing.lua" },
+    "a file that was dirty and is gone is a change since"
+  )
 
   -- no git facts: no commit, no answer, a note ----------------------------------------------------------------------------------------
   green.record(root, run_ir(nil), { state_dir = state, time = 3000 })

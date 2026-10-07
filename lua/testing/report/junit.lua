@@ -263,6 +263,30 @@ function M.render(result, opts)
     blocks[#blocks + 1] = "  </testsuite>"
   end
 
+  -- a red verdict without a red case (exit code 1 because a cache audit found a stale pass): a CI viewer that
+  -- only counts failures would show a green run, so the verdict is one failed case of its own
+  local verdict = type(run.verdict) == "table" and run.verdict or nil
+  if verdict and verdict.kind == "red" and total.failures + total.errors == 0 then
+    local texts = { require("testing.report.verdict").line(verdict) }
+    local findings = type(run.cache) == "table" and run.cache.findings or nil
+    for _, f in ipairs(type(findings) == "table" and findings or {}) do
+      if type(f) == "table" then
+        texts[#texts + 1] = ("%s %s"):format(tostring(f.code), tostring(f.message))
+      end
+    end
+    blocks[#blocks + 1] =
+      '  <testsuite name="testing" tests="1" failures="1" errors="0" skipped="0" time="0.000">'
+    blocks[#blocks + 1] = '    <testcase classname="testing" name="run verdict" time="0.000">'
+    blocks[#blocks + 1] = ('      <failure message="%s" type="verdict">%s</failure>'):format(
+      M.attr(texts[1]),
+      body(table.concat(texts, "\n"), o)
+    )
+    blocks[#blocks + 1] = "    </testcase>"
+    blocks[#blocks + 1] = "  </testsuite>"
+    total.tests = total.tests + 1
+    total.failures = total.failures + 1
+  end
+
   local lines = {
     '<?xml version="1.0" encoding="UTF-8"?>',
     ('<testsuites name="%s" tests="%d" failures="%d" errors="%d" skipped="%d" time="%s">'):format(

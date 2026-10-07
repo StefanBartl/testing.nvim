@@ -59,6 +59,7 @@ local CONFIG_NOT_IN_KEY = {
 ---@field findings Testing.Run.CacheFinding[] `cache.stale_pass` findings of the audit.
 ---@field nondeterministic table<string, string[]> Spec file -> the results its key has given (key flip).
 ---@field keylog? Testing.KeyLog Key-flip memory of this run.
+---@field notes? string[] What the driver prints as notes before the run (an unusable key-flip memory).
 ---@field stored integer
 ---@field not_stored table<string, integer> Reason -> files.
 ---@field files Testing.Discover.File[] Every selected file, in run order.
@@ -225,7 +226,7 @@ end
 ---@param key string
 ---@param salt string
 ---@return boolean
-local function audit_picks(rate, key, salt)
+function M.audit_picks(rate, key, salt)
   if rate <= 0 then
     return false
   end
@@ -235,6 +236,10 @@ local function audit_picks(rate, key, salt)
   local h = tonumber(vim.fn.sha256(key .. "|" .. salt):sub(1, 8), 16) or 0
   return h / 4294967296 < rate
 end
+
+---Most findings of `--cache-audit` the IR and the terminal list (the count of all of them is always given).
+---@type integer
+M.MAX_FINDINGS = 20
 
 ---@class Testing.Run.CachePrepOpts
 ---@field plan Testing.Cli.RunPlan
@@ -296,6 +301,8 @@ function M.prepare(o)
   -- key flip: a key that gave different results before is not cached (`testing.cache.keylog`)
   local keylog = require("testing.cache.keylog").load(plan.root, { state_dir = o.state_dir })
   prep.keylog = keylog
+  -- a corrupt `keys.json` is an empty log: the flip detection is blind until it is rewritten, and that is said
+  prep.notes = vim.list_extend({}, keylog.notes)
   prep.ctx.flipped = function(file, key)
     return keylog:flipped(file, key)
   end
@@ -326,7 +333,7 @@ function M.prepare(o)
         if mode == "use" then
           cases = cache.get(key, { root = plan.root, cache_dir = o.cache_dir, file = f.rel })
         end
-        if cases and prep.audit and audit_picks(prep.audit.rate, key, salt) then
+        if cases and prep.audit and M.audit_picks(prep.audit.rate, key, salt) then
           -- a sampled hit: it runs anyway, and the result is compared with the stored one
           prep.audits[f.rel] = { key = key, stored = cases, parts = parts }
           prep.infos[f.rel] = info
@@ -543,16 +550,22 @@ function M.finish(prep, report, opts)
   if audit and audit.rate > 0 then
     res.run.cache.audit_rate = audit.rate
     res.run.cache.audited = audit.audited
+    res.run.cache.audit_skipped = audit.skipped
     res.run.cache.stale_pass = audit.stale
     res.run.cache.stale_pass_rate = audit.audited > 0 and (audit.stale / audit.audited) or 0
     local findings = {}
-    for _, fd in ipairs(prep.findings) do
+    for i, fd in ipairs(prep.findings) do
+      if i > M.MAX_FINDINGS then
+        break
+      end
       local parts = fd.parts and vim.list_slice(fd.parts, 1, 300) or nil
       findings[#findings + 1] =
         { code = fd.code, file = fd.file, key = fd.key, message = fd.message, parts = parts }
     end
     if #findings > 0 then
       res.run.cache.findings = findings
+      -- the list is cut (an IR with 300 key lines per finding must stay small), the count is not
+      res.run.cache.findings_total = #prep.findings
     end
     -- the audit verdict: a deviation is a failure of the run, whatever the cases say
     if audit.stale > 0 and report.exit_code == 0 then
@@ -654,10 +667,18 @@ function M.summary_line(prep)
   end
   local audit = prep.audit
   if audit and audit.rate > 0 then
+    -- every hit is one of: ran again (audited), meant to run again but did not give a result (skipped: the run
+    -- stopped, or the file lost its cases), or not picked; the denominator names all of them
+    local total = audit.audited + audit.skipped + vim.tbl_count(prep.hits)
     line = line
-      .. ("; audit: %d of %d hit(s) ran again, %d differ (stale-pass rate %.1f%%)"):format(
+      .. ("; audit: %d of %d hit(s) ran again%s, %d differ (stale-pass rate %.1f%%)"):format(
         audit.audited,
-        audit.audited + vim.tbl_count(prep.hits),
+        total,
+        audit.skipped > 0
+            and (" (%d picked but skipped: the run stopped or the file gave no result)"):format(
+              audit.skipped
+            )
+          or "",
         audit.stale,
         audit.audited > 0 and (100 * audit.stale / audit.audited) or 0
       )
@@ -677,11 +698,18 @@ end
 ---@return string[]
 function M.audit_lines(prep)
   local lines = {}
-  for _, fd in ipairs(prep.findings) do
+  for i, fd in ipairs(prep.findings) do
+    if i > M.MAX_FINDINGS then
+      lines[#lines + 1] = ("... %d more finding(s) of --cache-audit (the first %d are listed; --json has the count)"):format(
+        #prep.findings - M.MAX_FINDINGS,
+        M.MAX_FINDINGS
+      )
+      break
+    end
     lines[#lines + 1] = ("%s %s"):format(fd.code, fd.message)
     local parts = fd.parts or {}
-    for i = 1, math.min(#parts, 8) do
-      lines[#lines + 1] = "  key part: " .. parts[i]
+    for k = 1, math.min(#parts, 8) do
+      lines[#lines + 1] = "  key part: " .. parts[k]
     end
     if #parts > 8 then
       lines[#lines + 1] = ("  ... %d more key part(s)"):format(#parts - 8)

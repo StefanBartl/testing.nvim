@@ -159,10 +159,106 @@ return function(H)
   local half1 = ir_of(clean, { "--cache-audit", "0.5" })
   local half2 = ir_of(clean, { "--cache-audit", "0.5" })
   eq(half1.run.cache.audited, half2.run.cache.audited, "the same salt picks the same hits")
-  ok(
-    half1.run.cache.audited >= 0 and half1.run.cache.audited <= 2,
-    "a share picks some of the hits"
-  )
+  -- a fraction must really pick SOME of the hits (0 < share < 1): look for a salt that picks exactly one of the two,
+  -- and check the line says "1 of 2" with the true denominator
+  local picked_one
+  for i = 1, 40 do
+    local path = ("%s/half%d.json"):format(tmp, i)
+    local res_half = run(
+      clean,
+      { "--cache-audit", "0.5", "--json", path },
+      { audit_salt = "salt" .. i }
+    )
+    local ir_half = vim.json.decode(read(path))
+    if ir_half.run.cache.audited == 1 then
+      picked_one = { ir = ir_half, res = res_half }
+      break
+    end
+  end
+  ok(picked_one ~= nil, "some salt picks exactly one of the two hits at a share of 0.5")
+  if picked_one then
+    has(
+      picked_one.res.out,
+      "audit: 1 of 2 hit(s) ran again, 0 differ",
+      "the denominator counts the hit that was not picked"
+    )
+    eq(picked_one.ir.run.cache.files_cached, 1, "the hit that was not picked came from the cache")
+    eq(picked_one.ir.run.cache.audit_skipped, 0, "nothing was picked and skipped")
+  end
+  -- the pick itself: a share is a share (an inverted comparison would audit 90% where 10% was asked for)
+  do
+    local picks = require("testing.run.cached").audit_picks
+    local function count(rate)
+      local n = 0
+      for i = 1, 400 do
+        if picks(rate, vim.fn.sha256("key" .. i), "salt") then
+          n = n + 1
+        end
+      end
+      return n
+    end
+    eq(count(0), 0, "share 0 picks nothing")
+    eq(count(1), 400, "share 1 picks everything")
+    local low, mid, high = count(0.1), count(0.5), count(0.9)
+    ok(low >= 15 and low <= 70, "share 0.1 picks about a tenth: " .. low)
+    ok(mid >= 150 and mid <= 250, "share 0.5 picks about half: " .. mid)
+    ok(high >= 330 and high <= 385, "share 0.9 picks about nine tenths: " .. high)
+    ok(low < mid and mid < high, "and it grows with the share")
+    eq(picks(0.5, "k", "a"), picks(0.5, "k", "a"), "the same key and salt pick the same way")
+  end
+
+  -- a hit that was picked but did not run (a stopped run) is counted and shown, not hidden in the denominator
+  do
+    local sroot = clean_project()
+    run(sroot, { "--cached" })
+    write(
+      sroot .. "/TESTS/0_fail_spec.lua",
+      "return function(H)\n  H.ok(false, 'stops the run')\nend\n"
+    )
+    local sir, sres = ir_of(sroot, { "--cached", "--cache-audit", "all", "-x" })
+    eq(sir.run.cache.audited, 0, "a stopped run audits nothing")
+    eq(sir.run.cache.audit_skipped, 2, "the two picked hits are counted as skipped")
+    has(sres.out, "audit: 0 of 2 hit(s) ran again (2 picked but skipped", "and the line says so")
+  end
+
+  -- many findings: the IR and the terminal list the first 20 and count the rest
+  do
+    seq = seq + 1
+    local mroot = ("%s/many%d"):format(tmp, seq)
+    for i = 1, 22 do
+      write(
+        ("%s/TESTS/m%02d_spec.lua"):format(mroot, i),
+        table.concat({
+          "return function(H)",
+          "  local base = debug.getinfo(1, 'S').source:match('^@?(.*)/TESTS/')",
+          "  local dir = 'da' .. 'ta'",
+          "  local f = assert(io.open(base .. '/' .. dir .. '/value.txt', 'rb'))",
+          "  local v = f:read('*a')",
+          "  f:close()",
+          "  H.ok(v == '1\\n', 'the data is 1')",
+          "end",
+          "",
+        }, "\n")
+      )
+    end
+    write(mroot .. "/data/value.txt", "1\n")
+    write(
+      mroot .. "/.testing.lua",
+      "return { plugin = 'proj', minit = false, guards = { fs = 'off' } }\n"
+    )
+    eq(run(mroot, { "--cached" }).code, 0, "many: cold run is green")
+    write(mroot .. "/data/value.txt", "2\n")
+    local mir, mres = ir_of(mroot, { "--cached", "--cache-audit", "all" })
+    eq(mres.code, 1, "many: the audit finds the stale passes")
+    eq(mir.run.cache.stale_pass, 22, "many: 22 stale passes")
+    eq(#mir.run.cache.findings, 20, "many: the IR lists the first 20 findings")
+    eq(mir.run.cache.findings_total, 22, "many: and counts all of them")
+    has(
+      mres.out,
+      "... 2 more finding(s) of --cache-audit",
+      "many: the terminal says how many are not listed"
+    )
+  end
 
   -- usage
   eq(run(clean, { "--cache-audit", "2" }).code, 2, "a share above 1 is a usage error")
@@ -287,6 +383,15 @@ return function(H)
   eq(#rec.key, 64, "explain: the key that flipped")
   ok(#rec.parts > 5, "explain: with its lines")
 
+  -- an unusable key-flip memory is not ignored silently: the run says that the detection is blind
+  do
+    local nroot = clean_project()
+    write(keylog.path(nroot, { state_dir = nroot .. "-state" }), "{ not json")
+    local noisy = run(nroot, { "--cached" })
+    has(noisy.err, "key log", "a corrupt keys.json is a note of the run")
+    has(noisy.err, "not usable", "and it says why")
+  end
+
   -- --cache-clear starts from nothing: the key-flip memory goes too
   local cleared = run(root, { "--cache-clear" })
   eq(cleared.code, 0, "--cache-clear\n" .. cleared.err)
@@ -350,6 +455,27 @@ return function(H)
   eq(keylog.class_of({ { status = "pass" }, { status = "timeout" } }), "fail", "so does a timeout")
   eq(keylog.class_of({ { status = "pass" }, { status = "skip" } }), "skip", "a skip is not a pass")
   eq(keylog.class_of({}), nil, "no cases: nothing to remember")
+  eq(
+    keylog.class_of({ { status = "pass" }, { status = "pass", flaky = true, retries = 1 } }),
+    "flaky",
+    "a case that passed after a retry (--allow-flaky) makes the file flaky, not pass"
+  )
+  eq(keylog.class_of({ { status = "pass", retries = 2 } }), "flaky", "retries > 0 alone is enough")
+  eq(
+    keylog.class_of({ { status = "pass", retries = 0 } }),
+    "pass",
+    "retries = 0 is an ordinary pass"
+  )
+  eq(
+    keylog.class_of({ { status = "fail", flaky = true }, { status = "pass" } }),
+    "fail",
+    "a red case wins over a flaky one"
+  )
+  eq(
+    keylog.class_of({ { status = "skip" }, { status = "pass", flaky = true } }),
+    "flaky",
+    "flaky wins over a skip"
+  )
 
   local k1, k2 = ("1"):rep(64), ("2"):rep(64)
   local l = keylog.load(tmp .. "/nolog", { state_dir = tmp .. "/nolog" })
@@ -370,6 +496,38 @@ return function(H)
     l:observe("TESTS/y_spec.lua", ("%064x"):format(i), "pass", "r" .. i, i)
   end
   eq(#l.files["TESTS/y_spec.lua"], keylog.MAX_OBS, "the log is bounded per file")
+  -- when the list is full the record that was used LONGEST AGO goes, not the one that was written first
+  do
+    local lru = keylog.load(tmp .. "/lru", { state_dir = tmp .. "/lru" })
+    local keys = {}
+    for i = 1, keylog.MAX_OBS do
+      keys[i] = ("%064x"):format(i)
+      lru:observe("TESTS/z_spec.lua", keys[i], "pass", "r" .. i, i)
+    end
+    lru:observe("TESTS/z_spec.lua", keys[1], "pass", "again", 100) -- the oldest record is used again
+    lru:observe("TESTS/z_spec.lua", ("%064x"):format(999), "pass", "new", 101) -- the list is full: one goes
+    local left = {}
+    for _, o in ipairs(lru.files["TESTS/z_spec.lua"]) do
+      left[o.key] = true
+    end
+    ok(left[keys[1]], "the record that was used again stays")
+    ok(not left[keys[2]], "the record nobody used for longest goes")
+    eq(#lru.files["TESTS/z_spec.lua"], keylog.MAX_OBS, "and the list stays at its bound")
+  end
+  -- stray temp files of an interrupted write of keys.json are removed when load looks at the directory
+  do
+    local sweep_opts = { state_dir = tmp .. "/sweep" }
+    local d = vim.fs.dirname(keylog.path(tmp .. "/sweep-project", sweep_opts))
+    vim.fn.mkdir(d, "p")
+    local old_tmp, new_tmp = d .. "/keys.json.atomic-tmp.1.2", d .. "/keys.json.atomic-tmp.3.4"
+    write(old_tmp, "x")
+    write(new_tmp, "x")
+    local t = os.time() - 7200
+    vim.uv.fs_utime(old_tmp, t, t)
+    keylog.load(tmp .. "/sweep-project", sweep_opts)
+    eq(vim.uv.fs_stat(old_tmp), nil, "an old temp file of keys.json is swept")
+    ok(vim.uv.fs_stat(new_tmp) ~= nil, "a young one stays (a write may be going on)")
+  end
   ok(l:save(), "saved")
   local back = keylog.load(tmp .. "/nolog", { state_dir = tmp .. "/nolog" })
   eq(back.files, l.files, "and read back unchanged")

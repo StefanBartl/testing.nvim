@@ -229,8 +229,10 @@ end
 local function agent_options(sv, args)
   local o = { budget = args.agent_budget, format = args.format }
   if type(sv.script) == "string" and sv.script ~= "" then
+    -- the script path is data like any other word of the line: quoted for both shells (a path with a space)
+    local path = vim.fn.fnamemodify(sv.script, ":."):gsub("\\", "/")
     o.command = "nvim -n -i NONE --headless -u NONE -l "
-      .. vim.fn.fnamemodify(sv.script, ":."):gsub("\\", "/")
+      .. (require("testing.report.agent").shell_quote(path) or "<script>")
   end
   return o
 end
@@ -310,15 +312,7 @@ end
 ---@param res Testing.Result
 ---@param out fun(s: string)
 local function print_unasserted(res, out)
-  local ids = {}
-  for _, c in ipairs(res.cases) do
-    for _, a in ipairs(c.assertions or {}) do
-      if a.kind == "no_assertions" and a.ok then
-        ids[#ids + 1] = c.id
-        break
-      end
-    end
-  end
+  local ids = util.unasserted_ids(res)
   if #ids == 0 then
     return
   end
@@ -337,16 +331,7 @@ end
 ---@param res Testing.Result
 ---@param out fun(s: string)
 local function print_no_case(res, out)
-  local files = {}
-  local warning = require("testing.dialect.busted").NO_CASE_WARNING
-  for _, c in ipairs(res.cases) do
-    for _, n in ipairs(c.notes or {}) do
-      if n == warning then
-        files[#files + 1] = c.file or c.id
-        break
-      end
-    end
-  end
+  local files = util.no_case_files(res)
   if #files == 0 then
     return
   end
@@ -371,6 +356,7 @@ end
 ---@field selected integer Spec files selected for the run.
 ---@field selection string|nil What narrowed the files (affected flag).
 ---@field case_selection boolean A case filter, tag selection or `--lf` applied.
+---@field flaky_cases? integer Cases `--allow-flaky` counted as green after a retry.
 ---@field err fun(s: string)
 
 ---The three-valued verdict of the run (`testing.report.verdict`), with the last green run and what changed
@@ -403,6 +389,7 @@ local function run_verdict(o)
     cases_skipped = report.skipped or 0,
     selection = #pieces > 0 and table.concat(pieces, ", ") or nil,
     case_selection = o.case_selection,
+    flaky_cases = o.flaky_cases,
   }
   if report.exit_code ~= M.EXIT_OK then
     local green = require("testing.run.green")
@@ -799,6 +786,9 @@ function M.execute_run(plan, sv, run_opts, err)
   if prep.why_off then
     err("testing: note: cache not used: " .. prep.why_off)
   end
+  for _, note in ipairs(prep.notes or {}) do
+    err("testing: note: " .. safe_output_line(note))
+  end
   common.files = prep.run_files
   local ok, report
   if #prep.run_files == 0 then
@@ -929,6 +919,7 @@ function M.execute_run(plan, sv, run_opts, err)
     selected = #files,
     selection = selection_label,
     case_selection = selector.active or lf_by_file ~= nil,
+    flaky_cases = (retry_info and retry_info.allow_flaky) and #retry_info.flaky or 0,
     err = err,
   })
   res.run.verdict = verdict
@@ -936,11 +927,13 @@ function M.execute_run(plan, sv, run_opts, err)
 
   ---@param outputs Testing.Report.Output[]
   ---@param errors string[]
-  local function emit(outputs, errors)
+  ---@param sink? fun(line: string) Where the lines of a stdout reporter go (default: stdout now).
+  local function emit(outputs, errors, sink)
+    sink = sink or out
     for _, o in ipairs(outputs) do
       if not o.path and not o.err then
         for _, line in ipairs(o.lines) do
-          out(line)
+          sink(line)
         end
       end
     end
@@ -950,17 +943,40 @@ function M.execute_run(plan, sv, run_opts, err)
     end
   end
 
-  if primary == "term" then
-    emit(reports.run_reporters(res, {
-      reporters = { "term" },
-      defaults = { term = term_options(sv, args, #res.cases) },
-    }))
-  elseif primary == "agent" then
+  -- The first line of the agent reporter says "exit 0" or "exit 1": it is printed only once every report file
+  -- (`--json`, `--junit`) is written, because a failed write turns the exit code into 3 and the line would lie.
+  local held = {}
+  ---@param why? string Why the run did not complete (set: the held lines are replaced by one INFRA line).
+  local function flush_primary(why)
+    if why and primary == "agent" then
+      if args.format == "jsonl" then
+        out(require("lib.nvim.json").encode({
+          kind = "infra",
+          exit_code = M.EXIT_INFRA,
+          message = why,
+        }))
+      else
+        out(("INFRA | %s | exit %d"):format(why, M.EXIT_INFRA))
+      end
+    else
+      for _, line in ipairs(held) do
+        out(line)
+      end
+    end
+    held = {}
+  end
+
+  if primary == "term" or primary == "agent" then
+    local reporter_opts = primary == "term" and term_options(sv, args, #res.cases)
+      or agent_options(sv, args)
     -- the real IR, like `term`: paths are made relative by the reporter itself
-    emit(reports.run_reporters(res, {
-      reporters = { "agent" },
-      defaults = { agent = agent_options(sv, args) },
-    }))
+    local outputs, errors = reports.run_reporters(res, {
+      reporters = { primary },
+      defaults = { [primary] = reporter_opts },
+    })
+    emit(outputs, errors, function(line)
+      held[#held + 1] = line
+    end)
   end
   local need_ir = #sanitized_specs > 0 or primary == "json" or args.json ~= nil
   local ir, json_text
@@ -969,6 +985,7 @@ function M.execute_run(plan, sv, run_opts, err)
     ir, json_text, serr = inproc.sanitize(res, root)
     if not ir then
       err("testing: " .. tostring(serr))
+      flush_primary("the report could not be built: " .. tostring(serr))
       return M.EXIT_INFRA
     end
     if type(ir.warnings) == "table" and #ir.warnings > 0 then
@@ -979,20 +996,37 @@ function M.execute_run(plan, sv, run_opts, err)
       )
     end
   end
+  local spec_lines = {}
   if #sanitized_specs > 0 then
-    emit(reports.run_reporters(ir --[[@as Testing.Result]], { reporters = sanitized_specs }))
+    local outputs, errors =
+      reports.run_reporters(ir --[[@as Testing.Result]], { reporters = sanitized_specs })
+    emit(outputs, errors, function(line)
+      spec_lines[#spec_lines + 1] = line
+    end)
   end
-  if primary == "json" then
-    out(json_text --[[@as string]])
-  end
+  local json_failed
   if args.json then
     local path = vim.fs.normalize(vim.fn.fnamemodify(args.json, ":p"))
     local wrote, werr =
       require("lib.nvim.fs.write.atomic")(path, json_text --[[@as string]], { mkdirp = true })
     if not wrote then
       err(("testing: cannot write %s: %s"):format(path, tostring(werr)))
-      return M.EXIT_INFRA
+      json_failed = ("cannot write %s"):format(util.clean(path))
     end
+  end
+  if json_failed then
+    flush_primary(json_failed)
+    for _, line in ipairs(spec_lines) do
+      out(line)
+    end
+    return M.EXIT_INFRA
+  end
+  flush_primary(infra_failed and "a report file could not be written (see stderr)" or nil)
+  for _, line in ipairs(spec_lines) do
+    out(line)
+  end
+  if primary == "json" then
+    out(json_text --[[@as string]])
   end
 
   print_findings(findings, out)
@@ -1011,10 +1045,13 @@ function M.execute_run(plan, sv, run_opts, err)
     end
   end
   if report.stopped and report.files_unrun > 0 and not quiet then
+    -- the failures the stop counted: what is red now plus what a retry made green (`--allow-flaky`)
+    local stopped_at = report.failed
+      + ((retry_info and retry_info.allow_flaky) and #retry_info.flaky or 0)
     out(
       ("\nstopped after %d failure(s) (--maxfail %d): %d file(s) not run"):format(
-        report.failed,
-        args.maxfail or report.failed,
+        stopped_at,
+        args.maxfail or stopped_at,
         report.files_unrun
       )
     )
@@ -1099,11 +1136,15 @@ function M.execute_run(plan, sv, run_opts, err)
     return M.EXIT_INFRA
   end
 
-  -- the sentinel: last line, only for a complete, green run without a skipped case. The agent reporter says
-  -- the same in its first line (`GREEN` only where this prints the sentinel), and prints neither.
+  -- the sentinel: last line, only for the verdict `green` (a complete run, nothing skipped, stopped or accepted as
+  -- flaky). The agent reporter says the same in its first line (`GREEN` only where this prints the sentinel), and
+  -- prints neither. The text of a partial run comes from the verdict itself (`verdict.reasons`).
   if code == M.EXIT_OK and not quiet then
     local partial_files = #files < total
-    if selection_label and not selector.active and lf_by_file == nil then
+    local no_case_filter = not selector.active and lf_by_file == nil
+    if verdict.kind == "green" then
+      out("\n" .. (args.sentinel or disc.runner.sentinel or "TESTING_OK"))
+    elseif selection_label and no_case_filter and partial_files then
       out(
         ("\npartial run: %d of %d spec files (%s; no sentinel)"):format(
           #files,
@@ -1111,14 +1152,15 @@ function M.execute_run(plan, sv, run_opts, err)
           selection_label
         )
       )
-    elseif partial_files and not selector.active and lf_by_file == nil then
+    elseif partial_files and no_case_filter then
       out(("\npartial run: %d of %d spec files (no sentinel)"):format(#files, total))
-    elseif partial_files or selector.active or lf_by_file ~= nil then
+    elseif partial_files or not no_case_filter then
       out("\npartial run: a selection (--filter, --tags, --lf, a path) applied (no sentinel)")
     elseif report.skipped > 0 then
       out(("\n%d case(s) skipped: a skip is never green (no sentinel)"):format(report.skipped))
     else
-      out("\n" .. (args.sentinel or disc.runner.sentinel or "TESTING_OK"))
+      -- a stop (`--maxfail`), an accepted flaky case: the verdict names the reasons
+      out(("\npartial run: %s (no sentinel)"):format(table.concat(verdict.reasons or {}, "; ")))
     end
   end
   return code
