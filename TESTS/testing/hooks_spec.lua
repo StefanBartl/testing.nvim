@@ -154,6 +154,11 @@ return function(H)
     XDG_CACHE_HOME = tmp .. "/cache",
     TESTING_AGENT = "0",
   }
+  -- the hooks stamp and verify locally: a CI marker of the machine this spec runs on would make an unsigned
+  -- stamp untrusted (that rule has its own spec), so blank all of them
+  for _, name in ipairs(require("testing.affected").CI_ENV) do
+    env[name] = ""
+  end
   ---@param name string
   ---@param stdin? string
   local function hook(name, stdin)
