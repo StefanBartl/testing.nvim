@@ -316,7 +316,7 @@ return function(H)
   has(text, "not signed (unsigned)", "and the note says unsigned")
   code = main({ "--hits", sink, "--baseline", edited_path })
   eq(code, 0, "without the flag the same edited baseline stays a note")
-  code, text = main({
+  code = main({
     "--hits",
     sink,
     "--baseline",
