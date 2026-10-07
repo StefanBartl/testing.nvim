@@ -252,8 +252,25 @@ end
 ---@return string|nil err
 ---@return string|nil note Something that was not remembered (the run is recorded all the same).
 function M.record(root, res, info, opts)
-  info = info or {}
   local path = M.path(root, opts)
+  local locked, ok, err, note = require("testing.statelock").with(path, function()
+    return M.record_locked(path, res, info or {})
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
+  return ok, err, note
+end
+
+---The read-append-write of `record`, to be called while the lock of `path` is held: the file is read here, so a
+---run that finished since this one started keeps its line and its failures.
+---@param path string
+---@param res Testing.Result
+---@param info Testing.History.RecordInfo
+---@return boolean ok
+---@return string|nil err
+---@return string|nil note
+function M.record_locked(path, res, info)
   local records = M.read_records(path)
   local last = records[#records]
   local failed, too_long = M.merge_failed(last and last.failed or {}, res, info)

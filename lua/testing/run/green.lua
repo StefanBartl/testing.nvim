@@ -185,8 +185,19 @@ function M.record(root, res, opts)
   if not text then
     return false, "cannot encode the last green record: " .. tostring(err)
   end
-  local ok, werr =
-    require("lib.nvim.fs.write.atomic")(M.path(root, opts), text .. "\n", { mkdirp = true })
+  local path = M.path(root, opts)
+  local locked, ok, werr = require("testing.statelock").with(path, function()
+    -- two runs that end at about the same time: the one that was green LATER stays (a slow run that started
+    -- earlier must not turn the record back to an older commit)
+    local current = M.load(root, opts)
+    if current and current.ts > rec.ts then
+      return true, nil
+    end
+    return require("lib.nvim.fs.write.atomic")(path, text .. "\n", { mkdirp = true })
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
   if not ok then
     return false, ("cannot write the last green record: %s"):format(tostring(werr))
   end

@@ -339,6 +339,15 @@ of each file. Cost: one `git` round and the affected scan (the same analysis ind
 long it took; `last_green.json` remembers the last full green run (see [the verdict](OUTPUT-FORMATS.md#the-verdict)).
 Both are bounded, read as untrusted input, written atomically, and a failure to read or write is a note.
 
+**Parallel runs of one project.** The state files beside `runs.jsonl` (`runs.jsonl`, `order.json`, `timings.json`,
+`durations.json`, `last_green.json`) are read, changed and written back whole, so two runs at the same time (a CI matrix
+on one machine, `watch` next to a manual run) must not overwrite each other. Every update takes a short lock
+(`<file>.lock`, created exclusively), reads the file AGAIN inside the lock and merges into what it finds: the entries
+of both runs survive, and `last_green.json` keeps the record of the run that was green later. A run that cannot get
+the lock within 3 s prints a note (`... is locked by another run: not updated`) and leaves the file alone; the state is
+a convenience, never part of the verdict, so the exit code does not change. A lock older than 10 s was left by a run that
+died and is taken over.
+
 ### Retry and flaky
 
 ```sh

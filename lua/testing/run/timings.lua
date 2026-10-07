@@ -206,6 +206,8 @@ function M.line(r)
 end
 
 ---Add this run to the history of every file in `current` (bounded), and drop the files that no longer exist.
+---The file is read AGAIN under the lock of `testing.statelock` and merged into: a second run that wrote since
+---`history` was read keeps its samples (`history` is only the fallback when the file has none).
 ---@param root string
 ---@param history table<string, number[]> What `read` returned.
 ---@param current table<string, number>
@@ -214,7 +216,29 @@ end
 ---@return string|nil err
 function M.record(root, history, current, opts)
   opts = opts or {}
+  local path = M.path(root, opts)
+  local locked, ok, err = require("testing.statelock").with(path, function()
+    return M.record_locked(path, history, current, opts)
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
+  return ok, err
+end
+
+---The read-merge-write of `record`, to be called while the lock of `path` is held.
+---@param path string
+---@param history table<string, number[]>
+---@param current table<string, number>
+---@param opts { known_files?: table<string, true> }
+---@return boolean ok
+---@return string|nil err
+function M.record_locked(path, history, current, opts)
   local merged = {}
+  local fresh = M.read(path)
+  if next(fresh) ~= nil then
+    history = fresh
+  end
   for rel, list in pairs(history) do
     merged[rel] = vim.list_slice(list, 1)
   end
@@ -240,7 +264,6 @@ function M.record(root, history, current, opts)
   if not text then
     return false, "cannot encode the timings: " .. tostring(err)
   end
-  local path = M.path(root, opts)
   local wrote, werr = require("lib.nvim.fs.write.atomic")(path, text, { mkdirp = true })
   if not wrote then
     return false, ("cannot write %s: %s"):format(path, tostring(werr))

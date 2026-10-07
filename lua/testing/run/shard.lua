@@ -314,9 +314,28 @@ end
 ---@return boolean ok
 ---@return string|nil err
 function M.record_durations(root, res, info, opts)
-  info = info or {}
   local path = M.durations_path(root, opts)
-  local merged = info.previous or M.read_durations(path)
+  local locked, ok, err = require("testing.statelock").with(path, function()
+    return M.record_durations_locked(path, res, info or {})
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
+  return ok, err
+end
+
+---The read-merge-write of `record_durations`, to be called while the lock of `path` is held. The file is
+---read again here: a run that wrote since `info.previous` was read keeps its entries.
+---@param path string
+---@param res Testing.Result
+---@param info { known_files?: table<string, true>, previous?: table<string, number> }
+---@return boolean ok
+---@return string|nil err
+function M.record_durations_locked(path, res, info)
+  local merged = M.read_durations(path)
+  if next(merged) == nil then
+    merged = info.previous or merged
+  end
   local per_file = {}
   for _, c in ipairs(res.cases or {}) do
     if type(c.file) == "string" and type(c.duration_ms) == "number" then

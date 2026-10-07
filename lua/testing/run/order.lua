@@ -240,6 +240,24 @@ end
 ---@return string|nil err
 function M.record_state(root, res, opts)
   opts = opts or {}
+  local path = M.path(root, opts)
+  -- the state is read again INSIDE the lock: a second run that wrote since is merged into, not overwritten
+  local locked, ok, err = require("testing.statelock").with(path, function()
+    return M.record_state_locked(root, res, opts)
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
+  return ok, err
+end
+
+---The read-merge-write of `record_state`, to be called while the lock of `M.path(root, opts)` is held.
+---@param root string
+---@param res Testing.Result
+---@param opts Testing.Order.StateOpts
+---@return boolean ok
+---@return string|nil err
+function M.record_state_locked(root, res, opts)
   local files = M.load_state(root, opts)
   local sums, ran, hits = {}, {}, {}
   for _, c in ipairs(res.cases or {}) do
