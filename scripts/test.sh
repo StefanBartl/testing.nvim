@@ -39,8 +39,15 @@ if command -v cygpath >/dev/null 2>&1; then
   scratch="$(cygpath -m "$scratch")"
 fi
 export XDG_STATE_HOME="$scratch/state"
-export XDG_CACHE_HOME="${TESTING_CACHE_HOME:-$scratch/cache}"
+# The specs always get a throwaway cache home (they run the runner themselves and must not write into a shared
+# cache); a shared one is handed to the outer run only, through --cache-dir.
+cache_args=()
+if [ -n "${TESTING_CACHE_HOME:-}" ]; then
+  cache_args=(--cache-dir "$TESTING_CACHE_HOME")
+  unset TESTING_CACHE_HOME
+fi
+export XDG_CACHE_HOME="$scratch/cache"
 
 # No `exec`: the trap must remove the scratch directory afterwards.
-nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . "$@"
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . ${cache_args[@]+"${cache_args[@]}"} "$@"
 exit $?

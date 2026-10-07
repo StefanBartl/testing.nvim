@@ -183,7 +183,21 @@ function M.note_write(root, tree, file, run)
     return false, "no tree to attach the note to (not a git checkout, or no commit yet)"
   end
   local r = (run or git.default_run)(
-    { "git", "notes", "--ref=testing", "add", "-f", "-F", file, tree },
+    -- a note is a commit: without a configured identity (a CI checkout) git refuses, so name one
+    {
+      "git",
+      "-c",
+      "user.name=testing.nvim",
+      "-c",
+      "user.email=testing@localhost",
+      "notes",
+      "--ref=testing",
+      "add",
+      "-f",
+      "-F",
+      file,
+      tree,
+    },
     root
   )
   if r.code ~= 0 then
