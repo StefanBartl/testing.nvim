@@ -25,7 +25,7 @@
 local M = {}
 
 ---@type string[]
-M.SUBCOMMANDS = { "run", "init", "list", "doctor", "budget", "conformance", "surface" }
+M.SUBCOMMANDS = { "run", "init", "list", "doctor", "budget", "conformance", "surface", "explain" }
 
 ---Subcommand names that are parsed but not dispatched yet. Empty since the integration step wired
 ---`conformance` and `surface` (`testing.cli` hands them to their own modules, with their own arguments,
@@ -38,7 +38,10 @@ M.MAX_SHARDS = 1000
 
 ---Reporter names `--reporter` accepts; the reporter implementation extends this list.
 ---@type string[]
-M.REPORTERS = { "term", "github", "junit", "json" }
+M.REPORTERS = { "term", "github", "junit", "json", "agent" }
+
+---Smallest `--agent-budget` (characters): below it not even a verdict line and one failure would fit.
+M.AGENT_BUDGET_MIN = 200
 
 ---@class Testing.Args
 ---@field command "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"
@@ -50,6 +53,9 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field junit? string `--junit <file>`
 ---@field github boolean `--github`
 ---@field reporter? string `--reporter <name>` (one of `REPORTERS`)
+---@field agent_budget? integer `--agent-budget <n>`: character budget of the `agent` reporter
+---@field format? "text"|"jsonl" `--format text|jsonl`: shape of the `agent` reporter (default text)
+---@field order? "priority"|"slowest-first" `--order priority`: what failed last and what the changes reach runs first; `--order slowest-first`: the longest files start first (never a filter)
 ---@field filter string[] `--filter <text>`: literal substring of the case name (SEC-30), repeatable
 ---@field file string[] `--file <text>`/`--only <text>`: substring of the spec FILE NAME, repeatable
 ---@field tags string[] `--tags a,b`
@@ -92,10 +98,15 @@ M.REPORTERS = { "term", "github", "junit", "json" }
 ---@field cache? boolean `--cached`: reuse the results of unchanged spec files, store new green ones
 ---@field no_cache boolean `--no-cache`: never read or write the cache (wins over `--cached`, `--cache-refresh` and the config)
 ---@field cache_refresh boolean `--cache-refresh`: run everything and store the results, never read
+---@field cache_audit_text? string `--cache-audit <0..1|all>` as typed
+---@field cache_audit? number `--cache-audit`: the share of the cache hits (0..1; `all` = 1) that run anyway and are compared with the stored result
 ---@field cache_clear boolean `--cache-clear`: delete the cache of this project and exit
 ---@field affected? boolean|string `--affected` / `--affected=<rev>`: the specs the changes since `<rev>` (default `HEAD~1`) can reach
 ---@field changed boolean `--changed`: the specs the working tree against `HEAD` can reach
 ---@field since? string `--since <rev>`: the specs the working tree against `<rev>` can reach
+---@field consumers? string `--consumers <dir>`: also ask documentation.nvim which specs of the checkouts below `<dir>` the changes reach (a hint, never a narrowing)
+---@field retry_failed? integer `--retry-failed <n>` (1..10): a red case runs again up to `n` times; one that passes is `flaky` and the run stays red
+---@field allow_flaky boolean `--allow-flaky`: a case that failed and then passed on a retry counts as green (it is still listed as flaky and never cached)
 ---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
 ---@field env_allow string[] `--env-allow <name>`, repeatable: environment names a child may inherit
 ---@field first_run boolean `--first-run`: do not disable lib.nvim's first-run float (default false)
@@ -173,6 +184,43 @@ local OPTIONS = {
         end
       end
       return ("unknown reporter '%s' (one of: %s)"):format(v, table.concat(M.REPORTERS, ", "))
+    end,
+  },
+  {
+    name = "agent_budget",
+    long = "agent-budget",
+    kind = "int",
+    field = "agent_budget",
+    arg = "<n>",
+    min = M.AGENT_BUDGET_MIN,
+    help = "character budget of --reporter agent (what does not fit is counted, never dropped silently)",
+  },
+  {
+    name = "format",
+    long = "format",
+    kind = "value",
+    field = "format",
+    arg = "<text|jsonl>",
+    help = "shape of --reporter agent: text (default) or jsonl (one line per failure group)",
+    check = function(v)
+      if v == "text" or v == "jsonl" then
+        return nil
+      end
+      return ("--format must be 'text' or 'jsonl', got '%s'"):format(v)
+    end,
+  },
+  {
+    name = "order",
+    long = "order",
+    kind = "value",
+    field = "order",
+    arg = "<priority|slowest-first>",
+    help = "priority: what failed last, what changed and what the changes reach run first; slowest-first: with --jobs the longest files (by their remembered duration) start first. Orders, never filters",
+    check = function(v)
+      if v == "priority" or v == "slowest-first" then
+        return nil
+      end
+      return ("--order must be 'priority' or 'slowest-first', got '%s'"):format(v)
     end,
   },
   {
@@ -566,6 +614,24 @@ local OPTIONS = {
     help = "run everything and store the green results, never read the cache",
   },
   {
+    name = "cache_audit",
+    long = "cache-audit",
+    kind = "value",
+    field = "cache_audit_text",
+    arg = "<0..1|all>",
+    help = "run this share of the cache hits anyway and compare (a difference is `cache.stale_pass`, exit 1); implies --cached",
+    check = function(v)
+      if v == "all" then
+        return nil
+      end
+      local n = tonumber(v)
+      if n == nil or n ~= n or n < 0 or n > 1 then
+        return ("--cache-audit needs a number from 0 to 1 or 'all', got '%s'"):format(v)
+      end
+      return nil
+    end,
+  },
+  {
     name = "cache_clear",
     long = "cache-clear",
     kind = "flag",
@@ -594,6 +660,37 @@ local OPTIONS = {
     field = "since",
     arg = "<rev>",
     help = "only the specs the working tree against <rev> can reach",
+  },
+  {
+    name = "consumers",
+    long = "consumers",
+    kind = "value",
+    field = "consumers",
+    arg = "<dir>",
+    help = "with --changed, --since or --affected: name the specs of the checkouts below <dir> that the changes reach (documentation.nvim; a hint, it never narrows this project's selection)",
+  },
+  {
+    name = "retry_failed",
+    long = "retry-failed",
+    kind = "int",
+    field = "retry_failed",
+    arg = "<n>",
+    min = 1,
+    help = "run a red case again up to <n> times (1..10); one that passes is flaky and the run stays red",
+    check = function(v)
+      local n = tonumber(v)
+      if n and n > 10 then
+        return ("--retry-failed: at most 10 retries, got '%s'"):format(v)
+      end
+      return nil
+    end,
+  },
+  {
+    name = "allow_flaky",
+    long = "allow-flaky",
+    kind = "flag",
+    field = "allow_flaky",
+    help = "with --retry-failed: a case that passes on a retry counts as green (still listed as flaky, never cached)",
   },
   {
     name = "timings",
@@ -718,10 +815,25 @@ function M.check_combination(args)
   if #selecting > 1 then
     return table.concat(selecting, " and ") .. " exclude each other"
   end
-  if args.watch and (#selecting > 0 or args.cache or args.cache_refresh) then
+  if args.consumers ~= nil and #selecting == 0 then
+    return "--consumers asks which specs of other checkouts a change reaches: it needs --changed, --since or --affected"
+  end
+  if args.allow_flaky and args.retry_failed == nil then
+    return "--allow-flaky needs --retry-failed <n>"
+  end
+  if args.retry_failed ~= nil and (args.list or args.watch) then
+    return "--retry-failed repeats red cases of a run; it cannot be combined with --list or --watch"
+  end
+  if args.cache_audit ~= nil and args.cache_refresh then
+    return "--cache-audit compares cache hits; --cache-refresh never reads the cache: they exclude each other"
+  end
+  if args.watch and (#selecting > 0 or args.cache or args.cache_refresh or args.cache_audit) then
     return "--watch selects the changed files itself; it cannot be combined with --cached, --cache-refresh, --changed, --since or --affected"
   end
-  if args.cache_clear and (#selecting > 0 or args.cache or args.cache_refresh or args.watch) then
+  if
+    args.cache_clear
+    and (#selecting > 0 or args.cache or args.cache_refresh or args.cache_audit or args.watch)
+  then
     return "--cache-clear only deletes the cache and exits; it cannot be combined with a run option"
   end
   return nil
@@ -751,6 +863,7 @@ function M.usage()
     "  budget   measure the performance budgets and compare them with the baseline (exit 1 when one is exceeded)",
     "  conformance  run the conformance checks K1..K15 on <root> (own options: conformance --help)",
     "  surface  list the plugin's surface (keymaps, commands, ...) and how much the specs exercised (surface --help)",
+    "  explain  why a spec was selected, cached or run, and what its cache key is made of: explain <root> <spec>... [--all] [--json] [--parts]",
     "  init     scaffold .testing.lua, TESTS/minimal_init.lua, scripts/test.sh, a CI job",
     "  migrate  plan (or write) the move of a repository from plenary / busted / its own runner to testing.nvim",
     "",
@@ -804,6 +917,7 @@ local function new_args()
     no_cache = false,
     cache_refresh = false,
     changed = false,
+    allow_flaky = false,
     timings = true,
     given = {},
   }
@@ -972,11 +1086,17 @@ function M.parse(argv)
   if args.seed ~= nil and not args.shuffle then
     return nil, "--seed needs --shuffle"
   end
+  if args.order ~= nil and args.shuffle then
+    return nil, "--order and --shuffle exclude each other"
+  end
   if args.command == "list" then
     args.list = true
   end
   if args.shard_text ~= nil then
     args.shard = M.parse_shard(args.shard_text)
+  end
+  if args.cache_audit_text ~= nil then
+    args.cache_audit = args.cache_audit_text == "all" and 1 or tonumber(args.cache_audit_text)
   end
   if args.factor_text ~= nil then
     args.factor = tonumber(args.factor_text)
@@ -986,6 +1106,96 @@ function M.parse(argv)
     return nil, problem
   end
   return args, nil
+end
+
+---Options that decide WHAT a repeat of a failed case runs or HOW the result is shown: a repeat command
+---(`--reporter agent`'s `rerun:` line) is the original arguments without them.
+---@type table<string, true>
+M.REPEAT_DROP = {
+  reporter = true,
+  agent_budget = true,
+  format = true,
+  json = true,
+  junit = true,
+  github = true,
+  filter = true,
+  file = true,
+  tags = true,
+  exclude_tags = true,
+  lf = true,
+  ff = true,
+  list = true,
+  maxfail = true,
+  shuffle = true,
+  seed = true,
+  durations = true,
+  profile = true,
+  timings = true,
+  cache = true,
+  no_cache = true,
+  cache_refresh = true,
+  cache_audit = true,
+  cache_clear = true,
+  affected = true,
+  changed = true,
+  since = true,
+  shard = true,
+  order = true,
+  watch = true,
+  watch_debounce = true,
+  watch_poll = true,
+}
+
+---The arguments of `argv` without the options in `drop` (default `REPEAT_DROP`) and without the path
+---positionals (the subcommand word and the root stay). Pure; an argument it does not know stays.
+---@param argv string[]
+---@param drop? table<string, true>
+---@return string[]
+function M.repeat_argv(argv, drop)
+  drop = drop or M.REPEAT_DROP
+  local out = {}
+  local i, n = 1, #argv
+  local positionals = 0
+  local options_done = false
+  while i <= n do
+    local a = tostring(argv[i])
+    local o, takes
+    if options_done or a == "-" or a:sub(1, 1) ~= "-" then
+      positionals = positionals + 1
+      local is_word = i == 1 and vim.tbl_contains(M.SUBCOMMANDS, a)
+      if is_word or positionals <= 1 then
+        out[#out + 1] = a
+      end
+      if is_word then
+        positionals = positionals - 1
+      end
+    elseif a == "--" then
+      options_done = true
+    else
+      local inline
+      if a:sub(1, 2) == "--" then
+        local name, value = a:match("^%-%-([^=]+)=(.*)$")
+        o = BY_LONG[name or a:sub(3)]
+        inline = value
+      else
+        o = BY_SHORT[a:sub(2)]
+      end
+      takes = o ~= nil and inline == nil and o.kind ~= "flag" and o.kind ~= "optvalue"
+      local nxt = argv[i + 1]
+      local consumes = takes and nxt ~= nil and tostring(nxt):sub(1, 2) ~= "--"
+      if not (o and drop[o.name]) then
+        out[#out + 1] = a
+        if consumes then
+          out[#out + 1] = tostring(nxt)
+        end
+      end
+      if consumes then
+        i = i + 1
+      end
+    end
+    i = i + 1
+  end
+  return out
 end
 
 return M

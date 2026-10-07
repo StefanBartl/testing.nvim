@@ -504,6 +504,7 @@ end
 ---@field child? table `testing.child` (seam for specs)
 ---@field soft? Testing.Isolation.Session Soft isolation of the files that run in this editor (`isolated = "soft"`).
 ---@field guard_cfg? Testing.Run.GuardConfig Guard configuration: given to the in-process files and, with `in_child`, to every child (job key `guard`).
+---@field dispatch_weights? table<string, number> `--order slowest-first`: spec path -> remembered milliseconds; the children of the heaviest files start first (a file without a weight after them, in file order). The IR keeps file order.
 ---@field lib_async? table `lib.nvim.async` (seam for specs: the lib.nvim version check).
 ---@field rpc? table `testing.rpc` for the warm pool (seam for specs).
 ---@field trace_dir? string Where the trace artifact of a child that timed out or died is written (default: `<state>/testing-traces`).
@@ -1204,8 +1205,32 @@ function M.run(opts)
     run_child(slot)
   end
 
-  -- one coroutine per child file; the semaphore decides how many run at once, FIFO
-  for _, slot in ipairs(slots) do
+  -- one coroutine per child file; the semaphore decides how many run at once, FIFO. The order the coroutines are
+  -- made in is the order the children start (`--order slowest-first`: the heaviest first); the merge below stays
+  -- in slot order, so nothing but the wall time depends on it
+  local start_order = {}
+  for i = 1, #slots do
+    start_order[i] = i
+  end
+  if opts.dispatch_weights then
+    local wanted = require("testing.run.slowest").order(#slots, function(i)
+      local s = slots[i]
+      return s.kind == "child" and opts.dispatch_weights[s.entry.rel] or nil
+    end)
+    -- a slot that never starts would hang the run: anything but a permutation is file order
+    local seen, n = {}, 0
+    for _, i in ipairs(wanted) do
+      if slots[i] and not seen[i] then
+        seen[i] = true
+        n = n + 1
+      end
+    end
+    if n == #slots and #wanted == #slots then
+      start_order = wanted
+    end
+  end
+  for _, start_index in ipairs(start_order) do
+    local slot = slots[start_index]
     if slot.kind == "child" then
       async.run(
         function()

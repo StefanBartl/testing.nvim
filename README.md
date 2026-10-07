@@ -43,6 +43,7 @@ repositories over has not happened.
 ## Table of contents
 
 - [Status](#status)
+- [What testing.nvim does differently](#what-testingnvim-does-differently)
 - [Fleet status](#fleet-status)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -104,6 +105,10 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   the specs the git changes can reach (a built-in heuristic on the `require` graph, to which the module graph of
   documentation.nvim can only ADD specs); a change nobody can place selects every spec, and a selection is a
   partial run that never prints the "all green" last line.
+  With `--consumers <dir>` it also names the specs of the other checkouts below `<dir>` that the change reaches
+  (a hint from documentation.nvim, never part of what runs). `--retry-failed <n>` runs a red case again; one that
+  passes is **flaky**, the run stays red (`--allow-flaky` is the explicit exception) and a flaky file is never
+  cached. `--order slowest-first` starts the longest files first with `--jobs`.
 - **Conformance and surface** ([docs/CONFORMANCE.md](docs/CONFORMANCE.md),
   [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K15 of the gates on a
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
@@ -111,7 +116,13 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   specs exercised. Both report first; neither is a gate by default.
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
-  redacted, validated after writing).
+  redacted, validated after writing). Every reporter carries a three-valued **verdict**
+  (`green`, `green-partial`, `red`, with "n from cache, m ran, k skipped on purpose"; `green` is
+  exactly the run that prints the sentinel, and a red run names the last green run and what changed
+  since). `--reporter agent` is a compact form for coding agents (verdict first, only failures with
+  `file:line`, expected/actual and a repeat command, a character budget that counts what it cuts); it
+  is selected by itself in a recognised agent environment. `--order priority` runs what failed last and
+  what the changes reach first; it orders and never filters.
 - **Per-project configuration** `.testing.lua` ([docs/CONFIG.md](docs/CONFIG.md)), with a validated
   schema.
 - `:checkhealth testing`, and the `:Testing` command ([docs/BINDINGS.md](docs/BINDINGS.md)), which
@@ -151,6 +162,57 @@ Known limits, not hidden:
   cannot be observed, and no threshold fails `testing run`; `testing surface` is the gate.
 - Not implemented at all: a test UI (tree, hover), snapshots, adapters for other test frameworks. Keys for
   some of these exist in `.testing.lua` and are validated, but nothing acts on them.
+
+## What testing.nvim does differently
+
+Compared with busted, plenary (`PlenaryBusted`), vusted, mini.test and neotest. What follows is limited to what the
+code and the measurements of this repository show, and to what the documentation of those tools says on
+2026-10-07; "not mentioned there" is weaker than "does not exist".
+
+- **A result cache and an affected selection, per spec file.** None of those tools documents either. testing.nvim
+  keys a spec file by everything it can see it depend on (its content, the closure of its `require`s including
+  lib.nvim, the files it reads, the runner, Neovim, the configuration, the environment variables the configuration
+  lists), and when it cannot know the inputs it does **not** cache (a spec that reads the clock, starts a process,
+  reads an environment variable the key does not contain, or names a file outside the project). The comparison that
+  fits is a build system that caches test results (Bazel, Gradle, Turborepo), not a test framework; those ask you to
+  declare the inputs and warn that an undeclared one can produce a wrong hit, testing.nvim analyses them and refuses
+  when unsure. That is only as strong as the scanner, which is not a parser: a path built at run time with no literal
+  anywhere is invisible to it. Two procedures measure and catch that instead of asserting it away: `--cache-audit`
+  re-runs a share of the hits and reports the **measured stale-pass rate**, and a spec whose key gave two different
+  results is marked nondeterministic. `testing explain <spec>` says why a file was selected, taken from the cache or
+  run, and what changed since its stored entry.
+- **Guards and an effects ledger** that measure whether a spec is pure (processes, network, writes outside the
+  temp directory, leftover state, deprecations, a clock). The cache refuses a file the ledger saw an effect in.
+- **A result format with deterministic bytes** (the Result-IR: sorted keys, redacted, validated after writing) that
+  every reporter and the cache read, and a verdict that does not flatter: a skip is never green, a partial run
+  (a selection, a case filter, `--maxfail`) never prints the sentinel, and the line says how many files came from
+  the cache, ran, or were skipped on purpose.
+- **Heuristics order, proofs skip.** The affected selection is a heuristic: it picks and orders the specs that are
+  likely to matter. Only the cache key, which compares the actual inputs, may let a run skip a file and still call the
+  result complete.
+
+What it does not do, and where the effect is small. The cache pays where a suite is made of many small, pure spec
+files, and almost nothing where specs use the clock, processes, or paths outside the project. Measured on one
+machine (Windows 11, 12 threads, Neovim 0.12.2, 2026-10-06, one run each, [docs/PERFORMANCE.md](docs/PERFORMANCE.md)):
+
+| Suite | Spec files | Files from the cache, warm | Wall clock, plain, then warm |
+| --- | ---: | ---: | --- |
+| markdown.nvim | 47 | 27 | 18.0 s, then 12.3 s |
+| ui.nvim | 65 | 29 | 40.0 s, then 28.1 s |
+| images.nvim | 35 | 3 | 10.5 s, then 10.4 s |
+| casedesk.nvim | 95 | 7 | 81.6 s, then 82.9 s |
+| lib.nvim | 87 | 10 | 110.0 s, then 101.0 s |
+
+The first run with `--cached` costs more than a plain one (+1 % to +41 % on these suites). `--changed` is not a gate:
+it is a partial run that never prints the sentinel, and on lib.nvim the selection averaged 60 of 87 specs over the last
+20 commits, because computed `require`s make a one-line change reach most of the suite. There is no shared or remote
+cache, no retry or flaky-test quarantine, no test UI and no screenshots; the project is pre-alpha.
+
+Measured stale-pass rate (`--cached --cache-audit all` after a warm run, 2026-10-07, same machine, one run each):
+markdown.nvim 0 of 27 audited hits differed, ui.nvim 0 of 29. That is 56 hits and no stale pass found, which says the
+key was right for those two suites on that day. It does not prove that it is right in general: the audit is a
+sample of what the key already accepts, and a path that is built at run time stays invisible until a spec reads a
+file that changes.
 
 ## Fleet status
 
@@ -231,6 +293,8 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua doctor .             # configuration and dependency report
 ... -l scripts/testing.lua . --cached           # skip spec files whose inputs did not change
 ... -l scripts/testing.lua . --changed          # only the specs the working tree can reach
+... -l scripts/testing.lua explain . TESTS/x_spec.lua   # why it was selected, cached or run, and what changed
+... -l scripts/testing.lua . --cached --cache-audit all # re-run every cache hit: the measured stale-pass rate
 ... -l scripts/testing.lua conformance .        # the conformance checks K1 to K15
 ... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
 ```

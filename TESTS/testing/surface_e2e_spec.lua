@@ -110,7 +110,7 @@ return {
         root,
         "--json",
         ir_path,
-      }, { text = true })
+      }, { text = true, env = { TESTING_AGENT = "0" } })
       :wait(180000)
     ok(
       res.code == 0,
@@ -198,7 +198,7 @@ end
     res = vim
       .system(
         { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry, root },
-        { text = true }
+        { text = true, env = { TESTING_AGENT = "0" } }
       )
       :wait(180000)
     ok(

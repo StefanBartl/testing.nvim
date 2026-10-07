@@ -28,6 +28,14 @@ M.MAX_ENTRY_BYTES = 4 * 1024 * 1024
 M.MAX_CASES = 5000
 ---@type integer
 M.MAX_ASSERTIONS = 5000
+---Most key lines (`parts`) an entry keeps for `testing explain`, and the longest one.
+---@type integer
+M.MAX_PARTS = 5000
+---@type integer
+M.MAX_PART_BYTES = 400
+---Bytes of entries `latest_by_file` decodes at most (a diagnostic, not a hot path).
+---@type integer
+M.LATEST_SCAN_BYTES = 32 * 1024 * 1024
 ---Defaults of `prune`.
 ---@type { max_bytes: integer, max_entries: integer, max_age_days: integer }
 M.LIMITS = { max_bytes = 64 * 1024 * 1024, max_entries = 5000, max_age_days = 30 }
@@ -68,6 +76,7 @@ end
 ---@field nvim string
 ---@field cases Testing.Result.Case[]
 ---@field meta? table<string, any>
+---@field parts? string[] The lines the key is the hash of (names and hashes, never file content or an environment value): `testing explain` compares them. Absent in entries of older versions and when they were too many.
 
 ---Does a case carry a guard finding that makes it unfit for the cache? Findings of severity `info` (the state
 ---guard noting that a spec loaded a module) are observations, not problems: they are kept in the entry.
@@ -84,6 +93,32 @@ function M.blocking_guards(case)
     end
   end
   return next(g) ~= nil and #g == 0
+end
+
+---The key lines of an entry, checked: a list of at most `MAX_PARTS` strings of at most `MAX_PART_BYTES` bytes
+---without a control character, or nil. Never a reason to distrust the entry: the lines are only displayed.
+---@param parts any
+---@return string[]|nil
+function M.clean_parts(parts)
+  if type(parts) ~= "table" or #parts == 0 or #parts > M.MAX_PARTS then
+    return nil
+  end
+  local n = 0
+  for k, line in pairs(parts) do
+    n = n + 1
+    if
+      type(k) ~= "number"
+      or type(line) ~= "string"
+      or #line > M.MAX_PART_BYTES
+      or line:find("%c")
+    then
+      return nil
+    end
+  end
+  if n ~= #parts then
+    return nil
+  end
+  return vim.list_slice(parts, 1)
 end
 
 ---Validate a decoded entry against what the caller asked for.
@@ -169,13 +204,14 @@ function M.validate(raw, expect)
   if not ok then
     return nil, "invalid IR: " .. tostring(problems[1])
   end
+  raw.parts = M.clean_parts(raw.parts)
   return raw
 end
 
 ---Read an entry. A miss carries the reason.
 ---@param dir string
 ---@param key string
----@param expect { file: string }
+---@param expect { file: string, touch?: boolean } `touch = false`: a read that does not refresh the age (`testing explain`).
 ---@return Testing.Cache.Entry|nil
 ---@return string|nil why
 function M.read(dir, key, expect)
@@ -206,8 +242,21 @@ function M.read(dir, key, expect)
     return nil, "invalid: " .. tostring(why)
   end
   -- a hit refreshes the age: pruning by age drops what nobody asked for
-  pcall(uv.fs_utime, path, os.time(), os.time())
+  if expect.touch ~= false then
+    pcall(uv.fs_utime, path, os.time(), os.time())
+  end
   return entry
+end
+
+---Delete the entry of a key (it is a miss afterwards). True when a file was removed.
+---@param dir string
+---@param key string
+---@return boolean removed
+function M.remove(dir, key)
+  if not is_key(key) then
+    return false
+  end
+  return uv.fs_unlink(M.entry_path(dir, key)) == true
 end
 
 ---Remove `path` when it is a directory (or a link to one): the cache owns this namespace, a directory named like
@@ -252,6 +301,7 @@ end
 ---@field key string
 ---@field size integer
 ---@field mtime integer
+---@field nsec integer Sub-second part of the mtime (orders entries written within one second).
 
 ---All entries of the directory (only files whose name is a key).
 ---@param dir string
@@ -271,9 +321,81 @@ function M.list(dir)
     if key and is_key(key) and (kind == "file" or kind == nil) then
       local st = uv.fs_stat(dir .. "/entries/" .. name)
       if st and st.type == "file" then
-        out[#out + 1] = { key = key, size = st.size, mtime = st.mtime and st.mtime.sec or 0 }
+        out[#out + 1] = {
+          key = key,
+          size = st.size,
+          mtime = st.mtime and st.mtime.sec or 0,
+          nsec = st.mtime and st.mtime.nsec or 0,
+        }
       end
     end
+  end
+  return out
+end
+
+---@class Testing.Cache.Latest
+---@field key string
+---@field run string
+---@field ts integer
+---@field parts? string[]
+
+---For every spec file, its most recently stored entry (by the `ts` the entry carries): key, run id and the key
+---lines. Reads the entries newest first and stops after `LATEST_SCAN_BYTES`; an entry that does not decode or
+---whose key is not its file name is skipped. The entries are untrusted, and only what is displayed is read.
+---@param dir string
+---@param opts? { max_bytes?: integer }
+---@return table<string, Testing.Cache.Latest> by_file
+function M.latest_by_file(dir, opts)
+  local budget = (opts and opts.max_bytes) or M.LATEST_SCAN_BYTES
+  local items = M.list(dir)
+  table.sort(items, function(a, b)
+    if a.mtime ~= b.mtime then
+      return a.mtime > b.mtime
+    end
+    if a.nsec ~= b.nsec then
+      return a.nsec > b.nsec
+    end
+    return a.key < b.key
+  end)
+  local json = require("lib.nvim.json")
+  local read = require("lib.nvim.fs.read")
+  local out = {}
+  for _, it in ipairs(items) do
+    if it.size > M.MAX_ENTRY_BYTES then
+      goto continue
+    end
+    budget = budget - it.size
+    if budget < 0 then
+      break
+    end
+    do
+      local text = read(M.entry_path(dir, it.key))
+      local ok, raw = pcall(json.decode, text or "")
+      if
+        ok
+        and type(raw) == "table"
+        and raw.key == it.key
+        and type(raw.file) == "string"
+        and #raw.file <= 500
+        and not raw.file:find("%c")
+        and type(raw.ts) == "number"
+        and raw.ts == raw.ts
+        and type(raw.run) == "string"
+        and #raw.run <= 100
+        and not raw.run:find("%c")
+      then
+        local prev = out[raw.file]
+        if not prev or raw.ts > prev.ts then
+          out[raw.file] = {
+            key = it.key,
+            run = raw.run,
+            ts = raw.ts,
+            parts = M.clean_parts(raw.parts),
+          }
+        end
+      end
+    end
+    ::continue::
   end
   return out
 end

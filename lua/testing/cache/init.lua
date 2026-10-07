@@ -20,6 +20,11 @@
 ---   * a digest of the configuration (`ctx.config`) and the content of `.testing.lua`,
 ---   * the dialect, and the seed when the run is shuffled.
 ---
+--- ONE CALL, ONE EXPLANATION: `key` returns the key, the reason there is none, the lines the key is the hash of
+--- (`parts`) and the same reason as data (`detail`: kind, file, line). `testing explain` and the entry that `put`
+--- writes (`meta.parts`) use exactly those lines; nothing is computed a second time. A key that has already given
+--- different results (`ctx.flipped`, `testing.cache.keylog`) is refused with `detail.kind = "nondeterministic"`.
+---
 --- INCOMPLETE INPUTS MEAN NO KEY (`key` returns `nil, reason`): when in doubt, do not cache. A spec
 --- that
 ---   * reads the clock or a random number (`os.time`, `hrtime`, `math.random`, ...),
@@ -106,6 +111,7 @@ local memo = {}
 ---@field hasher? Testing.Cache.Hasher
 ---@field prune? boolean Prune once per process after the first write (default true).
 ---@field unresolved? "error"|"absent" A `require` that no checkout resolves: `error` (default) = the file has no key, `absent` = its absence is part of the key (right for optional plugins checked with `pcall(require, ...)`, provided the runtime path is the one the run uses).
+---@field flipped? fun(file: string, key: string): { classes: string[] }|nil Key-flip lookup: the results the same key has given before when they differ (`testing.cache.keylog`); a file for which it answers is not cached.
 ---@field memo? table Directory listings and module lookups of THIS run; created on first use. Make a new context per run (a watch loop: per iteration), or a new file is not seen.
 
 ---@class Testing.Cache.FileInfo
@@ -469,6 +475,7 @@ end
 ---@return string|nil why
 ---@return boolean|nil absent_any A `require` was unresolved and its absence is part of the key.
 ---@return Testing.Cache.Member[]|nil members The files of the closure (not the spec) with their analysis.
+---@return Testing.Cache.Detail|nil detail The structured form of `why`.
 local function closure_lines(file_info, spec_info, ctx, hasher)
   local root = vim.fs.normalize(ctx.root):gsub("/+$", "")
   local lines = {}
@@ -487,6 +494,8 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
   local members = {}
   local queue = {}
   local absent = {}
+  ---@type Testing.Cache.Detail|nil
+  local fail_detail
   ---@param abs string
   ---@param base string
   local function visit(abs, base)
@@ -507,6 +516,7 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
         visit(abs, from)
       elseif not (scan.BUILTIN[top] or top == "vim" or top == "testing") then
         if ctx.unresolved ~= "absent" then
+          fail_detail = { kind = "unresolved", name = name }
           return ("unresolved module '%s'"):format(name)
         end
         absent[name] = true -- its absence is part of the key: installing it changes the key
@@ -530,25 +540,37 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
   end
   local why = expand(spec_info, root)
   if why then
-    return nil, why
+    return nil, why, nil, nil, fail_detail
   end
   local i = 1
   while i <= #queue do
     local abs = queue[i]
     i = i + 1
     if #order > M.MAX_CLOSURE then
-      return nil, ("more than %d dependency files"):format(M.MAX_CLOSURE)
+      return nil,
+        ("more than %d dependency files"):format(M.MAX_CLOSURE),
+        nil,
+        nil,
+        { kind = "closure" }
     end
     local sha, info = analyzed(ctx, hasher, abs)
     if not sha then
-      return nil, ("dependency %s: %s"):format(abs, tostring(info))
+      return nil,
+        ("dependency %s: %s"):format(abs, tostring(info)),
+        nil,
+        nil,
+        { kind = "dependency", name = abs:match("([^/]+)$") }
     end
     ---@cast info Testing.Scan.Info
     members[#members + 1] = { abs = abs, info = info, inside = is_project_file(root, abs) }
     local w = expand(info, files[abs])
     if w then
       -- a module of a dependency that the runtime path cannot resolve: the dependency is incomplete
-      return nil, w .. " (required by " .. abs:match("([^/]+)$") .. ")"
+      return nil,
+        w .. " (required by " .. abs:match("([^/]+)$") .. ")",
+        nil,
+        nil,
+        fail_detail and vim.tbl_extend("force", fail_detail, { file = abs:match("([^/]+)$") })
     end
   end
   local absent_names = vim.tbl_keys(absent)
@@ -573,6 +595,20 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
   end
   return lines, nil, absent_any, members
 end
+
+---Why a file has no key, in a form a program can read (`testing explain`): `kind` is one of `clock`, `random`,
+---`process`, `network`, `env`, `env_dynamic`, `off` (`-- @cache off`), `unresolved` (a `require` nobody resolves),
+---`closure` (too many files), `outside` (reads a file outside the project), `inputs` (cannot hash what it reads),
+---`nondeterministic` (the key-flip detection), `spec` (the file cannot be read), `path` (the path leaves the project).
+---@class Testing.Cache.Detail
+---@field kind string
+---@field file? string The file that has it: nil is the spec itself.
+---@field line? integer Line of the hit in that file (clock, random, process, network).
+---@field name? string An environment variable, a module, a path.
+---@field key? string `nondeterministic`: the key that gave different results.
+---@field classes? string[] `nondeterministic`: the results it gave.
+---@field allow_nondeterministic? boolean With a key: the spec declares `-- @cache-allow nondeterministic`.
+---@field flipped? string[] With a key: the results the key has given when they differ.
 
 ---@class Testing.Cache.Member
 ---@field abs string
@@ -654,7 +690,10 @@ end
 ---@param env_covered boolean The environment the file sees is in the key as a whole (a child editor).
 ---@return Testing.Cache.Aggregate|nil agg
 ---@return string|nil reason No key: why.
+---@return Testing.Cache.Detail|nil detail The structured form of the reason.
 local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
+  ---@type Testing.Cache.Detail|nil
+  local detail
   local agg = {
     io = false,
     dirscan = false,
@@ -677,8 +716,24 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
       end
       return what
     end
+    ---The reason and its structured form (`kind`, the file that has it, the line of the hit).
+    ---@param kind string
+    ---@param what string
+    ---@param marker? string Key of `info.where`.
+    ---@param name? string
+    ---@return string
+    local function no(kind, what, marker, name)
+      detail = {
+        kind = kind,
+        file = who,
+        line = marker and info.where and info.where[marker] or nil,
+        name = name,
+      }
+      return say(what)
+    end
     local m = info.markers
     if info.directives.off then
+      detail = { kind = "off", file = who }
       return who and say("has `-- @cache off`") or "`-- @cache off`"
     end
     -- only the files of the PROJECT contribute hidden inputs. A dependency checkout (`lib.nvim`: clock for
@@ -692,30 +747,33 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
       -- the clock and random numbers count for the spec itself only: in a module they are timers, throttles
       -- and log stamps far more often than the value a spec asserts on (a KNOWN LIMIT, see docs/CACHE.md)
       if not who and m.time and not allow.time then
-        return say("reads the clock")
+        return no("clock", "reads the clock", "time")
       end
       if not who and m.random and not allow.random then
-        return say("uses random numbers")
+        return no("random", "uses random numbers", "random")
       end
       -- a process or a connection that a module of the project really starts is seen by the effects ledger of the
       -- run (`put` refuses a file with such an effect); only the spec's own calls are judged statically
       if not who and m.spawn and not allow.spawn then
-        return say("starts a process")
+        return no("process", "starts a process", "spawn")
       end
       if not who and m.net and not allow.net then
-        return say("may use the network")
+        return no("network", "may use the network", "net")
       end
       if not env_covered then
         if m.env_dynamic then
-          return say("reads the environment by a computed name")
+          return no("env_dynamic", "reads the environment by a computed name")
         end
         for _, name in ipairs(m.env) do
           if not env_listed(ctx, name) then
             if who then
               agg.env[name] = true -- a module of the project: the value joins the key
             else
-              return say(
-                ("reads environment variable '%s' that is not part of the key"):format(name)
+              return no(
+                "env",
+                ("reads environment variable '%s' that is not part of the key"):format(name),
+                nil,
+                name
               )
             end
           end
@@ -741,13 +799,13 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
   end
   local why = take(spec_info, nil, true, nil, vim.fs.dirname(spec_abs))
   if why then
-    return nil, why
+    return nil, why, detail
   end
   for _, mem in ipairs(members) do
     local w =
       take(mem.info, mem.abs:match("([^/]+)$"), mem.inside, mem.abs, vim.fs.dirname(mem.abs))
     if w then
-      return nil, w
+      return nil, w, detail
     end
   end
   return agg, nil
@@ -919,7 +977,8 @@ end
 ---@param ctx Testing.Cache.Ctx
 ---@return string|nil key
 ---@return string|nil reason
----@return string[]|nil parts The lines the key is the hash of (diagnostics, `--explain`).
+---@return string[]|nil parts The lines the key is the hash of: the ONE source of the explanation (`testing explain`, the entry's `parts`). Also returned with a `nondeterministic` refusal (then the key is in `detail.key`); nil for every other refusal.
+---@return Testing.Cache.Detail|nil detail Why there is no key, in a form a program can read; with a key: `allow_nondeterministic` (the spec declares `-- @cache-allow nondeterministic`) and `flipped` (the results the key has given when they differ, and the spec may be cached all the same).
 function M.key(file_info, ctx)
   if
     type(file_info) ~= "table"
@@ -927,42 +986,46 @@ function M.key(file_info, ctx)
     or type(ctx) ~= "table"
     or not ctx.root
   then
-    return nil, "no file or root"
+    return nil, "no file or root", nil, { kind = "input" }
   end
   local root = vim.fs.normalize(ctx.root):gsub("/+$", "")
   local rel = file_info.file:gsub("\\", "/")
   if rel:find("..", 1, true) or rel:find("^/") or rel:find("^%a:") then
-    return nil, "spec path leaves the project"
+    return nil, "spec path leaves the project", nil, { kind = "path" }
   end
   local hasher = hasher_of(ctx)
   local sha, info = analyzed(ctx, hasher, root .. "/" .. rel)
   if not sha then
-    return nil, "spec file: " .. tostring(info)
+    return nil, "spec file: " .. tostring(info), nil, { kind = "spec" }
   end
   ---@cast info Testing.Scan.Info
 
-  local dep_lines, why, absent_any, members = closure_lines(file_info, info, ctx, hasher)
+  local dep_lines, why, absent_any, members, why_detail =
+    closure_lines(file_info, info, ctx, hasher)
   if not dep_lines then
-    return nil, why
+    return nil, why, nil, why_detail or { kind = "dependency" }
   end
   ---@cast members Testing.Cache.Member[]
   -- the hidden inputs of the spec AND of everything it loads
-  local agg, why_agg = aggregate(info, root .. "/" .. rel, members, ctx, file_info.child_env ~= nil)
+  local agg, why_agg, agg_detail =
+    aggregate(info, root .. "/" .. rel, members, ctx, file_info.child_env ~= nil)
   if not agg then
-    return nil, why_agg
+    return nil, why_agg, nil, agg_detail
   end
   local outside_lines = {}
   if agg.io and agg.outside then
     local present, lines = outside_files(root, agg.outside_literals)
     if present then
       return nil,
-        ("reads a file outside the project ('%s'), which the key cannot see"):format(present)
+        ("reads a file outside the project ('%s'), which the key cannot see"):format(present),
+        nil,
+        { kind = "outside", name = present }
     end
     outside_lines = lines
   end
   local in_lines, why2 = input_lines(file_info, info, ctx, hasher, agg, absent_any)
   if not in_lines then
-    return nil, why2
+    return nil, why2, nil, { kind = "inputs" }
   end
   -- files that decide what the spec does without being required by it: the harness a dialect-h spec runs on,
   -- the project's `minit`
@@ -1002,7 +1065,26 @@ function M.key(file_info, ctx)
   vim.list_extend(parts, dep_lines)
   vim.list_extend(parts, in_lines)
   vim.list_extend(parts, outside_lines)
-  return vim.fn.sha256(table.concat(parts, "\n")), nil, parts
+  local key = vim.fn.sha256(table.concat(parts, "\n"))
+  -- KEY-FLIP (`testing.cache.keylog`): the same key has given different results before. The key is still computed
+  -- (and handed back in `detail`), but nothing is cached for it unless the spec declares `-- @cache-allow nondeterministic`
+  local allowed = false
+  for _, w in ipairs(info.directives.allow or {}) do
+    allowed = allowed or w == "nondeterministic"
+  end
+  local flip = ctx.flipped and ctx.flipped(rel, key) or nil
+  if flip and not allowed then
+    return nil,
+      ("nondeterministic: the same key gave different results (%s)"):format(
+        table.concat(flip.classes, ", ")
+      ),
+      parts,
+      { kind = "nondeterministic", key = key, classes = flip.classes }
+  end
+  return key,
+    nil,
+    parts,
+    { allow_nondeterministic = allowed, flipped = flip and flip.classes or nil }
 end
 
 ---@class Testing.Cache.Meta
@@ -1013,6 +1095,7 @@ end
 ---@field timed_out? boolean
 ---@field crashed? boolean
 ---@field partial? boolean The file ran only some of its cases.
+---@field parts? string[] The key lines (third result of `key`), kept in the entry for `testing explain`.
 
 ---Is this case list storable? Returns the reason when it is not.
 ---@param cases any
@@ -1099,6 +1182,7 @@ function M.put(key, fragment, meta, opts)
     ts = meta.ts or os.time(),
     nvim = tostring(vim.version()),
     cases = fragment,
+    parts = store.clean_parts(meta.parts),
   })
   if not ok then
     skipped("not stored: " .. tostring(err))
@@ -1110,6 +1194,32 @@ function M.put(key, fragment, meta, opts)
     pcall(store.prune, dir)
   end
   return true
+end
+
+---Delete the entry of a key (a file whose stored result proved wrong or unstable).
+---@param key string
+---@param opts? { root?: string, cache_dir?: string, dir?: string }
+---@return boolean removed
+function M.discard(key, opts)
+  return store.remove(dir_of(opts or {}), key)
+end
+
+---The most recently stored entry of every spec file (key, run, key lines): what `testing explain` compares against.
+---@param opts? { root?: string, cache_dir?: string, dir?: string }
+---@return table<string, Testing.Cache.Latest>
+function M.latest(opts)
+  return store.latest_by_file(dir_of(opts or {}))
+end
+
+---Would `key` hit? Looks at the entry like `get` does (the same validation) but changes nothing: no counter, no
+---refreshed age, no marked cases. For `testing explain`.
+---@param key string
+---@param opts { root?: string, cache_dir?: string, dir?: string, file: string }
+---@return Testing.Cache.Entry|nil entry
+---@return string|nil why
+function M.peek(key, opts)
+  local file = opts.file:gsub("\\", "/")
+  return store.read(dir_of(opts), key, { file = file, touch = false })
 end
 
 ---A cached case list, marked. Nil on a miss (the reason is the second result).
@@ -1262,7 +1372,7 @@ function M.wrap_file(runner_fn, file_info, ctx)
     skipped("case selection is active")
     return cases, { status = "uncacheable", reason = "case selection is active" }
   end
-  local key, why = M.key(file_info, ctx)
+  local key, why, parts = M.key(file_info, ctx)
   if not key then
     skipped(why or "no key")
     local cases = runner_fn()
@@ -1284,6 +1394,7 @@ function M.wrap_file(runner_fn, file_info, ctx)
     timed_out = extra.timed_out,
     crashed = extra.crashed,
     partial = extra.partial,
+    parts = parts,
   }, { root = ctx.root, cache_dir = ctx.cache_dir, prune = ctx.prune })
   return cases,
     {

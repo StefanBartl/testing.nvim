@@ -168,16 +168,34 @@ index), and the discovery that reads every spec header.
 For a **module** change the budget is out of reach by a factor of 60 - 80, and the reasons are in the selection and the
 cache, not in the runner:
 
-* 62 of 87 specs are selected for *any* module of lib.nvim, even a leaf like `lib.lua.numeral.roman`: `lib.lua.lazy`
-  and a few other modules do `require(name)` with a name they were given, a computed `require` is an edge to every
-  module, and nearly every `lib.nvim` module reaches one of them (`reaches lib.nvim.logger <- ... <-
-  lib.lua.lazy <- (computed require)`). With the one module `lazy` turned into a non-dynamic call, 46 of 87 would
-  be selected; the others (`usercmd.composer.parse`, ...) hold the rest. The lever is the call sites of such a
-  wrapper: `lazy.require("lib.x")` with a literal is an edge to `lib.x`, and the wrapper itself then reaches nothing
-  by its own account (a declaration in the wrapper, or the module graph of documentation.nvim, which has to
-  treat a wrapper that way: `documentation.nvim/testing-contract-dynamic-require`).
+* 62 of 87 specs are selected for *any* module of lib.nvim, even a leaf like `lib.lua.numeral.roman`. The earlier
+  reading of this table blamed `lib.lua.lazy` (a computed `require` is an edge to every module) and estimated 46 of 87
+  without it. **That estimate does not hold today** (re-measured 2026-10-07, see "The require wrapper" below): the
+  reasons of the 62 are, counted per spec, 30 specs that reach a module which lists directories in its own
+  surroundings (`lib.nvim.bindings.autocmd.docs`: any change reaches it), 15 specs that list directories or load files
+  themselves, 8 that reach the parent module `lib` (a package whose `init` does `require(require("lib.config").strategy_module())`),
+  6 that start a process, 2 that name the changed file, and 1 with a computed `require`.
 * Only 10 of the 87 files can be cached (30 files: a module reads the environment by a computed name; 28 read the
   clock; 9 start a process), so a selected file runs again even when its key matches.
+
+**The require wrapper (M5 lever, implemented, measured, no gain on lib.nvim).** `testing.affected.wrapped` reads the
+call sites of a module that declares `-- @require-wrapper require module fn` (see [CACHE.md](CACHE.md#affected-selection)):
+`lazy.require("lib.x")` with a literal is an edge to `lib.x`, the wrapper is no longer a dependency on everything, and a
+file that uses the wrapper in any way the scanner cannot follow stays a dependency on everything. It is sound by
+construction (the spec `affected_wrapped_spec.lua` has the uses that must stay "everything": passed on, computed or
+concatenated name, undeclared member, `pcall(require, ...)`, alias bound twice, a prefix that matches the wrapper) and
+costs nothing where no module declares it. On a copy of lib.nvim with the declaration added to `lib.lua.lazy`
+(one comment line): `--changed --list` after a change of `lua/lib/lua/numeral/roman.lua` still selects **62 of 87**, before
+and after. Switching every computed-`require` module of lib.nvim off in an experiment (`lib`, `lib.health`,
+`lib.nvim.require`, `lib.strategies.*`, ...) also leaves 62: the dynamic modules are not what holds the selection.
+What holds it are the four reasons above, none of which a wrapper declaration touches. The honest result: the lever is
+in, the budget for a module change is not closer. `scripts/bench-incremental.sh` on that copy (`lua/lib/lua/numeral/roman.lua`, `--changed --cached`, 3 runs, whole suite
+of the 62 files, the machine busy with other work during the run): 92.9 - 94.1 s, median 93.9 s (exit 1: the lib.nvim
+specs that fail on this machine), against 67.5 - 83.0 s measured before on a quiet machine: the same 62 files, so the
+difference is load, not the change. The spec edit (`TESTS/cache_spec.lua`, 5 runs, same busy machine): 2.0 - 2.3 s
+median 2.05 s (first run 5.3 s), 1 of 87 selected; the 1.26 s above were measured on a quiet machine. The next levers are the ones in the list (a module that lists
+directories in its own surroundings seeds every change; a package whose `init` computes its exports makes its parent a
+seed of every child), and each of them needs the same test as this one: a proof that nothing is dropped.
 
 So on lib.nvim the incremental loop is "about 1.3 s after editing a spec" and "one to two minutes after editing a
 module". The budget stays missed; it is not adjusted.

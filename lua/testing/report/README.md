@@ -7,10 +7,12 @@ overrides, invalid UTF-8, strings that look like workflow commands or XML).
 
 | Module | Purpose |
 |--------|---------|
-| [`testing.report`](init.lua) | Registry (`term`, `github`, `junit`) and `run_reporters(result, opts)` |
+| [`testing.report`](init.lua) | Registry (`term`, `github`, `junit`, `agent`) and `run_reporters(result, opts)` |
 | [`testing.report.term`](term.lua) | Terminal: `ok`/`FAIL` file lines, failures with `file:line`, expected/actual, line diff, durations, seed, summary |
 | [`testing.report.github`](github.lua) | GitHub Actions `::error` annotations and the `$GITHUB_STEP_SUMMARY` Markdown table |
 | [`testing.report.junit`](junit.lua) | JUnit XML: one `testsuite` per spec file, one `testcase` per case |
+| [`testing.report.agent`](agent.lua) | Compact text (or jsonl) for coding agents: the verdict first, only failures, grouped by cause, within a character budget; `choose` picks the stdout reporter from the option and the environment |
+| [`testing.report.verdict`](verdict.lua) | The three-valued verdict (`green`, `green-partial`, `red`) every reporter shows: `build`, `of`, `line`, `red_lines` |
 | [`testing.report.util`](util.lua) | Shared: `clean` (strict UTF-8 plus control-character escaping), `cap`, status classes |
 
 ## Using it

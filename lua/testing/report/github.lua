@@ -179,6 +179,12 @@ function M.render(result, opts)
     end
     lines[#lines + 1] = M.command(e.level, e.props, e.message)
   end
+  local verdict = result.run and result.run.verdict
+  if type(verdict) == "table" and verdict.kind == "green-partial" then
+    -- a run that did not look at everything must not read as plain green in the log either
+    lines[#lines + 1] =
+      M.command("notice", { title = "testing" }, require("testing.report.verdict").line(verdict))
+  end
   return lines
 end
 
@@ -213,12 +219,24 @@ function M.summary_markdown(result)
     end
   end
   local run = result.run or {}
-  local lines = {
-    "## testing.nvim: " .. (bad > 0 and "FAILED" or "passed"),
-    "",
-    "| Status | Cases |",
-    "|---|---:|",
-  }
+  local verdict = type(run.verdict) == "table" and run.verdict or nil
+  local heading = bad > 0 and "FAILED" or "passed"
+  if bad == 0 and verdict and verdict.kind == "green-partial" then
+    heading = "passed (partial, not everything was looked at)"
+  end
+  local lines = { "## testing.nvim: " .. heading, "" }
+  if verdict then
+    -- the three-valued verdict of the run (`run.verdict`): never only "passed" for a run that skipped files
+    local vmod = require("testing.report.verdict")
+    lines[#lines + 1] = "**" .. M.md_escape(vmod.line(verdict)) .. "**"
+    for _, l in ipairs(vmod.red_lines(verdict)) do
+      lines[#lines + 1] = ""
+      lines[#lines + 1] = M.md_escape(l)
+    end
+    lines[#lines + 1] = ""
+  end
+  lines[#lines + 1] = "| Status | Cases |"
+  lines[#lines + 1] = "|---|---:|"
   for _, status in ipairs(result_mod.STATUSES) do
     if counts[status] > 0 or status == "pass" then
       lines[#lines + 1] = ("| %s | %d |"):format(status, counts[status])

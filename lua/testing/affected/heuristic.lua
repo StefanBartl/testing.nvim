@@ -10,6 +10,13 @@
 ---     built from the files of the project, a literal `require("a.b")` is an edge, a computed
 ---     `require("a.dialect." .. name)` is an edge to every module below `a.dialect.`, and an
 ---     unresolvable `require(expr)` is an edge to every module;
+---   * a module that computes `require(<argument>)` for its callers (a lazy-loading wrapper) can declare it
+---     with `-- @require-wrapper <member> ...` in its first lines (the author vouches that the computed
+---     `require` is made for the first argument of those functions, and nothing else). A call site
+---     `lazy.require("a.b")` is then an edge to `a.b` and the wrapper is not a dependency on every module.
+---     A file that uses the wrapper in any other way (passes it on, calls it with a computed name, calls a
+---     member that is not declared, names it in a prefix) is a dependency on every module, as before
+---     (`testing.affected.wrapped` says which uses it can follow);
 ---   * a spec that names the changed file as a path literal is selected;
 ---   * a spec that starts a process (`vim.system`, `jobstart`, ...) runs code the graph cannot see:
 ---     it is selected whenever any module changed;
@@ -27,8 +34,8 @@
 ---     literal, and the ones that list directories or load files by path (see below);
 ---   * ANYTHING ELSE is unknown: `unknown` lists it and the caller selects ALL specs.
 ---
---- Cross-repo is out of scope: a change in a dependency checkout (lib.nvim) is not a changed file of
---- this project.
+--- Cross-repo is not decided here: a change in a dependency checkout (lib.nvim) is not a changed file of
+--- this project. `testing.affected` asks documentation.nvim for the consumers (`--consumers`).
 
 local scan = require("testing.affected.scan")
 
@@ -301,13 +308,49 @@ function M.reach(cls, specs, opts)
   end
   local any_seed = next(seeds) ~= nil
 
+  -- modules that declare `-- @require-wrapper <members>`: module -> set of members
+  ---@type table<string, table<string, true>>
+  local wrappers = {}
+  for mod, file in pairs(modules) do
+    local info = index.files[file]
+    local members = info and info.directives and info.directives.wrapper or {}
+    if #members > 0 then
+      wrappers[mod] = {}
+      for _, member in ipairs(members) do
+        wrappers[mod][member] = true
+      end
+    end
+  end
+
   -- forward edges: module -> modules it depends on
   ---@param info Testing.Scan.Info
+  ---@param is_wrapper? boolean The file is a module that declares `-- @require-wrapper`: its own computed `require` is made for its callers' arguments, and the call sites carry the edges.
   ---@return string[] deps
   ---@return boolean all Depends on every module.
-  local function deps_of(info)
+  local function deps_of(info, is_wrapper)
     local deps, seen = {}, {}
+    local all = info.dynamic and not is_wrapper
     for _, name in ipairs(info.requires) do
+      local declared = wrappers[name]
+      if declared then
+        -- a require wrapper: the call sites with a literal name are the edges, any other use of it is a
+        -- computed `require` of this file
+        local used = info.wrapped and info.wrapped[name]
+        local follows = used ~= nil
+        for _, member in ipairs(used and used.members or {}) do
+          follows = follows and declared[member] == true
+        end
+        if follows then
+          for _, lit in ipairs(used.names) do
+            if (modules[lit] or seeds[lit]) and not seen[lit] then
+              seen[lit] = true
+              deps[#deps + 1] = lit
+            end
+          end
+        else
+          all = true
+        end
+      end
       if (modules[name] or seeds[name]) and not seen[name] then
         seen[name] = true
         deps[#deps + 1] = name
@@ -316,21 +359,26 @@ function M.reach(cls, specs, opts)
     for _, pfx in ipairs(info.prefixes) do
       for _, set in ipairs({ modules, seeds }) do
         for name in pairs(set) do
-          if not seen[name] and name:sub(1, #pfx) == pfx then
-            seen[name] = true
-            deps[#deps + 1] = name
+          if name:sub(1, #pfx) == pfx then
+            if wrappers[name] then
+              all = true -- `require("a." .. x)` can name the wrapper, and then call it with anything
+            end
+            if not seen[name] then
+              seen[name] = true
+              deps[#deps + 1] = name
+            end
           end
         end
       end
     end
-    return deps, info.dynamic
+    return deps, all
   end
 
   local rev, dynamic_mods = {}, {}
   for mod, file in pairs(modules) do
     local info = index.files[file]
     if info then
-      local deps, all = deps_of(info)
+      local deps, all = deps_of(info, wrappers[mod] ~= nil)
       for _, d in ipairs(deps) do
         rev[d] = rev[d] or {}
         rev[d][#rev[d] + 1] = mod

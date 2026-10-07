@@ -31,7 +31,7 @@ Shape (the contract; reporters, cache, UI and adapters know nothing else):
   cases   = { { id, file, line?, tags, status, duration_ms, retries,
                 assertions = { { ok, kind, msg?, expected?, actual?, file?, line? } },
                 effects = { spawned, network, fs_outside_tmp }, artifacts, notes,
-                error? = { message, traceback }, reason? } },
+                error? = { message, traceback }, reason?, flaky? } },
   summary = { pass, fail, error, skip, xfail, xpass, timeout, crash } }
 ```
 

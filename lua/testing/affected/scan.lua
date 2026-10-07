@@ -26,7 +26,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 5
+M.VERSION = 7
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -70,8 +70,14 @@ M.BUILTIN = {
 ---@field dynamic boolean
 ---@field markers Testing.Scan.Markers
 ---@field paths string[] Path-like string literals (candidates for files a spec reads).
+---@field where table<string, integer> First line (1-based) of the hit of a hidden input that makes a spec uncacheable: keys `time`, `random`, `spawn`, `net` (`testing explain` names it). Absent key: the hit has no single line.
 ---@field outside_paths string[] The string literals (or words of a command string) that name a place outside the project: `../x`, `C:/x`, `~/x`, `/etc/x`.
----@field directives { off: boolean, inputs: string[], allow: string[] } `-- @cache off`, `-- @cache-inputs a b`, `-- @cache-allow time random` (the author vouches that the clock, random numbers, processes or the network a file uses do not decide what a spec sees).
+---@field wrapped table<string, Testing.Scan.Wrapped> Modules the file uses ONLY as `X.member("literal", ...)` (an alias of `require("X")` or `require("X").member("literal")`): per module the members called and the literal names passed. A module with any other use (passed on, indexed, a computed first argument, `pcall(require, "X")`) is not listed. Read by the affected heuristic for modules that declare `-- @require-wrapper`; the cache key does not use it.
+---@field directives { off: boolean, inputs: string[], allow: string[], wrapper: string[] } `-- @cache off`, `-- @cache-inputs a b`, `-- @cache-allow time random` (the author vouches that the clock, random numbers, processes or the network a file uses do not decide what a spec sees), `-- @require-wrapper require module fn` (the module computes `require(<argument>)`, and only for the first argument of the listed functions: see `testing.affected.heuristic`).
+
+---@class Testing.Scan.Wrapped
+---@field members string[] Sorted, unique.
+---@field names string[] Sorted, unique: the module names passed as the first argument.
 
 ---@param s string
 ---@return boolean
@@ -220,14 +226,32 @@ end
 ---@param text string Text without comments.
 ---@return Testing.Scan.Markers
 ---@return string[] outside_paths
+---@return table<string, integer> where
 local function scan_markers(code, text)
-  local function any(patterns)
+  local where = {}
+  ---@param patterns string[]
+  ---@param key? string Records the line of the first hit in `where[key]`.
+  ---@return boolean
+  local function any(patterns, key)
+    if not key then
+      for _, p in ipairs(patterns) do
+        if code:find(p) then
+          return true
+        end
+      end
+      return false
+    end
+    local best
     for _, p in ipairs(patterns) do
-      if code:find(p) then
-        return true
+      local at = code:find(p)
+      if at and (not best or at < best) then
+        best = at
       end
     end
-    return false
+    if best then
+      where[key] = select(2, code:sub(1, best - 1):gsub("\n", "")) + 1
+    end
+    return best ~= nil
   end
   ---Does a table that holds hidden inputs travel on without a member access (`local o = os`)?
   ---@param name string A Lua pattern.
@@ -263,13 +287,15 @@ local function scan_markers(code, text)
       "vim%.fn%[",
       "vim%.uv%[",
       "vim%.loop%[",
-    }) or aliased("os") or aliased("vim%.fn") or aliased("vim%.uv") or aliased("vim%.loop"),
+    }, "time") or aliased("os") or aliased("vim%.fn") or aliased("vim%.uv") or aliased(
+      "vim%.loop"
+    ),
     random = any({
       "%.random%s*%(", -- math.random, uv.random
       "vim%.fn%.rand%f[%W]",
       "vim%.fn%.srand",
       "%f[%w]randomseed%f[%W]",
-    }),
+    }, "random"),
     spawn = any({
       "vim%.system%f[%W]",
       "jobstart",
@@ -285,7 +311,7 @@ local function scan_markers(code, text)
       "vim%.fn%.jobstart",
       "libuv_spawn",
       "run_argv",
-    }),
+    }, "spawn"),
     net = any({
       "curl",
       "tcp_connect",
@@ -295,7 +321,7 @@ local function scan_markers(code, text)
       "getnameinfo",
       "vim%.net",
       "http_request",
-    }),
+    }, "net"),
     io = any({
       "io%.open",
       "io%.lines",
@@ -436,7 +462,7 @@ local function scan_markers(code, text)
   while #outside_paths > 50 do
     outside_paths[#outside_paths] = nil
   end
-  return m, outside_paths
+  return m, outside_paths, where
 end
 
 ---Largest number of path-like literals kept per file.
@@ -483,20 +509,26 @@ local function scan_paths(text)
 end
 
 ---Hidden inputs a file may vouch for with `-- @cache-allow`.
+---(`nondeterministic` lifts the mark that the key-flip detection puts on a file whose result changed under an
+---unchanged key: see `testing.cache.keylog`.)
 ---@type table<string, true>
-local ALLOWABLE = { time = true, random = true, spawn = true, net = true }
+local ALLOWABLE = { time = true, random = true, spawn = true, net = true, nondeterministic = true }
 
 ---`-- @cache off`, `-- @cache-inputs a b c` and `-- @cache-allow time` in the first lines of a file.
 ---@param text string
 ---@return { off: boolean, inputs: string[], allow: string[] }
 local function scan_directives(text)
-  local d = { off = false, inputs = {}, allow = {} }
+  local d = { off = false, inputs = {}, allow = {}, wrapper = {} }
   local allowed = {}
   local n = 0
   for line in text:gmatch("[^\r\n]*") do
     n = n + 1
     if n > M.HEADER_LINES then
       break
+    end
+    local members = require("testing.affected.wrapped").directive(line)
+    if members then
+      vim.list_extend(d.wrapper, members)
     end
     local body = line:match("^%s*%-%-%s*@cache%s+(.-)%s*$")
     if body and body:match("^off%f[%W]") then
@@ -530,7 +562,7 @@ function M.analyze(text)
   local nocomment = lua_text.strip_comments(text)
   local code = lua_text.code_only(text)
   local reqs, prefs, dynamic = scan_requires(nocomment)
-  local markers, outside_paths = scan_markers(code, nocomment)
+  local markers, outside_paths, where = scan_markers(code, nocomment)
   return {
     requires = uniq_sorted(reqs),
     prefixes = uniq_sorted(prefs),
@@ -538,7 +570,9 @@ function M.analyze(text)
     markers = markers,
     paths = scan_paths(text),
     outside_paths = outside_paths,
+    where = where,
     directives = scan_directives(text),
+    wrapped = require("testing.affected.wrapped").scan(nocomment, reqs),
   }
 end
 
@@ -576,7 +610,7 @@ function M.valid_info(raw)
       and string_list(raw.outside_paths, 50)
       and string_list(m.env, 500)
       and string_list(d.inputs, 50)
-      and string_list(d.allow, 4)
+      and string_list(d.allow, 5)
       and type(d.off) == "boolean"
     )
   then
@@ -599,8 +633,24 @@ function M.valid_info(raw)
       return nil
     end
   end
+  local wrapper = d.wrapper == nil and {} or d.wrapper
+  local wrapped = raw.wrapped == nil and {} or raw.wrapped
+  wrapped = require("testing.affected.wrapped").valid(wrapped)
+  if not (string_list(wrapper, 8) and wrapped) then
+    return nil
+  end
+  local where = {}
+  if type(raw.where) == "table" then
+    for _, k in ipairs({ "time", "random", "spawn", "net" }) do
+      local n = raw.where[k]
+      if type(n) == "number" and n >= 1 and n == math.floor(n) and n < 1e9 then
+        where[k] = n
+      end
+    end
+  end
   return {
     requires = vim.list_slice(raw.requires, 1),
+    where = where,
     prefixes = vim.list_slice(raw.prefixes, 1),
     dynamic = raw.dynamic,
     paths = vim.list_slice(raw.paths, 1),
@@ -623,7 +673,9 @@ function M.valid_info(raw)
       off = d.off,
       inputs = vim.list_slice(d.inputs, 1),
       allow = vim.list_slice(d.allow, 1),
+      wrapper = vim.list_slice(wrapper, 1),
     },
+    wrapped = wrapped,
   }
 end
 

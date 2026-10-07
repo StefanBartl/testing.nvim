@@ -51,8 +51,11 @@ M.EXIT_INFRA = 3
 ---@field state_dir? string Overrides `stdpath('state')` (history).
 ---@field cache_dir? string Overrides `stdpath('cache')` (the result cache, specs).
 ---@field cache? table Replaces `testing.cache` (specs).
+---@field audit_salt? string Fixes which hits a fractional `--cache-audit` picks (specs).
 ---@field affected? Testing.Run.AffectedSeams Replaces single seams of the affected selection (specs).
 ---@field color? boolean Overrides the colour decision of the terminal reporter.
+---@field env? table<string, string|nil> The environment names that choose the reporter (`TESTING_REPORTER`, `TESTING_AGENT`, `AI_AGENT`, `CLAUDECODE`); only the entry script sets it.
+---@field script? string Path of the entry script, for the `rerun:` line of the agent reporter.
 
 local guard_count = 0
 
@@ -181,10 +184,11 @@ end
 
 ---The reporters to run on the real IR and on the sanitized one.
 ---@param args Testing.Args
----@return string|nil stdout_reporter `term` (default), `github`, `junit` or `json`
+---@param effective? string The reporter `resolve_reporter` chose (option, `TESTING_REPORTER`, agent environment).
+---@return string|nil stdout_reporter `term` (default), `github`, `junit`, `json` or `agent`
 ---@return Testing.Report.Spec[] sanitized_specs
-local function reporter_plan(args)
-  local primary = args.reporter or "term"
+local function reporter_plan(args, effective)
+  local primary = effective or args.reporter or "term"
   local sanitized = {}
   if primary == "github" or primary == "junit" then
     sanitized[#sanitized + 1] = { name = primary }
@@ -197,6 +201,38 @@ local function reporter_plan(args)
     sanitized[#sanitized + 1] = { name = "junit", path = path }
   end
   return primary, sanitized
+end
+
+---The stdout reporter of this run: `--reporter`, `TESTING_REPORTER`, an agent environment, else `term`
+---(see `testing.report.agent.choose`; the environment comes from the entry point through `sv.env`).
+---@param args Testing.Args
+---@param sv Testing.Run.Services
+---@return string|nil reporter
+---@return string|nil err A usage problem (exit code 2).
+---@return string|nil how
+function M.resolve_reporter(args, sv)
+  local name, err, how = require("testing.report.agent").choose(args.reporter, sv.env)
+  if err then
+    return nil, err
+  end
+  name = name or "term"
+  if name ~= "agent" and (args.format ~= nil or args.agent_budget ~= nil) then
+    return nil, "--format and --agent-budget belong to the agent reporter (--reporter agent)"
+  end
+  return name, nil, how
+end
+
+---Options of the agent reporter: the flags, and the command a `rerun:` line starts with.
+---@param sv Testing.Run.Services
+---@param args Testing.Args
+---@return table opts
+local function agent_options(sv, args)
+  local o = { budget = args.agent_budget, format = args.format }
+  if type(sv.script) == "string" and sv.script ~= "" then
+    o.command = "nvim -n -i NONE --headless -u NONE -l "
+      .. vim.fn.fnamemodify(sv.script, ":."):gsub("\\", "/")
+  end
+  return o
 end
 
 ---@param sv Testing.Run.Services
@@ -327,6 +363,67 @@ local function print_no_case(res, out)
   end
 end
 
+---@class Testing.Run.VerdictInput
+---@field plan Testing.Cli.RunPlan
+---@field sv Testing.Run.Services
+---@field report Testing.Inproc.Report
+---@field total integer Spec files discovered.
+---@field selected integer Spec files selected for the run.
+---@field selection string|nil What narrowed the files (affected flag).
+---@field case_selection boolean A case filter, tag selection or `--lf` applied.
+---@field err fun(s: string)
+
+---The three-valued verdict of the run (`testing.report.verdict`), with the last green run and what changed
+---since when the run is red. Never raises: what cannot be read is a note.
+---@param o Testing.Run.VerdictInput
+---@return Testing.Verdict
+local function run_verdict(o)
+  local verdict_mod = require("testing.report.verdict")
+  local args, root = o.plan.args, o.plan.root
+  local report = o.report
+  local pieces = {}
+  if o.selection then
+    pieces[#pieces + 1] = o.selection
+  end
+  if args.shard then
+    pieces[#pieces + 1] = ("--shard %d/%d"):format(args.shard.index, args.shard.count)
+  elseif #args.paths > 0 then
+    pieces[#pieces + 1] = "path"
+  end
+  if #args.file > 0 then
+    pieces[#pieces + 1] = "--file"
+  end
+  local facts = {
+    exit_code = report.exit_code,
+    files_total = o.total,
+    files_selected = o.selected,
+    files_cached = report.files_cached or 0,
+    files_unrun = report.files_unrun or 0,
+    cases_total = #o.report.result.cases,
+    cases_skipped = report.skipped or 0,
+    selection = #pieces > 0 and table.concat(pieces, ", ") or nil,
+    case_selection = o.case_selection,
+  }
+  if report.exit_code ~= M.EXIT_OK then
+    local green = require("testing.run.green")
+    local lok, rec, note = pcall(green.load, root, { state_dir = o.sv.state_dir })
+    if lok and note then
+      o.err("testing: note: " .. note)
+    end
+    if lok and rec then
+      facts.last_green = { ts = rec.ts, sha = rec.sha }
+      local cok, files, cnote =
+        pcall(green.changed_since, root, rec, { run = o.sv.affected and o.sv.affected.run or nil })
+      if cok and files then
+        facts.changed_since = verdict_mod.changed_since_of(files)
+      elseif cok and cnote then
+        o.err("testing: note: last green run: what changed since cannot be listed: " .. cnote)
+      end
+    end
+  end
+  return verdict_mod.build(facts)
+end
+
 ---Execute one run of a project.
 ---@param plan Testing.Cli.RunPlan
 ---@param sv Testing.Run.Services
@@ -390,6 +487,11 @@ function M.execute_run(plan, sv, run_opts, err)
   local inproc = sv.inproc or require("testing.run.inproc")
   local select_mod = require("testing.run.select")
   local options_mod = require("testing.run.options")
+  local reporter_name, reporter_err = M.resolve_reporter(args, sv)
+  if not reporter_name then
+    err("testing: " .. tostring(reporter_err))
+    return M.EXIT_USAGE
+  end
   local mok, merr = run_minit(root, cfg)
   if not mok then
     err("testing: " .. tostring(merr))
@@ -473,6 +575,15 @@ function M.execute_run(plan, sv, run_opts, err)
       for _, note in ipairs(sel.notes) do
         err("testing: note: " .. note)
       end
+      -- the consumers (`--consumers`): a hint about OTHER repositories, printed on stdout for `--list` (that
+      -- is the answer) and as notes otherwise; it has no part in what runs here
+      for _, line in ipairs(sel.cross or {}) do
+        if args.list then
+          out(M.safe_line(line))
+        else
+          err("testing: note: " .. M.safe_line(line))
+        end
+      end
       if #sel.files < #files then
         selection_label = sel.label
       end
@@ -519,6 +630,46 @@ function M.execute_run(plan, sv, run_opts, err)
         return f.rel
       end, by_file)
     end
+  end
+
+  -- order: priority (orders, never filters: the set of files is the one selected above)
+  local order_info
+  if args.order == "priority" then
+    local order_mod = require("testing.run.order")
+    local specs, rels = {}, {}
+    for _, f in ipairs(ordered) do
+      specs[#specs + 1] = f.rel
+    end
+    for _, f in ipairs(files) do
+      rels[#rels + 1] = f.rel
+    end
+    local history, changed, graph, onotes = order_mod.facts({
+      root = root,
+      specs = specs,
+      roots = cfg.roots,
+      state_dir = sv.state_dir,
+      affected = sv.affected and sv.affected.affected or nil,
+      select_over = sv.affected,
+      no_cache = args.no_cache == true,
+    })
+    for _, note in ipairs(onotes) do
+      err("testing: note: order: " .. note)
+    end
+    local by_rel = {}
+    for _, f in ipairs(files) do
+      by_rel[f.rel] = f
+    end
+    local list, info, signal = order_mod.priority(rels, history, changed, graph)
+    if not signal then
+      err(
+        "testing: note: order: nothing tells the files apart (no remembered failure, no change, no run state): discovery order kept"
+      )
+    end
+    files = {}
+    for _, rel in ipairs(list) do
+      files[#files + 1] = by_rel[rel]
+    end
+    order_info = info
   end
 
   -- order: shuffle
@@ -568,6 +719,10 @@ function M.execute_run(plan, sv, run_opts, err)
       if not seen[it.file] then
         seen[it.file] = true
         nfiles = nfiles + 1
+        local oi = order_info and order_info[it.file]
+        if oi then
+          out(safe(("order %d  %s  (%s)"):format(oi.rank, it.file, oi.reason)))
+        end
       end
       out(safe(("%s%s"):format(it.id, it.note and ("  (" .. it.note .. ")") or "")))
     end
@@ -637,6 +792,8 @@ function M.execute_run(plan, sv, run_opts, err)
     seed = seed,
     cache_dir = sv.cache_dir,
     cache = sv.cache,
+    state_dir = sv.state_dir,
+    audit_salt = sv.audit_salt,
     getenv = sv.affected and sv.affected.getenv or nil,
   })
   if prep.why_off then
@@ -657,9 +814,56 @@ function M.execute_run(plan, sv, run_opts, err)
     common.on_output = function(rel, text)
       err(output_block(rel, text))
     end
+    if args.order == "slowest-first" and (run_opts.jobs or 1) > 1 then
+      -- the children start in this order; the IR stays in file order (`testing.run.slowest`)
+      local weights, wnotes = require("testing.run.slowest").weights(root, cfg, sv.state_dir)
+      for _, note in ipairs(wnotes) do
+        err("testing: note: order: " .. note)
+      end
+      common.dispatch_weights = weights
+    elseif args.order == "slowest-first" then
+      err(
+        "testing: note: order: slowest-first needs --jobs 2 or more (one child at a time runs in file order)"
+      )
+    end
     ok, report = pcall((sv.isolated or require("testing.run.isolated")).run, common)
   else
+    if args.order == "slowest-first" then
+      err(
+        "testing: note: order: slowest-first changes only when child editors start (--isolated file|case with --jobs 2 or more); nothing to order here"
+      )
+    end
     ok, report = pcall(inproc.run, common)
+  end
+  local retry_info
+  if ok and args.retry_failed then
+    -- `--retry-failed`: a red case runs again; one that passes is flaky and the run stays red
+    local retry_mod = require("testing.run.retry")
+    local function rerun(list)
+      local again = vim.tbl_extend("force", common, { files = list, maxfail = nil, findings = {} })
+      local runner = inproc
+      if options_mod.any_isolated(run_opts, list) then
+        runner = sv.isolated or require("testing.run.isolated")
+      end
+      local rok, rreport = pcall(runner.run, again)
+      if not rok then
+        return nil, tostring(rreport)
+      end
+      return rreport
+    end
+    local rok, rinfo = pcall(retry_mod.apply, report, {
+      retries = args.retry_failed,
+      allow_flaky = args.allow_flaky,
+      strict = args.strict,
+      files = prep.run_files,
+      rerun = rerun,
+      bad = inproc.BAD,
+    })
+    if rok then
+      retry_info = rinfo
+    else
+      err("testing: note: --retry-failed did not run: " .. tostring(rinfo))
+    end
   end
   release()
   if not ok then
@@ -671,7 +875,7 @@ function M.execute_run(plan, sv, run_opts, err)
       cached_mod.finish,
       prep,
       report,
-      { cache = sv.cache, cache_dir = sv.cache_dir, root = root }
+      { cache = sv.cache, cache_dir = sv.cache_dir, root = root, state_dir = sv.state_dir }
     )
     if not fok then
       err("testing: note: the cache could not be merged into the report: " .. tostring(ferr))
@@ -704,10 +908,31 @@ function M.execute_run(plan, sv, run_opts, err)
     return M.EXIT_USAGE
   end
   -- 6. reporters
-  local primary, sanitized_specs = reporter_plan(args)
+  if order_info then
+    -- the files ran in priority order; the IR (and every report) stays in discovery order
+    local discovery = {}
+    for _, f in ipairs(ordered) do
+      discovery[#discovery + 1] = f.rel
+    end
+    require("testing.run.order").restore(res, discovery)
+  end
+  local primary, sanitized_specs = reporter_plan(args, reporter_name)
   local reports = require("testing.report")
   local code = report.exit_code
   local infra_failed = false
+  -- the verdict is part of the IR (`run.verdict`): every reporter and the `--json` file say the same thing
+  local verdict = run_verdict({
+    plan = plan,
+    sv = sv,
+    report = report,
+    total = total,
+    selected = #files,
+    selection = selection_label,
+    case_selection = selector.active or lf_by_file ~= nil,
+    err = err,
+  })
+  res.run.verdict = verdict
+  local quiet = primary == "agent"
 
   ---@param outputs Testing.Report.Output[]
   ---@param errors string[]
@@ -729,6 +954,12 @@ function M.execute_run(plan, sv, run_opts, err)
     emit(reports.run_reporters(res, {
       reporters = { "term" },
       defaults = { term = term_options(sv, args, #res.cases) },
+    }))
+  elseif primary == "agent" then
+    -- the real IR, like `term`: paths are made relative by the reporter itself
+    emit(reports.run_reporters(res, {
+      reporters = { "agent" },
+      defaults = { agent = agent_options(sv, args) },
     }))
   end
   local need_ir = #sanitized_specs > 0 or primary == "json" or args.json ~= nil
@@ -769,7 +1000,17 @@ function M.execute_run(plan, sv, run_opts, err)
     print_unasserted(res, out)
     print_no_case(res, out)
   end
-  if report.stopped and report.files_unrun > 0 then
+  if retry_info then
+    -- flaky is never silent: the list is part of the output (stderr when stdout belongs to a machine format)
+    for _, line in ipairs(require("testing.run.retry").lines(retry_info)) do
+      if primary == "term" then
+        out(safe(line))
+      else
+        err("testing: note: " .. safe(line))
+      end
+    end
+  end
+  if report.stopped and report.files_unrun > 0 and not quiet then
     out(
       ("\nstopped after %d failure(s) (--maxfail %d): %d file(s) not run"):format(
         report.failed,
@@ -787,8 +1028,17 @@ function M.execute_run(plan, sv, run_opts, err)
     else
       err("testing: note: " .. cache_line)
     end
+    -- the findings of `--cache-audit` (`cache.stale_pass`): file, what differs, the first key lines
+    for _, line in ipairs(cached_mod.audit_lines(prep)) do
+      line = safe_output_line(line)
+      if primary == "term" then
+        out(line)
+      else
+        err("testing: " .. line)
+      end
+    end
   end
-  if args.timings then
+  if args.timings and not quiet then
     out(
       (cache_line and primary == "term") and inproc.timing_line(res)
         or ("\n" .. inproc.timing_line(res))
@@ -819,13 +1069,39 @@ function M.execute_run(plan, sv, run_opts, err)
   if not hok then
     err("testing: note: history not updated: " .. tostring(herr))
   end
+  -- what `--order priority` and a red verdict need next time: when each file ran, how long it took, the last full green run
+  if not infra_failed then
+    local state_ok, state_err = pcall(function()
+      local rok, rerr = require("testing.run.order").record_state(root, res, {
+        state_dir = sv.state_dir,
+        partial = selector.active or lf_by_file ~= nil,
+        known_files = known,
+      })
+      if not rok then
+        err("testing: note: " .. tostring(rerr))
+      end
+      if verdict.kind == "green" then
+        local gok, gerr = require("testing.run.green").record(root, res, {
+          state_dir = sv.state_dir,
+          run = sv.affected and sv.affected.run or nil,
+        })
+        if not gok then
+          err("testing: note: " .. tostring(gerr))
+        end
+      end
+    end)
+    if not state_ok then
+      err("testing: note: run state not updated: " .. tostring(state_err))
+    end
+  end
 
   if infra_failed then
     return M.EXIT_INFRA
   end
 
-  -- the sentinel: last line, only for a complete, green run without a skipped case
-  if code == M.EXIT_OK then
+  -- the sentinel: last line, only for a complete, green run without a skipped case. The agent reporter says
+  -- the same in its first line (`GREEN` only where this prints the sentinel), and prints neither.
+  if code == M.EXIT_OK and not quiet then
     local partial_files = #files < total
     if selection_label and not selector.active and lf_by_file == nil then
       out(

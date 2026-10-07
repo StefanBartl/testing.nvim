@@ -36,9 +36,16 @@
 ---   * specs that start a process (their code under test is invisible to any graph) are added whenever
 ---     a module changed.
 ---
---- Cross-repo (a change in lib.nvim selecting the specs of its consumers) is NOT done here: a changed
---- file of another checkout is not a changed file of this project. It needs `core/consumers.lua`
---- (documentation.nvim) in the contract.
+--- CROSS-REPO (a change in lib.nvim and the specs of its consumers). A changed file of another checkout is
+--- not a changed file of this project, so the selection above never contains a spec of another repository.
+--- With `opts.consumers` (a directory of sibling checkouts, named by the caller: `--consumers`, or the
+--- `affected.consumers` key of `.testing.lua`) the provider is asked for `cross_repo` as well, and the
+--- answer is returned as `result.cross_repo`: per consumer the affected specs (relative to the consumer's
+--- own root), or `measured = false` with the reason. It is a HINT and only added: it never makes this
+--- project's selection smaller or bigger, and "not measured" is not "not affected" (`M.cross_lines` says
+--- so, and a consumer that is not below the directory at all is invisible). Without documentation.nvim, or
+--- with an answer that has no `cross_repo` (an older contract), nothing changes. The reverse direction (a
+--- spec that loads lib.nvim) is covered by the cache key: it holds the lib.nvim files the spec loads.
 
 local heuristic = require("testing.affected.heuristic")
 
@@ -140,6 +147,7 @@ end
 ---@field analyze? fun(path: string): Testing.Scan.Info|nil Replaces the analysis cache of the heuristic (default: the hash index of `testing.cache`, so an unchanged file is not read again).
 ---@field cache_dir? string Replaces `stdpath('cache')` for that index (specs).
 ---@field no_cache? boolean `--no-cache`: the analysis index on disk is neither read nor written (every file is read and analysed again).
+---@field consumers? string Directory with the checkouts of the projects that use this one (the caller names it, absolute): passed to the provider, its `cross_repo` is returned in `result.cross_repo` and changes nothing else.
 
 ---@class Testing.Affected.Result
 ---@field files string[] Selected specs, in the order of `opts.specs`.
@@ -152,6 +160,10 @@ end
 ---@field warnings string[]
 ---@field ci boolean CI was detected.
 ---@field graph? table The `graph` metadata the provider returned.
+---@field cross_repo Testing.Affected.CrossRepo[] The consumers the change reaches or that nobody could measure (empty without `opts.consumers`, without an answer, with a malformed one). Never part of `files`.
+---@field cross_dir? string `opts.consumers` as it was asked.
+---@field cross_asked? boolean The provider answered and its `cross_repo` was looked at (false: the selection ended before it was asked, or it did not answer).
+---@field cross_note? string What documentation.nvim said about the consumers directory (it could not be looked at).
 
 ---@param specs string[]
 ---@param why string
@@ -172,6 +184,7 @@ local function select_all(specs, why, extra)
     changed = {},
     warnings = {},
     ci = false,
+    cross_repo = {},
   }, extra)
 end
 
@@ -244,6 +257,206 @@ local function valid_answer(res)
   return res
 end
 
+---Most consumers, specs and modules per consumer, and bytes per name kept from a `cross_repo` answer: the
+---answer is data from another plugin, never trusted for its size.
+M.MAX_CONSUMERS = 200
+M.MAX_CROSS_ITEMS = 5000
+M.MAX_CROSS_NAME = 300
+
+---A short plain string: no control characters, bounded.
+---@param s any
+---@param max? integer
+---@return boolean
+local function plain_text(s, max)
+  return type(s) == "string" and s ~= "" and #s <= (max or M.MAX_CROSS_NAME) and not s:find("%c")
+end
+
+---A path relative to the consumer's root: no drive, no leading slash, no `..`, no control characters.
+---@param s any
+---@return boolean
+local function relative_path(s)
+  if not plain_text(s) or s:find("\\", 1, true) or s:sub(1, 1) == "/" or s:match("^%a:") then
+    return false
+  end
+  for seg in s:gmatch("[^/]+") do
+    if seg == ".." then
+      return false
+    end
+  end
+  return true
+end
+
+---A list of at most `M.MAX_CROSS_ITEMS` entries that all pass `check`; a copy.
+---@param v any
+---@param check fun(s: any): boolean
+---@return string[]|nil
+local function checked_list(v, check)
+  if v == nil then
+    return {}
+  end
+  if type(v) ~= "table" or #v > M.MAX_CROSS_ITEMS then
+    return nil
+  end
+  local out, n = {}, 0
+  for _ in pairs(v) do
+    n = n + 1
+  end
+  if n ~= #v then
+    return nil
+  end
+  for i, s in ipairs(v) do
+    if not check(s) then
+      return nil
+    end
+    out[i] = s
+  end
+  return out
+end
+
+---The `cross_repo` field of an answer, validated: a list of consumers, each `{ repo, measured, ... }`.
+---An answer without the field (an older contract) is an empty list; an answer of another `version`, or one
+---that is malformed anywhere, is no answer at all (`nil` and why): a half-read consumer list would look like
+---a complete one.
+---@param res table The (already accepted) answer.
+---@return Testing.Affected.CrossRepo[]|nil clean
+---@return string|nil why
+function M.clean_cross(res)
+  if res.cross_repo == nil then
+    return {}, nil
+  end
+  if res.version ~= 1 then
+    return nil,
+      ("cross_repo comes with contract version %s, only 1 is understood"):format(
+        tostring(res.version)
+      )
+  end
+  local raw = res.cross_repo
+  if type(raw) ~= "table" or #raw > M.MAX_CONSUMERS then
+    return nil, "cross_repo must be a list of at most " .. M.MAX_CONSUMERS .. " consumers"
+  end
+  local count = 0
+  for _ in pairs(raw) do
+    count = count + 1
+  end
+  if count ~= #raw then
+    return nil, "cross_repo must be a list"
+  end
+  local out = {}
+  for i, c in ipairs(raw) do
+    local at = ("cross_repo[%d]"):format(i)
+    if type(c) ~= "table" then
+      return nil, at .. " is not a table"
+    end
+    if not plain_text(c.repo, 200) or c.repo:find("[/\\]") then
+      return nil, at .. ".repo must be a plain directory name"
+    end
+    if type(c.measured) ~= "boolean" then
+      return nil, at .. ".measured must be a boolean"
+    end
+    for _, key in ipairs({ "stale", "uncovered" }) do
+      if c[key] ~= nil and type(c[key]) ~= "boolean" then
+        return nil, ("%s.%s must be a boolean"):format(at, key)
+      end
+    end
+    if c.reason ~= nil and not plain_text(c.reason) then
+      return nil, at .. ".reason must be a short plain string"
+    end
+    local specs = checked_list(c.specs, relative_path)
+    local unplaced = checked_list(c.unplaced_specs, relative_path)
+    local modules = checked_list(c.modules, plain_text)
+    if not specs or not unplaced or not modules then
+      return nil,
+        at .. ": specs, unplaced_specs and modules must be bounded lists of plain relative names"
+    end
+    if not c.measured and not c.reason then
+      return nil, at .. " is not measured and says no reason"
+    end
+    out[#out + 1] = {
+      repo = c.repo,
+      measured = c.measured,
+      reason = c.reason,
+      stale = c.stale == true,
+      uncovered = c.uncovered == true,
+      specs = specs,
+      unplaced_specs = unplaced,
+      modules = modules,
+    }
+  end
+  return out, nil
+end
+
+---@class Testing.Affected.CrossRepo
+---@field repo string Directory name of the consumer checkout.
+---@field measured boolean false: nobody looked (`reason` says why): the whole suite of that repository is the answer.
+---@field reason? string
+---@field stale boolean The consumer's own module map is older than its code.
+---@field uncovered boolean The consumer is affected and no spec of it covers the change.
+---@field specs string[] Specs of the consumer (relative to ITS root) that reach the change.
+---@field unplaced_specs string[] Specs of the consumer the graph cannot place: run them too.
+---@field modules string[] Consumer modules that reach the change.
+
+---The lines that say what a cross-repo answer means, for a person (or an agent) to read. Every name in them
+---was validated by `clean_cross`; the caller still prints them as plain text.
+---@param r Testing.Affected.Result
+---@return string[] lines Empty without `r.cross_dir` (nobody asked for consumers).
+function M.cross_lines(r)
+  local lines = {}
+  if r.cross_dir == nil then
+    return lines
+  end
+  local cross, dir, note = r.cross_repo or {}, r.cross_dir, r.cross_note
+  local function names(list, max)
+    local shown = vim.list_slice(list, 1, max)
+    local text = table.concat(shown, ", ")
+    if #list > max then
+      text = text .. (", ... (%d more)"):format(#list - max)
+    end
+    return text
+  end
+  for _, c in ipairs(cross) do
+    if not c.measured then
+      lines[#lines + 1] = ("cross-repo: %s: not measured (%s): run the full suite of this repository"):format(
+        c.repo,
+        c.reason or "no reason given"
+      )
+    else
+      local line = ("cross-repo: %s: %d spec(s) reach the change"):format(c.repo, #c.specs)
+      if #c.specs > 0 then
+        line = line .. ": " .. names(c.specs, 10)
+      end
+      if c.uncovered then
+        line = line .. "; no spec of it covers the change"
+      end
+      if #c.unplaced_specs > 0 then
+        line = line .. ("; %d spec(s) it cannot place (run them too)"):format(#c.unplaced_specs)
+      end
+      if c.stale then
+        line = line .. "; its own module map is stale (run its full suite)"
+      end
+      lines[#lines + 1] = line
+    end
+  end
+  if note then
+    lines[#lines + 1] = "cross-repo: " .. note
+  elseif not r.cross_asked then
+    local said = false
+    for _, w in ipairs(r.warnings or {}) do
+      said = said or w:sub(1, 11) == "cross-repo:"
+    end
+    if not said then
+      lines[#lines + 1] =
+        "cross-repo: not asked: the selection ended before documentation.nvim was consulted (no consumer was measured)"
+    end
+  elseif #cross == 0 then
+    lines[#lines + 1] =
+      "cross-repo: no consumer below the directory is affected (one that could not be measured would be listed)"
+  end
+  lines[#lines + 1] = ("cross-repo: a consumer that is not below %s is invisible here; a consumer that is not measured is not unaffected"):format(
+    dir
+  )
+  return lines
+end
+
 ---Is `res` an answer in the shape of the documentation.nvim contract? (specs: the recorded real answers.)
 ---@param res any
 ---@return table|nil clean
@@ -273,6 +486,7 @@ local function ask_graph(opts, changed)
     root = opts.root,
     changed = vim.deepcopy(changed),
     spec_roots = opts.roots and vim.deepcopy(opts.roots) or nil,
+    consumers = opts.consumers,
   })
   if not ok then
     return nil, "documentation.testing.affected_specs failed: " .. tostring(res)
@@ -294,7 +508,7 @@ function M.select(opts)
   local specs = opts.specs or {}
   local ci = M.in_ci(opts.getenv)
   local warnings = {}
-  local base = { ci = ci, warnings = warnings }
+  local base = { ci = ci, warnings = warnings, cross_dir = opts.consumers }
   if ci and opts.implicit then
     return select_all(specs, "CI: --affected is never the default, the whole suite runs here", base)
   end
@@ -367,6 +581,24 @@ function M.select(opts)
     local answer, why = ask_graph(opts, changed_modules)
     if answer then
       graph = answer.graph
+      if opts.consumers ~= nil then
+        -- additive: whatever the consumers answer, it does not touch the selection below
+        base.cross_asked = true
+        local cross, cross_why = M.clean_cross(answer)
+        if not cross then
+          warnings[#warnings + 1] = ("cross-repo: the answer cannot be used (%s): no consumer was measured"):format(
+            tostring(cross_why)
+          )
+        elseif answer.cross_repo == nil then
+          warnings[#warnings + 1] =
+            "cross-repo: documentation.nvim answered without cross_repo (an older contract): no consumer was measured"
+        else
+          base.cross_repo = cross
+        end
+        if plain_text(graph.cross_repo_note) then
+          base.cross_note = graph.cross_repo_note
+        end
+      end
       if graph.stale then
         return select_all(
           specs,
@@ -467,10 +699,15 @@ function M.select(opts)
       end
       source = "graph"
     elseif opts.provider ~= false then
+      if opts.consumers ~= nil then
+        warnings[#warnings + 1] = "cross-repo: no consumer was measured (" .. tostring(why) .. ")"
+      end
       warnings[#warnings + 1] = "module graph not used: "
         .. tostring(why)
         .. " (built-in heuristic)"
     end
+  elseif opts.consumers ~= nil then
+    base.cross_note = "no module of this project changed: no consumer is affected by it"
   end
 
   -- 3. the built-in heuristic (also the only source when no module changed)
@@ -506,6 +743,10 @@ function M.select(opts)
     warnings = warnings,
     ci = ci,
     graph = graph,
+    cross_repo = base.cross_repo or {},
+    cross_dir = opts.consumers,
+    cross_asked = base.cross_asked == true,
+    cross_note = base.cross_note,
   }
 end
 

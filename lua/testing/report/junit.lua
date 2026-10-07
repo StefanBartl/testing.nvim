@@ -244,6 +244,7 @@ function M.render(result, opts)
       { "nvim", run.nvim },
       { "os", run.os },
       { "seed", run.seed },
+      { "verdict", type(run.verdict) == "table" and run.verdict.kind or nil },
     }) do
       if kv[2] ~= nil then
         props[#props + 1] = ('      <property name="%s" value="%s"/>'):format(kv[1], M.attr(kv[2]))

@@ -868,6 +868,12 @@ local function validate_cases(cases, problems)
       if not is_int(c.retries) or c.retries < 0 then
         problems[#problems + 1] = at .. ".retries: must be an integer >= 0"
       end
+      if c.flaky ~= nil and type(c.flaky) ~= "boolean" then
+        problems[#problems + 1] = at .. ".flaky: must be a boolean"
+      end
+      if c.flaky == true and c.retries == 0 then
+        problems[#problems + 1] = at .. ".flaky: a flaky case has passed on a retry (retries >= 1)"
+      end
       if c.line ~= nil and (not is_int(c.line) or c.line < 1) then
         problems[#problems + 1] = at .. ".line: must be an integer >= 1"
       end

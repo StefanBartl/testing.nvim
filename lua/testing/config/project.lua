@@ -43,6 +43,7 @@
 ---   trace         true (default): a child that times out or crashes leaves a trace artifact
 ---   jobs          integer >= 1 or "auto" (cores minus one), parallel child processes of an isolated run
 ---   shard         { balance = "size"|"count"|"hash"|"history", durations = <relative json path> }: `--shard i/n`
+---   affected      { consumers = <directory> }: the checkouts of the projects that use this one (`--consumers`)
 ---   watch         { debounce_ms, poll_ms }: `--watch`
 ---   budget        { factor = number >= 1, baseline = <relative json path> }: `testing budget`
 ---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
@@ -513,6 +514,14 @@ local SCHEMA = {
     durations = {
       check = is_safe_relpath,
       expect = 'a relative path without \'..\' to a JSON file { "<spec path>": <ms> } (used by balance = "history")',
+    },
+  },
+  affected = {
+    consumers = {
+      check = function(v)
+        return type(v) == "string" and v ~= "" and #v <= 400 and not v:find("%c")
+      end,
+      expect = "a directory (absolute, or relative to the project root) with the checkouts of the projects that use this one",
     },
   },
   watch = {

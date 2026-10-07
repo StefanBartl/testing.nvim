@@ -59,6 +59,8 @@ M.OWN_ARGS = { migrate = true, conformance = true, surface = true }
 ---@field discover? table `testing.discover` (discover, order)
 ---@field state_dir? string Replaces `stdpath('state')` for the history.
 ---@field color? boolean Forces the colour decision of the terminal reporter.
+---@field env? table<string, string|nil> Environment that chooses the reporter (`TESTING_REPORTER`, `TESTING_AGENT`, `AI_AGENT`, `CLAUDECODE`); only `scripts/testing.lua` sets it.
+---@field script? string Path of the entry script (the `rerun:` line of the agent reporter).
 ---@field budget? table Replaces single seams of `testing budget` (`testing.budget.main`): `run`, `machine`.
 ---@field cache_dir? string Replaces `stdpath('cache')` for the result cache (specs).
 ---@field cache? table Replaces `testing.cache` (specs).
@@ -414,6 +416,22 @@ run_measured = function(plan, sv)
     if not ok then
       sv.err("testing: note: durations not updated: " .. tostring(err))
     end
+    -- a file that took three times its median is a warning (the machine may be busy), never a failure
+    local timings = require("testing.run.timings")
+    local topts = { state_dir = sv.state_dir }
+    local history, tnote = timings.read(timings.path(plan.root, topts))
+    if tnote then
+      sv.err("testing: note: " .. tnote)
+    end
+    local current = timings.per_file(last.result)
+    last.time_regressions = timings.regressions(history, current)
+    for _, r in ipairs(last.time_regressions) do
+      sv.err(project.safe_line("testing: warning: slower than usual: " .. timings.line(r)))
+    end
+    local tok, wrote, werr = pcall(timings.record, plan.root, history, current, topts)
+    if not tok or wrote == false then
+      sv.err("testing: note: timings not updated: " .. tostring(tok and werr or wrote))
+    end
   end
   return code
 end
@@ -431,6 +449,11 @@ local function execute(argv, sv)
   end
   if argv[1] == "conformance" or argv[1] == "surface" then
     return run_own(argv[1], vim.list_slice(argv, 2), sv)
+  end
+  -- `testing explain`: its own flags (--all, --json, --parts) are taken out, the rest is a run's arguments
+  local explain_own
+  if argv[1] == "explain" then
+    argv, explain_own = require("testing.explain").split_argv(argv)
   end
 
   local args, problem = args_mod.parse(argv)
@@ -470,7 +493,12 @@ local function execute(argv, sv)
     err("testing: `init` is not implemented yet")
     return M.EXIT_USAGE
   end
-  if args.command == "budget" and not args.root then
+  if (args.command == "budget" or args.command == "explain") and not args.root then
+    args.root = "."
+  end
+  if args.command == "explain" and args.root ~= "." and vim.fn.isdirectory(abs(args.root)) ~= 1 then
+    -- `testing explain TESTS/a_spec.lua`: no root, a spec
+    table.insert(args.paths, 1, args.root)
     args.root = "."
   end
   if not args.root then
@@ -524,6 +552,8 @@ local function execute(argv, sv)
     local cache = require("testing.cache")
     local dir = cache.stats({ root = root, cache_dir = sv.cache_dir }).dir
     local n = cache.clear({ root = root, cache_dir = sv.cache_dir })
+    -- a start from nothing also forgets which keys gave different results (`testing.cache.keylog`)
+    pcall(require("testing.cache.keylog").clear, root, { state_dir = sv.state_dir })
     out(("cache cleared: %d entr%s removed (%s)"):format(n, n == 1 and "y" or "ies", dir))
     return M.EXIT_OK
   end
@@ -562,6 +592,9 @@ local function execute(argv, sv)
     deps.add_to_rtp(dir, false)
   end
 
+  if args.command == "explain" then
+    return require("testing.explain").main(plan, sv, explain_own)
+  end
   if args.watch then
     return require("testing.run.watch").run_cli(plan, sv, (sv --[[@as table]]).watch)
   end

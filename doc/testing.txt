@@ -161,7 +161,7 @@ finding lib.nvim while the editor works), an info is something not checked.
 8. Command-line runner                                                *testing-cli*
 
 >sh
-    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface] [{root}] [options]
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain] [{root}] [options]
     nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [{path}] [options]
 <
 Run it from {root}: specs that look at "this repository" read the working
@@ -173,8 +173,10 @@ configuration and dependency report), `migrate` (plan or write the move of a
 repository to testing.nvim, see |testing-migrating|), `budget` (measure the hot
 paths of a run against a baseline), `conformance` (the checks K1..K15) and
 `surface` (the plugin's keymaps, commands, ... and what the specs exercised);
-the last two have their own arguments and exit codes (docs/CONFORMANCE.md,
-docs/SURFACE.md). `init` is available as |:Testing| init only.
+those two have their own arguments and exit codes (docs/CONFORMANCE.md,
+docs/SURFACE.md). `explain` says why a spec file is selected, taken from the
+cache, run or left out, and what its cache key is made of (see "Explain and
+audit" below). `init` is available as |:Testing| init only.
 
 Selection ~
   --file {text}      Only spec files whose file name contains {text}
@@ -183,6 +185,18 @@ Selection ~
   --tags {a,b}       Only cases with one of these tags: a `#word` in a busted
   --exclude-tags     title, or a `-- @tags a b` header line in any spec.
   --lf, --ff         Only what failed last time, or that first.
+  --order priority   Run first what failed last time, what the changes touch
+                     and reach (nearest first), what has not run for long.
+                     Orders only, never filters; excludes --shuffle.
+  --order slowest-first
+                     With --jobs 2 or more and child editors: the longest
+                     files (remembered duration) start first. Results stay in
+                     file order.
+  --retry-failed {n} Run a red case again up to {n} times (1 to 10). A case
+                     that passes on a retry is flaky: the run stays red, it is
+                     listed and never cached.
+  --allow-flaky      With --retry-failed: count such a case as green (still
+                     listed).
   --list, --dry-run  List what would run, run nothing.
   --shard {i}/{n}    Only shard {i} of {n} (CI matrices).
   --changed, --since {rev}, --affected[={rev}]
@@ -190,11 +204,23 @@ Selection ~
                      against HEAD, against {rev}, or the last commit). A
                      partial run: no "all green" last line. Anything that
                      cannot be placed selects every spec. Never the default.
+  --consumers {dir}
+                     With one of the three above: name the specs of the
+                     checkouts below {dir} (projects that use this one) that
+                     the change reaches (documentation.nvim). A hint, it never
+                     changes what runs here. Also `affected.consumers` in
+                     `.testing.lua`.
   --cached, --no-cache, --cache-refresh, --cache-clear
                      The result cache: a spec file whose inputs are
                      byte-identical to an earlier green run does not run and is
                      reported as cached. Off unless asked for; --no-cache
                      always wins. docs/CACHE.md.
+  --cache-audit {0..1|all}
+                     Run that share of the cache hits anyway and compare with
+                     the stored result. A difference is the finding
+                     `cache.stale_pass` and exit 1; the measured stale-pass
+                     rate is on the cache line and in `run.cache` of the IR.
+                     Implies --cached; excludes --cache-refresh.
   --config {file}    Project file inside the root.
   --rtp {dir}        Add {dir} to the runtimepath (repeatable).
 
@@ -236,7 +262,12 @@ Control ~
   --env-allow {name} An environment variable (or PREFIX*) a child may inherit.
 
 Output ~
-  --reporter {name}  Terminal reporter.
+  --reporter {name}  Terminal reporter: term, github, junit, json or agent.
+                     Default: $TESTING_REPORTER, then `agent` in a coding
+                     agent environment ($TESTING_AGENT=1 forces it, =0 stops
+                     the detection), else term.
+  --agent-budget {n} Characters of the failure part of `agent` (default 4000).
+  --format {text|jsonl}  Shape of `agent` (jsonl: one object per line).
   --json {file}      Write the Result-IR (schema_version 1), validated.
   --junit {file}     Write a JUnit XML report.
   --github           GitHub Actions annotations and step summary.
@@ -244,9 +275,32 @@ Output ~
   --sentinel {name}  Last line of a complete green run (default TESTING_OK).
   --no-timings       No timing line.
 
+Explain and audit ~
+  explain {spec}...  Say why a spec file is selected, taken from the cache, run
+                     or left out: the reason of the selection, `hit`, `miss`
+                     (which file, with old and new hash, which environment
+                     variable by name, the Neovim version or the configuration
+                     changed since the stored entry) or `uncacheable` (the
+                     file and line of what makes it so, and the way out:
+                     `-- @cache-allow`, `-- @cache-inputs`, `env_allow`,
+                     `-- @cache off`). {spec} is a path, a directory or a part
+                     of a file name; the options of a run are accepted (the
+                     key depends on them). It changes nothing.
+    --all            Every spec file: the hit rate and the reasons of the
+                     files without a key, most frequent first.
+    --json           One JSON document (testing-explain/1).
+    --parts          The lines the key is the hash of.
+  --cache-audit {0..1|all}
+                     see Selection: a share of the hits runs anyway; a
+                     difference is `cache.stale_pass`. A spec whose key gave
+                     two different results is `nondeterministic` and not
+                     cached (`-- @cache-allow nondeterministic` lifts it).
+                     docs/CACHE.md.
+
 An option that is parsed but not implemented is refused with exit code 2, never
 ignored. Only a complete green run with no skipped case prints the sentinel; a
-selection, `--maxfail` or a skip prints a distinct last line.
+selection, `--maxfail` or a skip prints a distinct last line. The same
+distinction is the verdict line of every reporter: green, green-partial, red.
 
 ==============================================================================
 9. Project file .testing.lua                                      *testing-project*
@@ -362,12 +416,22 @@ list; it never discards the verdict.
 `effects` are filled by the guard layer; a case says so in its notes when the
 guard that fills them is off. Additive fields: `cases[].cached` (not executed
 in this run, from the result cache), `cases[].surface` (`surface.track`),
-`run.cache`, `run.profile`.
+`run.cache`, `run.profile`, `run.verdict`.
+
+The verdict (`run.verdict`, a line of every reporter) is `green` (every file ran
+green or has a cache hit; the sentinel), `green-partial` (exit 0, but a
+selection, a case filter or a skip means not everything was looked at: no
+sentinel, the reasons are named) or `red` (exit 1; with the last green run and
+the files changed since). It counts spec files: n from cache, m ran, k skipped
+on purpose. The exit codes do not change.
 
 Reporters read the IR only and treat everything from the code under test as
 hostile input: `term` (default), `github` (annotations escaped so a test name
 cannot start a workflow command, step summary appended), `junit` (well-formed
-XML for any input). A reporter that fails is exit code 3.
+XML for any input), `agent` (compact, for coding agents: the verdict as the
+first line, then only the failures with file:line, expected/actual and a repeat
+command; equal failures are one entry with a counter; a character budget counts
+what it leaves out). A reporter that fails is exit code 3.
 
 ==============================================================================
 13. Migrating from busted or plenary                             *testing-migrating*

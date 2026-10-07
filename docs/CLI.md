@@ -1,7 +1,7 @@
 # Command line
 
 ```sh
-nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|init] [<root>] [options]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|init] [<root>] [options]
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [options]
 ```
 
@@ -28,6 +28,7 @@ scripts/test.sh --file config      # only spec files whose name contains "config
 | `budget` | Measure the hot paths of a run (`testing doctor` start, discovery of 100 files, IR encode of 10 000 cases, history append, hashing 500 files, starting / ending / calling a child editor) and compare them with a stored baseline; exit `1` when one is slower than baseline x factor. See [`testing budget`](#testing-budget) and [PERFORMANCE.md](PERFORMANCE.md). `<root>` defaults to the current directory. |
 | `conformance` | The conformance checks K1 .. K15 on `<root>`, reported as data and terminal lines; report only unless `--gate` or `conformance.gate`. It has **its own arguments and exit codes**, so everything after the word goes to it, not to the run options: `testing conformance [<root>] [--only K3,K7] [--skip K10] [--gate] [--json\|--markdown] ...`, see [CONFORMANCE.md](CONFORMANCE.md). |
 | `surface` | The plugin's surface (keymaps, commands, autocmds, ...) and how much of it the specs exercised. Own arguments and exit codes too: `testing surface [<root>] [--from ir.json] [--threshold 0.8] [--baseline b.json] [--json\|--markdown]`, see [SURFACE.md](SURFACE.md). A run is tracked with `surface = { track = true }` in `.testing.lua`: every case of the `--json` IR then carries `surface.hit`. |
+| `explain` | Why a spec file is selected, taken from the cache, run or left out, and what its cache key is made of: `testing explain [<root>] <spec>... [--all] [--json] [--parts]`. Display only (changes nothing). Accepts the options of a run (`--config`, `--env-allow`, `--changed`, ...), because the key depends on them. See [Explain and audit](#explain-and-audit). |
 | `init` | Scaffold `.testing.lua`, `TESTS/minimal_init.lua`, `scripts/test.sh` and a CI job in a project. Today only as the editor command `:Testing init` ([BINDINGS.md](BINDINGS.md)); on the command line it is refused with exit code `2`. |
 
 The subcommand is the first argument, when it is exactly one of those words. Any other first
@@ -56,7 +57,9 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--list`, `--dry-run` | List what would run, run nothing. |
 | `--shard <i>/<n>` | Run only shard `i` (1-based) of `n`: a deterministic partition of the spec files for CI matrices, see [Sharding](#sharding). Works with `--list`. |
 | `--cached`, `--no-cache`, `--cache-refresh`, `--cache-clear` | The result cache: a spec file whose inputs are byte-identical to an earlier green run does not run, and its cases are reported as cached. Off unless asked for; `--no-cache` always wins. See [Result cache](#result-cache). |
+| `--cache-audit <0..1\|all>` | Run that share of the cache hits anyway and compare with the stored result: a difference is the finding `cache.stale_pass` and exit `1`; the measured stale-pass rate is on the cache line and in `run.cache` of the IR. Implies `--cached`; excludes `--cache-refresh`. See [Explain and audit](#explain-and-audit). |
 | `--changed`, `--since <rev>`, `--affected[=<rev>]` | Only the specs the changes can reach (working tree against `HEAD`, against `<rev>`, or the last commit). A partial run: never a sentinel. See [Affected selection](#affected-selection). `--affected` takes its revision only as `--affected=<rev>`: a bare `--affected` never swallows the next argument. |
+| `--consumers <dir>` | With one of the three above: also name the specs of the checkouts below `<dir>` (the projects that use this one) that the change reaches, as asked of documentation.nvim. A hint about other repositories, printed, never part of what runs here. Also `affected = { consumers = "<dir>" }` in `.testing.lua`. See [Consumers](#affected-selection). |
 
 ### Controlling the run
 
@@ -64,6 +67,9 @@ An option that is accepted by the parser but not implemented is **refused** with
 | --- | --- |
 | `-x`, `--maxfail <n>` | Stop after the first / the `<n>`th failure. Cases that did not run are not in the report, and the run says so. |
 | `--shuffle`, `--seed <n>` | Random order; the seed is printed so a failure can be reproduced. |
+| `--order priority` | The files most likely to be red run first: what failed last time, what the working tree changed, the specs that `require` a changed module (nearest first), what has not run for 7 days or never, then the rest; inside a stage the file that took the least time first. It **orders and never filters**: the set of files is the one the other options selected, and the Result-IR stays in discovery order. Without history, git or a graph the discovery order is kept and a note says so. Excludes `--shuffle` (exit `2`); `--ff` is the special case of its first stage. `--list` shows `order <rank>  <file>  (<reason>)` before the cases of each file. |
+| `--order slowest-first` | With `--jobs` of 2 or more and child editors: the children of the longest files (by their remembered duration) start first. Only the start changes, the results are merged in file order; see [Worker pool](#worker-pool). |
+| `--retry-failed <n>`, `--allow-flaky` | Run a red case again up to `n` times (1 to 10). A case that passes on a retry is **flaky**: the run stays red, the case is marked and listed, and it is never cached. `--allow-flaky` counts it as green (still listed). See [Retry and flaky](#retry-and-flaky). |
 | `--case-timeout <ms>`, `--file-timeout <ms>` | Timeouts of one case and one spec file (defaults from `timeouts` in `.testing.lua`). A case over its limit has the status `timeout`. In this editor the guard is best effort (it interrupts Lua code and `vim.wait`, not a spec that blocks inside C). In a child editor (`--isolated file`) the limits are **hard**: the child and its whole process tree are killed (`file_ms` + 2 s grace; for busted files also `case_ms` + 2 s without a new case once the first one is in). |
 | `--strict` | A skipped case and a discovery finding (legacy spec location, symlink, unknown dialect) make the run red. |
 | `--rtp <dir>` | Add `<dir>` to the runtimepath; repeatable. `<root>` is always added. |
@@ -98,7 +104,8 @@ An option that is accepted by the parser but not implemented is **refused** with
 
 | Option | Meaning |
 | --- | --- |
-| `--reporter <name>` | Terminal reporter (`term`, `github`, `junit`, `json`). |
+| `--reporter <name>` | Terminal reporter (`term`, `github`, `junit`, `json`, `agent`). Without it: `TESTING_REPORTER`, then a coding-agent environment (`agent`), else `term`; see [Environment](#environment). |
+| `--agent-budget <n>`, `--format <text\|jsonl>` | Only with the `agent` reporter (otherwise exit `2`): the character budget of the failure part (default 4000, at least 200; what does not fit is counted in a `more:` line) and the shape (`text`, or `jsonl`: one JSON object per line). |
 | `--json <file>` | Write the Result-IR (`schema_version = 1`) and validate it again. |
 | `--junit <file>` | Write a JUnit XML report. |
 | `--github` | Emit GitHub Actions annotations and the step summary. |
@@ -201,6 +208,24 @@ The cache lives under `stdpath("cache")/testing/<project>-<hash>/`, per user and
 keep one between invocations. A cached file is not executed, so `--profile` shows only what ran, and `--jobs`,
 `--shard` and `--shuffle` work as usual (a shuffled run puts the seed into the key).
 
+### Explain and audit
+
+```sh
+testing explain . TESTS/x_spec.lua      # selected? hit, miss (what changed), or uncacheable (file, line, way out)?
+testing explain . --all                 # hit rate and the reasons of the files that have no key, most frequent first
+testing explain . x_spec --json         # the same as one JSON document (--parts adds the key lines to --all)
+testing . --cached --cache-audit all    # re-run every cache hit and compare: the measured stale-pass rate
+```
+
+`testing explain` takes the spec as a path, a directory or a part of a file name, plus the options of a run, because
+the key depends on them (`--changed` / `--since` / `--affected` add the selection: "left out by --changed"). It runs
+nothing and writes nothing; exit `0`, `2` for a spec that matches nothing. `--cache-audit` re-runs the given share of
+the hits (`0` to `1`, or `all`; a nightly CI job on the main branch is the intended use) and compares the cases and
+statuses with the stored entry; a difference is `cache.stale_pass` (with the file, the first key lines and both
+possible causes: an input the key cannot see, or a flaky spec), the entry is dropped, and the run exits `1`.
+A spec whose key gave two different results is marked `nondeterministic` and not cached any more (explained by
+`testing explain`). [CACHE.md](CACHE.md) has the rules.
+
 ### Affected selection
 
 ```sh
@@ -224,6 +249,81 @@ green run (no sentinel), and `--changed` is a developer tool, not a CI gate: in 
 warns, and `--affected` is never the default there. `--changed`, `--since` and `--affected` exclude each other, and
 cannot be combined with `--watch`, which does its own selection. [CACHE.md](CACHE.md#affected-selection) has the rules.
 
+**Consumers.** A change in a library reaches the specs of the projects that use it, which are in other checkouts.
+`--consumers <dir>` (or `affected = { consumers = "<dir>" }` in `.testing.lua`; the flag wins, a relative flag is
+relative to the working directory, a relative key to the project root) names the directory that holds those
+checkouts and asks documentation.nvim, in the same call that answers the selection, which specs of each of them the
+change reaches (`affected_specs`, key `consumers`; contract: `documentation.nvim/docs/testing-contract.md`, "Other
+repositories"). **The caller names the directory**: this runner does not know where your repositories are. The
+answer is a hint that is only added to: it is printed (`--list`: on stdout; otherwise as `testing: note:` lines) and
+it never makes the selection of this project smaller or bigger.
+
+```
+testing . --since origin/main --consumers .. --list
+cross-repo: cascade.nvim: 19 spec(s) reach the change: TESTS/bindings_spec.lua, ...; its own module map is stale (run its full suite)
+cross-repo: gitsuite.nvim: not measured (no committed module map): run the full suite of this repository
+cross-repo: a consumer that is not below E:/repos is invisible here; a consumer that is not measured is not unaffected
+```
+
+A consumer that was **not measured** (no committed module map, a map that cannot be read) is listed with its reason
+and the sentence "run the full suite of this repository": not measured is not "not affected". A consumer that is not
+below the directory at all is invisible, and the last line says so. Specs of a consumer are relative to the
+consumer's own root. Without documentation.nvim, with one that does not answer `cross_repo` (an older contract), with
+an answer of another contract `version`, or with a malformed one (an absolute or `..` path, a control character, an
+oversized list: the whole `cross_repo` is dropped) nothing else changes and a `cross-repo:` line says that no
+consumer was measured. A change without a changed module (only a spec or a document) reaches no consumer, and when
+git fails the consumers are not asked: both are said.
+
+### Order
+
+`--order priority` decides which spec file runs first; it never decides which files run (heuristics order,
+only proofs such as the [cache](CACHE.md) skip). The rank of a file:
+
+1. it failed last time (`runs.jsonl`, the same memory as `--lf`/`--ff`),
+2. it was changed itself (git: working tree against `HEAD`, untracked files),
+3. it reaches a changed file through `require`, nearest first (distance 1: the spec requires the changed module),
+4. it has not run for 7 days, or never (`order.json`),
+5. the rest.
+
+Inside a rank the file that took the least time on its last execution comes first, a file without a known duration
+after those, then the discovery order. Everything it needs is optional: with no history, no git or no usable graph
+(a git failure selects "everything" and carries no distance) the discovery order is kept and a `testing: note: order:`
+line on stderr says what was missing. The Result-IR and every report stay in discovery order, whatever order the
+files ran in, so the report does not depend on it. `--list` shows `order <rank>  <file>  (<reason>)` before the cases
+of each file. Cost: one `git` round and the affected scan (the same analysis index `--changed` uses).
+
+`order.json` (beside `runs.jsonl`, `stdpath("state")/testing/<project>/`) remembers when each file last ran and how
+long it took; `last_green.json` remembers the last full green run (see [the verdict](OUTPUT-FORMATS.md#the-verdict)).
+Both are bounded, read as untrusted input, written atomically, and a failure to read or write is a note.
+
+### Retry and flaky
+
+```sh
+testing . --retry-failed 2            # a red case runs again, at most twice
+testing . --retry-failed 2 --allow-flaky
+```
+
+`--retry-failed <n>` (1 to 10) repeats **only the files that have a red case** (`fail` or `error`; a `timeout` and a
+`crash` are not repeated, they already cost the whole limit and are verdicts about the process, and `xpass` is a
+verdict about the expectation). A case that passes on a retry is **flaky**, and flaky is never green by itself:
+
+* the case keeps its status `fail`, gets `flaky = true`, `retries = <the retry that passed>` and a note; the run is
+  **red** (exit `1`, no sentinel);
+* the end of the output lists them: `flaky: 1 case(s) failed and then passed on a retry: the run stays RED`;
+* a case that fails on every retry is plainly red (`retries = n`, the line `retry: ... failed on all n retries as
+  well`);
+* a file with a flaky case is **never stored in the result cache** (the cache refuses a case with `retries > 0`, and
+  the run reports the file as flaky to it): a flaky result is not a proof.
+
+`--allow-flaky` (needs `--retry-failed`) is the explicit choice to count a case that passed on a retry as green: the
+passing result replaces the red one (`status = pass`, `flaky = true`, `retries = k`, a note that holds the first
+failure), the verdict and the exit code are recounted, and the list of flaky cases is printed anyway, never silently.
+They are not cached either. It never turns a case that failed on every retry green.
+
+The retry runs the whole file again (the driver of the first run: this editor or a child editor) and looks only at
+the cases that were red; what the rest of the file did the first time stands. `--retry-failed` excludes `--list` and
+`--watch` (exit `2`). A quarantine (a known flaky case that is set aside until a date) is not part of this flag.
+
 ### Worker pool
 
 `--jobs n` (or `jobs` in `.testing.lua`) caps the child editors that run at once in an isolated run
@@ -233,6 +333,21 @@ order: the IR, the printed output and the exit code are the same for `--jobs 1` 
 (`TESTS/testing/pool_spec.lua` proves the order, and that never more than `n` children overlap). The default is
 **1**; `--jobs auto` / `jobs = "auto"` is cores minus one. With `--pool-reuse` the children are warm pool members
 (`--pool-size`) that are reset and verified between files. `--profile` reports how busy the pool was.
+
+`--order slowest-first` (with `--jobs` of 2 or more and child editors) starts the children of the **longest files
+first**, by the durations the runner remembers (`durations.json` beside the history, the file `--shard` reads;
+`shard.durations` in `.testing.lua` names a file of the repository instead): a file of 10 s that starts last adds
+10 s to the end of the run, one that starts first overlaps with the rest. A file without a remembered duration
+starts after the weighted ones, in file order; without any duration the file order is kept and a note says so. Only
+the **start** changes: the results are still merged in file order, so the IR, the printed output, `--maxfail` and
+the exit code are the same as without it. It orders and never filters, and excludes `--shuffle`. With `--jobs 1`, or
+without child editors, there is nothing to order and a note says so.
+
+**Slow files.** Every complete run adds the duration of each file (not a cached one) to `timings.json` beside the
+history: the last 9 runs per file, bounded, read as untrusted input, written atomically. A file that takes more than
+three times the median of at least three earlier runs, and at least 100 ms more than that median, is a warning on
+stderr (`testing: warning: slower than usual: TESTS/x_spec.lua took 4.2 s, 3.2x its median of 1.3 s over 9 run(s)`):
+never a failure, the machine may be busy.
 
 ### Watch
 
@@ -310,7 +425,10 @@ line-level profile of one slow case is a separate tool.
 The last line of a green run is the sentinel, and only a **complete** green run with no skipped case
 prints it. A selection, `--maxfail` or a skip prints a distinct line instead ("partial run ...", "N
 case(s) skipped ..."), so a script that greps for the sentinel cannot read a partial run as the
-verdict.
+verdict. The same distinction is a line of every reporter, the **verdict** (`green`, `green-partial`, `red`, with
+"n from cache, m ran, k skipped on purpose"), and `green` is exactly the run that prints the sentinel
+([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-verdict)); the exit codes do not change. With the `agent` reporter the
+first line of the output is that verdict and no sentinel is printed.
 
 If the project still has a `TESTS/run.lua` (the old runner of the fleet), its spec list sets the
 order of those files and the last line it prints is the default sentinel. A spec listed there but
@@ -329,5 +447,8 @@ On a case-sensitive file system nothing is folded.
 | --- | --- |
 | `$LIB_NVIM_DIR` | Explicit location of lib.nvim; if set but invalid the run fails (exit `3`). Every dependency has a `$<NAME>_DIR` ([CONFIG.md](CONFIG.md#dependencies)). |
 | `TESTING_DEBUG=1` | Tracebacks for internal errors. |
+| `TESTING_REPORTER=<name>` | The stdout reporter when `--reporter` is not given (an unknown name is exit `2`). |
+| `TESTING_AGENT=1\|0` | `1` selects the `agent` reporter, `0` switches the detection below off. |
+| `CLAUDECODE=1`, `AI_AGENT=<name>` | A coding agent runs this: the `agent` reporter is selected when nothing else chose one. Both variables were **observed** in a Claude Code session (2026-10-07), no vendor page promises them; the list lives in `testing.report.agent.AGENT_ENV` and an agent that is not on it sets `TESTING_AGENT=1`. Only `scripts/testing.lua` reads these variables and hands them down: the library itself never looks at the environment, so a spec that calls `testing.cli.main` is not switched by where it runs. |
 | `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE` | Colour of the terminal reporter. |
 | `GITHUB_STEP_SUMMARY` | Target of the step summary of `--github`. |

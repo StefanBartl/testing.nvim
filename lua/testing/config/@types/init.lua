@@ -65,6 +65,9 @@
 ---@field balance "size"|"count"|"hash"|"history" How `--shard` weighs the files.
 ---@field durations? string Relative path of a JSON file `{ "<spec path>": <ms> }` (opt-in: used by `history`).
 
+---@class Testing.ProjectConfig.Affected
+---@field consumers? string Directory with the checkouts of the projects that use this one (absolute, or relative to the root): `--consumers`.
+
 ---@class Testing.ProjectConfig.Watch
 ---@field debounce_ms integer > 0. Quiet time after the last change before `--watch` re-runs.
 ---@field poll_ms integer > 0. Interval of the polling fallback.
@@ -123,6 +126,7 @@
 ---@field timeouts Testing.ProjectConfig.Timeouts
 ---@field snapshots Testing.ProjectConfig.Snapshots
 ---@field shard Testing.ProjectConfig.Shard
+---@field affected Testing.ProjectConfig.Affected
 ---@field watch Testing.ProjectConfig.Watch
 ---@field budget Testing.ProjectConfig.Budget
 ---@field backends Testing.ProjectConfig.Backends

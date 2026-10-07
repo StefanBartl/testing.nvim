@@ -15,7 +15,7 @@ return function(H)
   local report = require("testing.report")
 
   -- registry ----------------------------------------------------------------------------------------------
-  eq(report.names(), { "github", "junit", "term" }, "known reporters, sorted")
+  eq(report.names(), { "agent", "github", "junit", "term" }, "known reporters, sorted")
   for _, name in ipairs(report.names()) do
     local mod, err = report.resolve(name)
     ok(

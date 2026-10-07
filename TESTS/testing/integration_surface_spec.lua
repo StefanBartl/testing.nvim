@@ -119,7 +119,7 @@ return {
       { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry, root }
     vim.list_extend(argv, { "--json", ir_path })
     vim.list_extend(argv, extra or {})
-    local res = vim.system(argv, { text = true }):wait(180000)
+    local res = vim.system(argv, { text = true, env = { TESTING_AGENT = "0" } }):wait(180000)
     local f = io.open(ir_path, "rb")
     local ir
     if f then
@@ -201,7 +201,7 @@ return {
         root,
         "--from",
         ir_path,
-      }, { text = true })
+      }, { text = true, env = { TESTING_AGENT = "0" } })
       :wait(180000)
     ok(sres.code == 0, "testing surface works through the command line: " .. tostring(sres.stderr))
     has(sres.stdout, "command:FxOpen", "the report lists the command")

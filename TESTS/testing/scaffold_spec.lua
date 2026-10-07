@@ -499,7 +499,8 @@ return function(H)
   end
   ok(bash ~= "", "bash is available (scripts/test.sh needs it, here and in CI)")
   local path_sep = is_windows and ";" or ":"
-  local env_path = { PATH = vim.fs.dirname(nvim) .. path_sep .. (vim.env.PATH or "") }
+  local env_path =
+    { TESTING_AGENT = "0", PATH = vim.fs.dirname(nvim) .. path_sep .. (vim.env.PATH or "") }
 
   local run_proj = mkproj("runme.nvim", { "lua/runme" })
   vim.fn.writefile({ "return {}" }, run_proj .. "/lua/runme/init.lua")

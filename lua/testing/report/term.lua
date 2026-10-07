@@ -603,6 +603,17 @@ function M.render(result, opts)
   )
   lines[#lines + 1] =
     paint(bad_total > 0 and "red" or (skip_total > 0 and "yellow" or "green"), summary)
+  -- the three-valued verdict of the run driver (`run.verdict`): green, green-partial or red, and for a red run
+  -- the last green run and what changed since
+  if type(run.verdict) == "table" then
+    local verdict = require("testing.report.verdict")
+    local kind = run.verdict.kind == "green" and "green"
+      or (run.verdict.kind == "green-partial" and "yellow" or "red")
+    lines[#lines + 1] = paint(kind, fit(verdict.line(run.verdict), math.max(width, 400)))
+    for _, l in ipairs(verdict.red_lines(run.verdict)) do
+      lines[#lines + 1] = fit(l, math.max(width, 400))
+    end
+  end
   return lines
 end
 

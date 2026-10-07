@@ -44,7 +44,14 @@ end
 
 -- `cli.main` never raises; the pcall is the belt to its braces: an internal failure is exit 3, never a
 -- raw Lua error with whatever exit code the editor picks.
-local ok_run, code = pcall(cli.main, arg or {})
+-- The environment that chooses the reporter (`TESTING_REPORTER`, `TESTING_AGENT`, an agent harness) is read HERE
+-- and handed down: the library itself never looks at it, so a spec that calls `cli.main` is not switched by the
+-- environment it runs in (testing.report.agent.choose).
+local env = {}
+for _, name in ipairs({ "TESTING_REPORTER", "TESTING_AGENT", "AI_AGENT", "CLAUDECODE" }) do
+  env[name] = os.getenv(name)
+end
+local ok_run, code = pcall(cli.main, arg or {}, { env = env, script = this })
 if not ok_run then
   die("testing: internal error: " .. tostring(code))
 end

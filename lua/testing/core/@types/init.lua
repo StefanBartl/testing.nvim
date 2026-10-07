@@ -19,9 +19,23 @@
 ---@field sha string Abbreviated commit hash.
 ---@field dirty boolean Whether the working tree had uncommitted changes.
 
+---@class Testing.Result.RunCache
+---@field mode string `use` or `refresh`.
+---@field files_cached integer Spec files that were not run (their result came from an entry).
+---@field cases_cached integer
+---@field files_ran integer
+---@field stored integer
+---@field nondeterministic? integer Files not stored because the same key gave another result (key flip); only when there were some.
+---@field audit_rate? number `--cache-audit`: the share of the hits that ran anyway (0..1); the audit fields are only there when it was above 0.
+---@field audited? integer Hits that ran anyway.
+---@field stale_pass? integer Audited hits whose fresh result differed from the stored one (`cache.stale_pass`).
+---@field stale_pass_rate? number `stale_pass / audited`: the measured stale-pass rate of this run (0 when nothing was audited).
+---@field findings? { code: string, file: string, key: string, message: string, parts?: string[] }[] The `cache.stale_pass` findings.
+
 ---@class Testing.Result.Run
 --- Header of one run: who ran what, where, how.
----@field cache? { mode: string, files_cached: integer, cases_cached: integer, files_ran: integer, stored: integer } What the result cache did (`--cached`).
+---@field cache? Testing.Result.RunCache What the result cache did (`--cached`).
+---@field verdict? Testing.Verdict The three-valued verdict of the run (`green`, `green-partial`, `red`), filled by the run driver (`testing.report.verdict`).
 ---@field id string `<UTC ISO timestamp>-<4 hex>`; unique per run.
 ---@field root string Repository root (a placeholder `<REPO>` after normalization).
 ---@field project_key string Stable key of the project, e.g. `lib.nvim@a1b2`.
@@ -86,6 +100,7 @@
 ---@field error? Testing.Result.CaseError Set when `status == "error"`.
 ---@field reason? string Why a case was skipped.
 ---@field cached? boolean `true`: not executed in this run, the result comes from the result cache (`testing.cache`).
+---@field flaky? boolean `true`: the case failed and then passed on a retry (`--retry-failed`); `retries` is the retry that passed. The status is `fail` (the run stays red) unless `--allow-flaky` replaced it by the passing result.
 ---@field surface? { hit: string[] } The keymaps, commands and autocmds the case exercised (`surface.track`).
 
 ---@class Testing.Result.Summary

@@ -33,7 +33,7 @@ return function(H)
   local function run(argv)
     local cmd = { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry }
     vim.list_extend(cmd, argv)
-    local res = vim.system(cmd, { text = true }):wait(120000)
+    local res = vim.system(cmd, { text = true, env = { TESTING_AGENT = "0" } }):wait(120000)
     return res.code, res.stdout or "", res.stderr or ""
   end
   local function project(files)

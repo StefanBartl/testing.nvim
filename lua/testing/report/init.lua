@@ -17,6 +17,7 @@ M.REPORTERS = {
   term = "testing.report.term",
   github = "testing.report.github",
   junit = "testing.report.junit",
+  agent = "testing.report.agent",
 }
 
 ---Reporter names in a stable order (for `--help`, `:checkhealth`, docs).

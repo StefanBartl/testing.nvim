@@ -110,6 +110,8 @@ local DEFAULTS = {
     -- matrix), "count", "hash" (stable under added files) or "history" (measured durations: every job must
     -- see the same ones, see `shard.durations`, which has no default: it is opt-in).
     shard = { balance = "size" },
+    -- `--consumers`: the directory with the checkouts of the projects that use this one (no default: opt-in).
+    affected = {},
     -- `--watch`: quiet time after the last change before a re-run (a editor save fires several events), and
     -- the polling interval of the fallback when the file system cannot deliver events.
     watch = { debounce_ms = 150, poll_ms = 1000 },
