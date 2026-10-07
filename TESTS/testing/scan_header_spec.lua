@@ -123,7 +123,7 @@ return function(H)
 
   section("the version of the analysis moved", function()
     ok(
-      scan.VERSION >= 10,
+      scan.VERSION >= 11,
       "analyses of the older scanner are read again: " .. tostring(scan.VERSION)
     )
   end)
@@ -230,6 +230,78 @@ return function(H)
     ok(key_of(root) ~= k0, "and the declared directory is an input")
     S.remove(root)
   end)
+
+  -- ---------------------------------------------------------------- prose behind the words vouches for nothing
+  -- `-- @cache-allow` is the only directive that SWITCHES A CHECK OFF: reading every word of the line, prose included,
+  -- let a remark such as "never random numbers" vouch for `random`.
+  section("`-- @cache-allow`: only the leading words count", function()
+    local function allow_of(line)
+      return scan.analyze(line .. "\nreturn 1\n").directives.allow
+    end
+    eq(allow_of("-- @cache-allow time random"), { "time", "random" }, "a plain list")
+    eq(
+      allow_of("-- @cache-allow   time \t random  "),
+      { "time", "random" },
+      "blanks and a tab between the words"
+    )
+    eq(
+      allow_of("-- @cache-allow time (log stamps only; never random numbers)"),
+      { "time" },
+      "prose in brackets"
+    )
+    eq(
+      allow_of("-- @cache-allow time -- no env, no outside access"),
+      { "time" },
+      "a remark after `--`"
+    )
+    eq(
+      allow_of("-- @cache-allow time random: never net"),
+      { "time" },
+      "`random:` is no word of the list, so it ends the list"
+    )
+    eq(
+      allow_of("-- @cache-allow stamps are nondeterministic"),
+      {},
+      "prose first: nothing is granted"
+    )
+    eq(
+      allow_of("-- @cache-allow time, random"),
+      {},
+      "a comma makes the token an unknown word: fail closed"
+    )
+    eq(allow_of("-- @cache-allow time time env"), { "time", "env" }, "a word twice counts once")
+    eq(allow_of("-- @cache-allow (time)"), {}, "brackets around the word")
+    -- a directive line inside a string of the header is the same text: it is read the same way
+    eq(
+      scan.analyze("local t = [[\n-- @cache-allow time (never random)\n]]\nreturn t\n").directives.allow,
+      { "time" },
+      "a line of a multi-line string is read like any other line, and the prose behind it is not"
+    )
+  end)
+
+  section(
+    "key: prose behind `-- @cache-allow time` does not vouch for the random numbers",
+    function()
+      local body = "return function(H) H.ok(math.random() >= 0, 'random') end\n"
+      -- the control: the author names `random`, the spec has a key
+      local root = S.project({ [SPEC] = "-- @cache-allow time random\n" .. body })
+      local k, why = key_of(root)
+      ok(k ~= nil, "a spec that vouches for random numbers has a key: " .. tostring(why))
+      S.remove(root)
+      -- the author vouches for the clock and says in a remark that the random numbers are not covered
+      root = S.project({
+        [SPEC] = "-- @cache-allow time (log stamps only; never random numbers)\n" .. body,
+      })
+      local k2, why2, _, detail = key_of(root)
+      ok(k2 == nil, "random numbers the author did not vouch for: no key")
+      ok(
+        type(why2) == "string" and why2:find("random", 1, true) ~= nil,
+        "and says why: " .. tostring(why2)
+      )
+      eq(detail and detail.kind, "random", "the reason as data")
+      S.remove(root)
+    end
+  )
 
   ok(#failed == 0, "sections that are red:\n" .. table.concat(failed, "\n"))
 end

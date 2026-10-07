@@ -17,7 +17,10 @@
 ---   * the files it reads (see "Hidden inputs"),
 ---   * the runtime directories of the project root (`M.RUNTIME_DIRS`: `ftplugin/`, `queries/`, `after/`, ...): an
 ---     editor loads them without a `require`, so a digest of each one that exists is part of EVERY key, and the
----     `require`s of their Lua files are edges of every closure,
+---     `require`s of their Lua files are edges of every closure (symlinked directories below them are followed, so
+---     their Lua files are members too),
+---   * the files of the project root that an editor loads by itself (`M.RUNTIME_FILES`: `filetype.lua`, `ftplugin.vim`,
+---     `scripts.vim`, `.editorconfig`, ...): one `runtime <file>=<sha256>` line for each one that exists,
 ---   * the runner version (a content digest of `lua/testing`, so a dirty checkout differs from a clean one),
 ---   * the Neovim version, its API level, the OS and the CPU architecture,
 ---   * the names AND values (hashed) of the environment variables the configuration lists, and of those a file of the
@@ -63,9 +66,10 @@ local store = require("testing.cache.store")
 local M = {}
 
 ---Bumped when the layout of the key or of an entry changes: every old entry becomes a miss.
----(2: the `runtime <dir>/=<digest>` lines, the runtime directories of the project root.)
+---(2: the `runtime <dir>/=<digest>` lines, the runtime directories of the project root. 3: the `runtime <file>=<digest>`
+---lines, the files of the project root that an editor loads by itself: `M.RUNTIME_FILES`.)
 ---@type integer
-M.KEY_VERSION = 2
+M.KEY_VERSION = 3
 
 ---Directories of the project root that an editor loads WITHOUT a `require`: filetype plugins, indent and syntax files,
 ---Tree-sitter queries, `after/`, colour schemes, compilers, autoload functions, LSP configurations, parsers,
@@ -90,6 +94,28 @@ M.RUNTIME_DIRS = {
   "queries",
   "spell",
   "syntax",
+}
+
+---Files (not directories) of the project root that a child editor loads BY ITSELF: `filetype.lua` and `filetype.vim`
+---(filetype detection), `ftplugin.vim`, `indent.vim`, `ftoff.vim`, `ftplugof.vim` and `indoff.vim` (what
+---`filetype plugin indent on|off` sources), `scripts.vim` and `scripts.lua` (detection by the first line), and
+---`.editorconfig`, which the built-in editorconfig plugin reads for every buffer of a file below the root. The root is
+---on the runtime path of the child, and nothing a spec requires leads to them. Like the directories they are part of
+---EVERY key: a file that exists is a `runtime <name>=<digest>` line, a file that is absent is no line (creating it
+---changes the key). The `.lua` ones are members of every closure as well (`runtime_lua`): what they require, read
+---or declare counts. NOT covered: a `.editorconfig` ABOVE the root (the plugin walks up to the first `root = true`).
+---@type string[]
+M.RUNTIME_FILES = {
+  ".editorconfig",
+  "filetype.lua",
+  "filetype.vim",
+  "ftoff.vim",
+  "ftplugin.vim",
+  "ftplugof.vim",
+  "indent.vim",
+  "indoff.vim",
+  "scripts.lua",
+  "scripts.vim",
 }
 
 ---Most files hashed into the closure of one spec.
@@ -605,11 +631,25 @@ local function tree_of(ctx, hasher, dir, variant, opts)
   return dig, why
 end
 
+---Directory names a digest of the whole project does not enter.
+---@type table<string, true>
+local PROJECT_IGNORE = {
+  [".git"] = true,
+  [".deps"] = true,
+  [".cache"] = true,
+  ["node_modules"] = true,
+}
+
 ---The Lua files below the runtime directories of the project root (`M.RUNTIME_DIRS`) that an editor loads by itself
----(`ftplugin/`, `indent/`, `after/ftplugin/`, `colors/`, ...), absolute and sorted, once per run. Not `plugin/` and
----`after/plugin/`: a child editor does not source them (`-u NONE`; a spec that does it by an ex command is a
----`dynload`, which takes the whole project into the key). Their `require`s are edges of EVERY closure: the spec that
----sets a filetype loads the file, and so the modules it requires.
+---(`ftplugin/`, `indent/`, `after/ftplugin/`, `colors/`, ...) and the Lua files of `M.RUNTIME_FILES` in the root
+---(`filetype.lua`, `scripts.lua`), absolute and sorted, once per run. Not `plugin/` and `after/plugin/`: a child
+---editor does not source them (`-u NONE`; a spec that does it by an ex command is a `dynload`, which takes the whole
+---project into the key). Their `require`s are edges of EVERY closure: the spec that sets a filetype loads the file,
+---and so the modules it requires.
+---
+---The list is made by the walk that the `runtime <dir>/=<digest>` line is made by (`hash.list_files`: symlinked
+---directories are followed), so a file that is part of the digest is also a member: a Lua file below a link is no
+---input that the key hashes and does not analyse (its `require`s, its `-- @cache off`, its environment reads).
 ---@param ctx Testing.Cache.Ctx
 ---@param root string
 ---@return string[] files
@@ -625,17 +665,24 @@ local function runtime_lua(ctx, root)
   for _, name in ipairs(M.RUNTIME_DIRS) do
     local dir = root .. "/" .. name
     if name ~= "plugin" and vim.fn.isdirectory(dir) == 1 then
-      local paths, errors = require("lib.nvim.fs.collect_recursive").files(dir)
-      if errors then
-        unreadable = unreadable or ("unreadable directory: %s"):format(tostring(errors[1]))
-      end
-      for _, p in ipairs(paths) do
-        p = vim.fs.normalize(p)
-        local rel = p:sub(#root + 2)
-        if p:sub(-4) == ".lua" and not rel:find("^after/plugin/") then
-          out[#out + 1] = p
+      local paths, why = hash.list_files(dir, PROJECT_IGNORE)
+      if not paths then
+        unreadable = unreadable or tostring(why)
+      else
+        for _, p in ipairs(paths) do
+          p = vim.fs.normalize(p)
+          local rel = p:sub(#root + 2)
+          if p:sub(-4) == ".lua" and not rel:find("^after/plugin/") then
+            out[#out + 1] = p
+          end
         end
       end
+    end
+  end
+  for _, name in ipairs(M.RUNTIME_FILES) do
+    -- by the NAME, links included: a file that cannot be read has no hash and so no key (`runtime_lines`)
+    if name:sub(-4) == ".lua" and vim.uv.fs_lstat(root .. "/" .. name) then
+      out[#out + 1] = root .. "/" .. name
     end
   end
   table.sort(out)
@@ -856,19 +903,11 @@ end
 ---@field vouched Testing.Cache.Vouched[] The directives of the project files of the closure.
 ---@field env table<string, true> Environment variables that modules of the project read by a literal name and the configuration does not list: their values join the key.
 
----Directory names a digest of the whole project does not enter.
----@type table<string, true>
-local PROJECT_IGNORE = {
-  [".git"] = true,
-  [".deps"] = true,
-  [".cache"] = true,
-  ["node_modules"] = true,
-}
-
----The runtime directories of the project root as key lines `runtime <dir>/=<digest>` (only the ones that exist), once
----per run. They are inputs of every spec that runs in an editor with the root on its runtime path, and nothing in
----the file of a spec says so, so they are never made depend on what the scanner saw. (The runtime directories of
----a dependency checkout and `stdpath('data')/site` are not covered: see `docs/CACHE.md`.)
+---The runtime directories of the project root as key lines `runtime <dir>/=<digest>` and its runtime files
+---(`M.RUNTIME_FILES`: `filetype.lua`, `ftplugin.vim`, `.editorconfig`, ...) as `runtime <file>=<sha256>` (only the
+---ones that exist), once per run. They are inputs of every spec that runs in an editor with the root on its runtime
+---path, and nothing in the file of a spec says so, so they are never made depend on what the scanner saw. (The
+---runtime directories of a dependency checkout and `stdpath('data')/site` are not covered: see `docs/CACHE.md`.)
 ---@param ctx Testing.Cache.Ctx
 ---@param hasher Testing.Cache.Hasher
 ---@param root string
@@ -890,6 +929,20 @@ local function runtime_lines(ctx, hasher, root)
         break
       end
       lines[#lines + 1] = ("runtime %s/=%s"):format(name, dig)
+    end
+  end
+  if lines then
+    for _, name in ipairs(M.RUNTIME_FILES) do
+      -- lstat: a dangling link or a directory of that name is not "absent" (an editor looks at the name); it has no
+      -- hash, and a file that cannot be hashed is no key
+      if vim.uv.fs_lstat(root .. "/" .. name) then
+        local sha, err = sha_of(ctx, hasher, root .. "/" .. name)
+        if not sha then
+          lines, why = nil, ("runtime file %s: %s"):format(name, tostring(err))
+          break
+        end
+        lines[#lines + 1] = ("runtime %s=%s"):format(name, sha)
+      end
     end
   end
   t[root] = { lines, why }

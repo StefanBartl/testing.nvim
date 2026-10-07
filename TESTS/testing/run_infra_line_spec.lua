@@ -180,6 +180,16 @@ return function(H)
     "plain ::error::x",
     "a `::` that is not at the start stays"
   )
+  -- the legacy `##[command]` form is read by the runner anywhere in a line, a line of output of a child included
+  for _, text in ipairs({
+    "##[error]forged",
+    "spec said ##[stop-commands]tok",
+    "\27[31m##[warning]x",
+  }) do
+    local line = project.safe_line(text)
+    ok(not line:find("##[", 1, true), "safe_line defuses the legacy form: " .. vim.inspect(line))
+    has(line, "#\\x23[", "and keeps the text readable: " .. vim.inspect(line))
+  end
 
   vim.fn.delete(tmp, "rf")
 end

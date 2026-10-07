@@ -337,6 +337,52 @@ return function(H)
     end
   end
 
+  -- the legacy `##[command]` form: the runner finds it with a plain substring search, at any position of a line and
+  -- without trimming (.NET `IndexOf`), so it is defused in the middle of a line too, in the text and in the jsonl form
+  do
+    local lg = new_run()
+    F.add(lg, {
+      file = "TESTS/l_spec.lua",
+      name = "legacy ##[error]name",
+      status = "error",
+      error = { message = "boom ##[stop-commands]tok123\n##[error]forged", traceback = "" },
+    })
+    for _, format in ipairs({ "text", "jsonl" }) do
+      local out = agent.render(lg, { command = CMD, format = format })
+      local all = table.concat(out, "\n")
+      ok(not all:find("##[", 1, true), format .. ": no `##[` is left: " .. vim.inspect(out))
+      if format == "jsonl" then
+        -- a jsonl line is JSON: the escape is the JSON one (`\x23` would be no valid JSON), and a consumer that
+        -- decodes the line gets the original text back
+        ok(not all:find("\\x", 1, true), "jsonl: no `\\x` escape, it is no JSON: " .. all)
+        ok(
+          all:find("boom #\\u0023[stop-commands]tok123", 1, true) ~= nil,
+          "jsonl: ##[ written #\\u0023["
+        )
+        local failure
+        for _, l in ipairs(out) do
+          local okd, obj = pcall(vim.json.decode, l)
+          ok(okd, "jsonl: the line decodes as JSON: " .. l)
+          if okd and obj.kind == "failure" then
+            failure = obj
+          end
+        end
+        ok(failure ~= nil, "jsonl: a failure line")
+        eq(
+          failure and failure.message,
+          "boom ##[stop-commands]tok123",
+          "jsonl: the decoded text is the original"
+        )
+        eq(failure and failure.case, "legacy ##[error]name", "jsonl: so is the decoded case name")
+      else
+        ok(
+          all:find("boom #\\x23[stop-commands]tok123", 1, true) ~= nil,
+          "text: the text is kept, its ##[ written #\\x23["
+        )
+      end
+    end
+  end
+
   -- guard findings: one line each, grouped -------------------------------------------------------------------------------------------
   local gd = new_run()
   local c1 = F.add(gd, { file = "TESTS/g_spec.lua", name = "leaks" })

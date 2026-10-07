@@ -197,12 +197,22 @@ function M.has_space(s)
   return false
 end
 
----Defuse a line that a CI runner would read as a workflow command: when the line starts with `::` after any
----amount of whitespace (ASCII or Unicode, see `UNICODE_SPACE`: the runner trims all of it), the `::` is written
----`\x3A:`. One physical line at a time; the whitespace in front stays, so the text keeps its indentation.
+---Defuse a line that a CI runner would read as a workflow command. Two forms exist:
+---* `::command::` (the current one): when the line starts with `::` after any amount of whitespace (ASCII or
+---  Unicode, see `UNICODE_SPACE`: the runner trims all of it), the `::` is written `\x3A:`. The whitespace in
+---  front stays, so the text keeps its indentation.
+---* `##[command]` (the legacy one, still parsed by the runner): the runner looks for it with a plain substring
+---  search, at any position of the line and without trimming, so every `##[` in the line is written `#\x23[`
+---  (a colour sequence or a prefix in front hides nothing). The result holds no `##[` any more, also not where
+---  `###[` or `##[##[` stood, and a second pass changes nothing.
+---With `json` the line is a JSON text (the `jsonl` form of the agent reporter): the escapes are then the JSON ones,
+---`##[` and `::`, so the line stays valid JSON and a consumer that decodes it gets the original text back.
+---One physical line at a time.
 ---@param line string
+---@param json? boolean The line is JSON: use JSON escapes (default false: `\xNN`).
 ---@return string
-function M.defuse_command(line)
+function M.defuse_command(line, json)
+  line = (line:gsub("##%[", json and "#\\u0023[" or "#\\x23["))
   local i = 1
   while true do
     local n = M.space_len(line, i)
@@ -212,7 +222,7 @@ function M.defuse_command(line)
     i = i + n
   end
   if line:sub(i, i + 1) == "::" then
-    return line:sub(1, i - 1) .. "\\x3A:" .. line:sub(i + 2)
+    return line:sub(1, i - 1) .. (json and "\\u003A:" or "\\x3A:") .. line:sub(i + 2)
   end
   return line
 end

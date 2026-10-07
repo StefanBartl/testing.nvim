@@ -235,26 +235,23 @@ end
 ---@field skip? fun(rel: string): boolean
 ---@field ignore_dirs? table<string, boolean> Directory NAMES that are not entered (`.git`).
 
----Digest of every file below a directory (relative names and content hashes, sorted).
----@param dir string Absolute directory.
----@param opts? Testing.Cache.TreeOpts
----@return string|nil digest `nil` when the tree is too big or a file cannot be hashed.
----@return string|nil why
-function Hasher:tree(dir, opts)
-  local skip = opts and opts.skip
-  local ignore_dirs = opts and opts.ignore_dirs
-  dir = vim.fs.normalize(dir):gsub("/+$", "")
-  if vim.fn.isdirectory(dir) ~= 1 then
-    return vim.fn.sha256("absent:" .. dir)
-  end
-  -- ERR-34 says a recursive walk never enters a symlinked directory (an endless loop through a link to an
-  -- ancestor). This walk deviates on purpose, and keeps what the rule is for: a fixture directory that is a
-  -- link is an INPUT of the spec, so a file below it must change the digest. The walker itself still does not
-  -- enter links; they are collected here (the callback sees every directory, so no per-file stat) and followed
-  -- one by one, EACH REAL DIRECTORY ONCE (`seen`) and at most `M.MAX_LINKS` of them, so a loop ends after one
-  -- round and nothing is read twice. The walk only reads: nothing is written or deleted through a link.
-  -- The traversal is deduplicated, the digest is not: every link is a line of its own (`link <rel> -> <target>`),
-  -- so two links to one directory are two lines, and removing one of them changes the digest.
+---Every file below a directory, symlinked directories FOLLOWED: the ONE list of files that a digest of a tree
+---(`Hasher:tree`) and a reader of the same tree (the members of the cache key) agree on, so that a file that is part
+---of the digest is also a file the key analyses.
+---
+---ERR-34 says a recursive walk never enters a symlinked directory (an endless loop through a link to an ancestor).
+---This walk deviates on purpose, and keeps what the rule is for: a fixture directory that is a link is an INPUT of the
+---spec, so a file below it must change the digest. The walker itself still does not enter links; they are collected
+---here (the callback sees every directory, so no per-file stat) and followed one by one, EACH REAL DIRECTORY ONCE
+---(`seen`) and at most `M.MAX_LINKS` of them, so a loop ends after one round and nothing is read twice. The walk only
+---reads: nothing is written or deleted through a link. The files below a link are named by the path of the link (not
+---by its target), so they stay below `dir`.
+---@param dir string Absolute directory (normalized, no trailing slash).
+---@param ignore_dirs? table<string, boolean> Directory NAMES that are not entered (`.git`).
+---@return string[]|nil files `nil` when a directory cannot be listed or there are too many links.
+---@return string[]|string links The links met (every one, also those whose target was already followed), or why there are no files.
+---@return string|nil real_dir The real path of `dir`.
+function M.list_files(dir, ignore_dirs)
   local collect = require("lib.nvim.fs.collect_recursive")
   local uv = vim.uv
   local links, all_links = {}, {}
@@ -281,7 +278,6 @@ function Hasher:tree(dir, opts)
   local real_dir = uv.fs_realpath(dir) or dir
   local seen = { [real_dir] = true }
   local followed = 0
-  local link_lines = {}
   while #links > 0 do
     local link = table.remove(links, 1)
     local real = uv.fs_realpath(link)
@@ -298,6 +294,30 @@ function Hasher:tree(dir, opts)
       vim.list_extend(files, more)
     end
   end
+  return files, all_links, real_dir
+end
+
+---Digest of every file below a directory (relative names and content hashes, sorted).
+---@param dir string Absolute directory.
+---@param opts? Testing.Cache.TreeOpts
+---@return string|nil digest `nil` when the tree is too big or a file cannot be hashed.
+---@return string|nil why
+function Hasher:tree(dir, opts)
+  local skip = opts and opts.skip
+  local ignore_dirs = opts and opts.ignore_dirs
+  dir = vim.fs.normalize(dir):gsub("/+$", "")
+  if vim.fn.isdirectory(dir) ~= 1 then
+    return vim.fn.sha256("absent:" .. dir)
+  end
+  -- The traversal is deduplicated (`M.list_files`), the digest is not: every link is a line of its own
+  -- (`link <rel> -> <target>`), so two links to one directory are two lines, and removing one of them changes the
+  -- digest.
+  local files, all_links, real_dir = M.list_files(dir, ignore_dirs)
+  if not files then
+    return nil, all_links
+  end
+  local uv = vim.uv
+  local link_lines = {}
   for _, link in ipairs(all_links) do
     local rel = vim.fs.normalize(link):sub(#dir + 2)
     if not (skip and skip(rel)) then

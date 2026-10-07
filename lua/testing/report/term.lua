@@ -15,7 +15,9 @@
 --- pass in `render` writes every line that would start with `::` (after any indentation, ASCII or
 --- Unicode) as `\x3A:`: the runner of GitHub Actions trims a line before it looks for a workflow
 --- command, and this reporter indents all of its detail lines, so without the pass a message, an error,
---- a diff context line or a process command line could forge an annotation or `::stop-commands::`.
+--- a diff context line or a process command line could forge an annotation or `::stop-commands::`. The
+--- same pass writes every `##[` (the legacy command form, which the runner reads at any position of a
+--- line) as `#\x23[`.
 
 local util = require("testing.report.util")
 local result_mod = require("testing.core.result")

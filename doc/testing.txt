@@ -470,7 +470,8 @@ on purpose. The exit codes do not change.
 
 Reporters read the IR only and treat everything from the code under test as
 hostile input: `term` (default; a line that would start with `::` is written
-`\x3A:`, so a failure message cannot forge a workflow command), `github`
+`\x3A:` and every `##[` is written `#\x23[`, so a failure message cannot forge
+a workflow command), `github`
 (annotations escaped so a test name cannot start a workflow command, step
 summary appended), `junit` (well-formed
 XML for any input), `agent` (compact, for coding agents: the verdict as the

@@ -105,7 +105,16 @@ until the store is within 64 MB and 5000 entries; a hit renews the age. An entry
   child editor has the root on its runtime path and runs `filetype plugin indent on`, so a spec that sets a filetype or
   opens a buffer runs the filetype plugin, the indent and syntax files and the Tree-sitter queries of the project, and
   nothing in the spec leads there. They are in EVERY key, whether the scanner saw a file read or not (an edit of
-  `ftplugin/` changes the key of every spec; `lua/`, `doc/`, `docs/` and the spec files are not among them),
+  `ftplugin/` changes the key of every spec; `lua/`, `doc/`, `docs/` and the spec files are not among them). A
+  symlinked (or junctioned) directory below one of them is followed, as it is for the files a spec reads,
+- the **runtime files** of the project root that exist (`runtime <file>=<sha256>` key lines): `filetype.lua`,
+  `filetype.vim`, `ftplugin.vim`, `indent.vim`, `scripts.vim`, `scripts.lua`, `ftoff.vim`, `ftplugof.vim`, `indoff.vim`
+  (`testing.cache.RUNTIME_FILES`) and `.editorconfig`. A child editor sources the first ones itself from the root on its
+  runtime path (detection of a buffer, `filetype plugin indent on|off`), and the built-in editorconfig plugin reads
+  `.editorconfig` for every buffer of a file below the root (`shiftwidth`, `expandtab`, ...), so a spec that opens a
+  buffer and asserts on the filetype or the indent depends on them without naming them. A file that is absent is no line
+  (creating it changes the key); a link that dangles or a directory of that name has no hash, so no key. An edit of
+  `.editorconfig` changes the key of every spec,
 - the runner version: a content digest of `lua/testing` (a dirty checkout differs from a clean one),
 - the Neovim version, API level (`api_info().version.api_level`), OS and CPU architecture (the key line used to read a
   field that does not exist and carried the word `apinil`: it names the level now, which changed every key once, on top of
@@ -130,9 +139,12 @@ files below the runtime directories that an editor loads by itself (`ftplugin/`,
 `after/plugin/`, `colors/`, `lsp/`, ..., not `plugin/`: a child editor starts with `-u NONE` and does not source it) are
 edges of EVERY closure, because a spec that sets a filetype loads the file and so the module it requires; a
 `require` there that nothing resolves is judged like one of the spec (no key, or an `absent` line where the run says so).
+The same holds for the Lua files in the root that an editor loads (`filetype.lua`, `scripts.lua`) and for a Lua file
+below a symlinked directory of a runtime directory (the list of files is made by the walk that makes the digest of the
+directory, so a file that is hashed is also analysed).
 Those Lua files are **members** of every closure, not only edges: what they read, load and declare counts like what a
 module the spec requires does (next paragraph).
-A graph can replace the scan (`file_info.deps` with `deps_complete = true`; the runtime directories stay in the key, their
+A graph can replace the scan (`file_info.deps` with `deps_complete = true`; the runtime directories and the runtime files of the root stay in the key, their
 `require`s are then the graph's business).
 
 **Hidden inputs of the whole closure.** A spec is only as deterministic as the files it loads, so the markers
@@ -192,7 +204,11 @@ whole word): a line made to keep the scanner busy (a directive and tens of thous
 milliseconds as any other, and what lies beyond the bound is not read.
 
 `-- @cache-allow time random spawn net` is the author's statement that the clock, random numbers, a process or the
-network that this file uses do not decide what a spec sees; the file is then not judged for them.
+network that this file uses do not decide what a spec sees; the file is then not judged for them. The directive is a
+list of words separated by blanks, and **only the leading run of words from the list counts**
+(`time random spawn net outside env nondeterministic`): the first token that is not one of them ends the directive, so
+a remark behind it vouches for nothing (`-- @cache-allow time (log stamps only; never random numbers)` grants `time`
+and not `random`), and so does a comma (`time, random` grants nothing: write `time random`).
 `-- @cache-allow outside` says that the places outside the project this file names (`".."` in path arithmetic, the
 sibling-checkout lookup of `testing.deps`, the bad values a path validator is tested with) are not read for what a spec
 sees; the file is then not judged for them.
@@ -686,6 +702,10 @@ that only touches CI files.
   path for the installed Tree-sitter parsers and queries (a machine input like the Neovim build and the OS: updating a
   parser does not change a key; the Neovim version does). A spec whose verdict depends on one of them runs with
   `--no-cache`, or carries `-- @cache off`.
+- Of the files the editor looks for by name, the `.editorconfig` of the project ROOT is in the key; one in a directory
+  above the root, or next to a file below it that the key does not hash (the plugin walks up to the first
+  `root = true`), is not. The same holds for `~/.editorconfig`. A spec that reads the indent of a file outside the
+  project runs with `--no-cache`.
 - The clock and random numbers of a module, and the processes of a module that the run did not start, do not block a
   key (see "When there is no key"). `-- @cache-allow` and `-- @cache off` are the author's tools for the exceptions.
 - The stat pre-check relies on size, mtime and ctime. On a filesystem whose ctime does not change on write (seen on

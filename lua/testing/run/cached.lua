@@ -85,14 +85,24 @@ local CONFIG_NOT_IN_KEY = {
 ---a spec runs, without what does not change a result (parallelism, sharding, the watcher).
 ---@param plan Testing.Cli.RunPlan
 ---@param run_opts Testing.Run.Options
+---@param cache_dir? string The place of the result cache: where the cache lives never decides a result, so it is not part of the digest.
 ---@return string digest
-local function config_digest(plan, run_opts)
+local function config_digest(plan, run_opts, cache_dir)
   local project = vim.deepcopy(plan.project)
   for _, k in ipairs(CONFIG_NOT_IN_KEY) do
     project[k] = nil
   end
   local run = vim.deepcopy(run_opts)
   run.jobs = nil
+  if cache_dir and run.guard_allow and run.guard_allow.fs then
+    -- the runner's own cache folder is allowed in the fs guard (cli.lua): a path that differs per machine and per
+    -- checkout must not make every key and every stamp of that run a different one
+    local own =
+      vim.fs.normalize(require("testing.cache.store").dir(plan.root, { cache_dir = cache_dir }))
+    run.guard_allow.fs = vim.tbl_filter(function(p)
+      return vim.fs.normalize(p) ~= own
+    end, run.guard_allow.fs)
+  end
   local args = plan.args
   return vim.fn.sha256(vim.inspect({
     project = project,
@@ -203,7 +213,7 @@ function M.key_inputs(plan, run_opts, o)
     root = plan.root,
     mode = o.mode,
     cache_dir = o.cache_dir,
-    config_digest = config_digest(plan, run_opts),
+    config_digest = config_digest(plan, run_opts, o.cache_dir),
     env_names = run_opts.env_allow,
     shuffled = args.shuffle or false,
     seed = o.seed,

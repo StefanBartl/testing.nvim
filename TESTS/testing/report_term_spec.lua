@@ -357,6 +357,96 @@ return function(H)
       end
     end
   end
+  -- the legacy `##[command]` form: the runner searches the whole line for `##[` (.NET `IndexOf`, no trim, any
+  -- position), so a message, an error, a traceback, a diff context line, a plain expected value, a skip reason, a
+  -- process command line and a guard message are defused wherever the `##[` stands, colour on or off
+  do
+    local function runner_reads_legacy(l)
+      return l:find("##[", 1, true) ~= nil
+    end
+    ok(
+      runner_reads_legacy("a ##[error]x"),
+      "(the check itself sees a legacy command in the middle)"
+    )
+    ok(not runner_reads_legacy("a #\\x23[error]x"), "(and not the defused form)")
+    local r = result.new({ id = "2026-10-07T10:00:00Z-0012", nvim = "0.12.0", os = "linux" })
+    F.add(r, {
+      file = "TESTS/w_spec.lua",
+      name = "message",
+      assertions = {
+        {
+          ok = false,
+          kind = "ok",
+          msg = "boom ##[stop-commands]tok123 ##[error]forged",
+          diff = "-x\nin ##[error]in-diff-field",
+        },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/x_spec.lua",
+      name = "error text",
+      status = "error",
+      error = {
+        message = "##[error]at-start\r\nmid ###[warning]third-hash",
+        traceback = "stack traceback:\n\tx.lua:1: ##[add-mask]in-trace",
+      },
+    })
+    F.add(r, {
+      file = "TESTS/y_spec.lua",
+      name = "diff",
+      assertions = {
+        {
+          ok = false,
+          kind = "eq",
+          msg = "differs",
+          expected = "a\nsame ##[group]in-diff\nb\nc",
+          actual = "a\nsame ##[group]in-diff\nb\nX",
+        },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/z_spec.lua",
+      name = "plain value",
+      assertions = {
+        { ok = false, kind = "eq", msg = "plain", expected = "x\nv ##[echo]expected-line" },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/za_spec.lua",
+      name = "skipped",
+      status = "skip",
+      reason = "why ##[notice]skip-reason",
+    })
+    local spawner = F.add(r, { file = "TESTS/zb_spec.lua", name = "spawns ##[error]name" })
+    spawner.effects.spawned = { "tool ##[stop-commands]cmd -x (x2)" }
+    spawner.guards = {
+      { guard = "state", severity = "warn", message = "leaks ##[warning]guard-line" },
+    }
+    for _, color in ipairs({ false, true }) do
+      local out = term.render(r, { color = color })
+      local what = color and "colour on" or "colour off"
+      for _, l in ipairs(out) do
+        ok(
+          not runner_reads_legacy(l),
+          ("%s: the runner would run a legacy command in %s"):format(what, vim.inspect(l))
+        )
+      end
+      for _, needle in ipairs({
+        "boom #\\x23[stop-commands]tok123 #\\x23[error]forged",
+        "#\\x23[error]in-diff-field",
+        "#\\x23[error]at-start",
+        "##\\x23[warning]third-hash",
+        "#\\x23[add-mask]in-trace",
+        "#\\x23[group]in-diff",
+        "#\\x23[echo]expected-line",
+        "#\\x23[notice]skip-reason",
+        "#\\x23[stop-commands]cmd -x",
+        "#\\x23[warning]guard-line",
+      }) do
+        has_line(out, needle, what .. ": the text is kept, its ##[ written #\\x23[")
+      end
+    end
+  end
 
   -- colour ----------------------------------------------------------------------------------------------
   for _, l in ipairs(lines) do

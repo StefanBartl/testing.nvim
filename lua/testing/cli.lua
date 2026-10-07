@@ -593,7 +593,9 @@ local function execute(argv, sv)
   -- the runner itself stores into the directory it was told to use, also while a spec of an in-process
   -- window is running next to it (jobs > 1): the fs guard must not count that as a write of the spec
   if sv.cache_dir then
-    args.allow_fs = vim.list_extend(vim.deepcopy(args.allow_fs or {}), { sv.cache_dir })
+    -- only the folder of THIS project below it, not the whole directory that was named
+    local own = require("testing.cache.store").dir(root, { cache_dir = sv.cache_dir })
+    args.allow_fs = vim.list_extend(vim.deepcopy(args.allow_fs or {}), { own })
   end
 
   if args.cache_clear then

@@ -28,7 +28,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 10
+M.VERSION = 11
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -906,8 +906,15 @@ local function scan_directives(text)
     end
     local allow = line:match("^%s*%-%-%s*@cache%-allow%s+(.*)")
     if allow then
-      for word in allow:gmatch("%a+") do
-        if ALLOWABLE[word] and not allowed[word] then
+      -- only the LEADING run of allowable words counts, and a word is a whole blank-separated token: the prose behind
+      -- it (`time (log stamps only; never random numbers)`, `time -- no env`) is not a statement, and it must not
+      -- vouch for an input the author named in order to rule it out. A token that is not on the list ends the
+      -- directive (fail closed: a comma, `time, random`, grants nothing).
+      for word in allow:gmatch("%S+") do
+        if not ALLOWABLE[word] then
+          break
+        end
+        if not allowed[word] then
           allowed[word] = true
           d.allow[#d.allow + 1] = word
         end

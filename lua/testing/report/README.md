@@ -82,7 +82,10 @@ summary: 2 pass, 1 fail (3 case(s)) in 1.50 s
 Workflow commands are parsed from stdout, so the text is escaped as the runner expects: in the
 message `%`, CR, LF become `%25`, `%0D`, `%0A`; in properties (`file`, `title`) also `:` and `,`
 become `%3A`, `%2C`. Other control characters are made visible first, so a test name holding
-`\n::set-output ...` can never start a second command. At most `max_annotations` (default 10, the
+`\n::set-output ...` can never start a second command. The text that other reporters print
+(`term`, `agent`, the run's own diagnostics) is defused by `util.defuse_command`: a leading `::`
+(after any whitespace) becomes `\x3A:`, and every `##[` (the legacy command form, read anywhere in a
+line) becomes `#\x23[`. At most `max_annotations` (default 10, the
 GitHub limit per type and step) are emitted, then one warning says how many were left out. Skips are
 annotated with `annotate_skips = true`.
 

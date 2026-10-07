@@ -34,7 +34,8 @@
 --- Everything that came from the code under test (case names, messages, values, paths) passes
 --- `testing.report.util.clean` with C1 and bidi escaping, is cut to one line, and a line that would start with
 --- `::` (a GitHub workflow command; after ASCII or Unicode whitespace too: the runner trims both) is written
---- with `\x3A:` so that no runner executes it.
+--- with `\x3A:` so that no runner executes it, and so is every `##[` (the legacy form, read anywhere in a line)
+--- as `#\x23[` (`##[` in the jsonl form, a JSON escape, so a line stays valid JSON).
 
 local util = require("testing.report.util")
 local verdict_mod = require("testing.report.verdict")
@@ -67,11 +68,13 @@ local LABEL = {
 }
 
 ---@param s string
+---@param json? boolean `s` is a JSON text: defuse with JSON escapes, so the line stays valid JSON
 ---@return string
-local function guard_command(s)
+local function guard_command(s, json)
   -- a workflow command must not survive at the start of a line, whatever indentation a reader adds later: the
-  -- runner trims Unicode whitespace as well as ASCII, so a no-break space in front does not hide it
-  return util.defuse_command(s)
+  -- runner trims Unicode whitespace as well as ASCII, so a no-break space in front does not hide it. The legacy
+  -- `##[command]` form is read anywhere in a line, so it is defused everywhere in it.
+  return util.defuse_command(s, json)
 end
 
 ---One printable line: control characters, C1 and bidi escaped, whitespace collapsed, at most `max` characters.
@@ -706,7 +709,7 @@ end
 ---@return string
 local function json_line(t)
   local text = require("lib.nvim.json").encode(t)
-  return guard_command(text or "{}")
+  return guard_command(text or "{}", true)
 end
 
 ---@param result Testing.Result

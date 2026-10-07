@@ -49,8 +49,8 @@ return function(H)
     }, over or {})
   end
   local function key_of(root, file, over)
-    local k, why, parts = cache.key({ file = file }, ctx(root, over))
-    return k, why, parts
+    local k, why, parts, detail = cache.key({ file = file }, ctx(root, over))
+    return k, why, parts, detail
   end
   local SPEC = "TESTS/p_spec.lua"
   -- a spec that is pure: no file read, no require
@@ -65,6 +65,26 @@ return function(H)
       end
     end
     return out
+  end
+
+  ---Is there a key line that starts with `prefix`? (`env X=` is not `child-env X=`)
+  ---@param parts string[]|nil
+  ---@param prefix string
+  ---@return boolean
+  local function has_line(parts, prefix)
+    for _, l in ipairs(parts or {}) do
+      if l:sub(1, #prefix) == prefix then
+        return true
+      end
+    end
+    return false
+  end
+  local function with_env(value)
+    return {
+      environ = function()
+        return { MYLANG_INDENT = value }
+      end,
+    }
   end
 
   -- ---------------------------------------------------------------- every runtime directory is an input
@@ -117,6 +137,218 @@ return function(H)
     end)
   end
 
+  -- ---------------------------------------------------------------- the files of the root are inputs as well
+  -- A child editor loads these from the root by itself (`filetype.lua`, `ftplugin.vim`, ... by `filetype plugin indent
+  -- on` and the detection of a buffer; `.editorconfig` by the built-in editorconfig plugin for every file below the
+  -- root). A spec that opens a buffer and asserts on the filetype or the indent never names them.
+  local root_files = {
+    {
+      "filetype.lua",
+      "vim.filetype.add({ extension = { zzz = 'a' } })\n",
+      "vim.filetype.add({ extension = { zzz = 'b' } })\n",
+    },
+    { "filetype.vim", "au BufRead *.zzz setf a\n", "au BufRead *.zzz setf b\n" },
+    { "ftplugin.vim", "let g:my_ftplugin = 1\n", "let g:my_ftplugin = 2\n" },
+    { "indent.vim", "let g:my_indent = 1\n", "let g:my_indent = 2\n" },
+    { "scripts.vim", "let g:my_scripts = 1\n", "let g:my_scripts = 2\n" },
+    { "scripts.lua", "vim.g.my_scripts = 1\n", "vim.g.my_scripts = 2\n" },
+    { "ftoff.vim", "let g:my_ftoff = 1\n", "let g:my_ftoff = 2\n" },
+    { "ftplugof.vim", "let g:my_ftplugof = 1\n", "let g:my_ftplugof = 2\n" },
+    { "indoff.vim", "let g:my_indoff = 1\n", "let g:my_indoff = 2\n" },
+    {
+      ".editorconfig",
+      "root = true\n[*]\nindent_size = 3\n",
+      "root = true\n[*]\nindent_size = 5\n",
+    },
+  }
+  section("the list of the root files", function()
+    local want = {}
+    for _, row in ipairs(root_files) do
+      want[#want + 1] = row[1]
+    end
+    local have = vim.deepcopy(cache.RUNTIME_FILES)
+    table.sort(want)
+    table.sort(have)
+    eq(have, want, "the files of the root that an editor loads by itself")
+  end)
+  for _, row in ipairs(root_files) do
+    local rel, v1, v2 = row[1], row[2], row[3]
+    section("root file " .. rel, function()
+      local root = S.project({ [SPEC] = PURE })
+      local k0, _, parts0 = key_of(root, SPEC)
+      ok(k0 ~= nil, "a pure spec has a key")
+      ok(
+        not vim.tbl_contains(runtime_parts(parts0), rel),
+        rel .. ": a file that does not exist is no line"
+      )
+      S.write(root .. "/" .. rel, v1)
+      local k1, _, parts = key_of(root, SPEC)
+      ok(k1 ~= k0, rel .. ": a new file in the root changes the key")
+      ok(
+        vim.tbl_contains(runtime_parts(parts), rel),
+        rel
+          .. ": the key has a `runtime "
+          .. rel
+          .. "=` line: "
+          .. vim.inspect(runtime_parts(parts))
+      )
+      eq(key_of(root, SPEC), k1, rel .. ": and it is stable")
+      S.edit(root, rel, v2)
+      local k2 = key_of(root, SPEC)
+      ok(k2 ~= k1, rel .. ": an edit of it changes the key")
+      S.edit(root, "docs/x.md", "unrelated edit\n")
+      S.edit(root, "TESTS/other_spec.lua", "return function(H) H.ok(true, 'other') end\n")
+      eq(key_of(root, SPEC), k2, rel .. ": a document and another spec do not change the key")
+      S.remove(root)
+    end)
+  end
+
+  section("root file that cannot be hashed means no key", function()
+    -- a directory with the name of a file: not "absent" (the editor looks at the name), and it has no hash
+    for _, name in ipairs({ "ftplugin.vim", "filetype.lua" }) do
+      local root = S.project({ [SPEC] = PURE })
+      vim.fn.mkdir(root .. "/" .. name, "p")
+      local k, why = key_of(root, SPEC)
+      ok(k == nil, name .. ": a directory in its place: no key")
+      ok(
+        type(why) == "string" and why:find(name, 1, true) ~= nil,
+        name .. ": and the reason names it: " .. tostring(why)
+      )
+      S.remove(root)
+    end
+    -- a dangling link
+    local root = S.project({ [SPEC] = PURE })
+    if vim.uv.fs_symlink(root .. "/nowhere.vim", root .. "/indent.vim") then
+      local k, why = key_of(root, SPEC)
+      ok(k == nil, "a dangling link in its place: no key")
+      ok(
+        type(why) == "string" and why:find("indent.vim", 1, true) ~= nil,
+        "and the reason names it: " .. tostring(why)
+      )
+    end
+    S.remove(root)
+  end)
+
+  section("root Lua files are members of every closure", function()
+    for _, name in ipairs({ "filetype.lua", "scripts.lua" }) do
+      -- the module it requires is an edge
+      local root = S.project({
+        [SPEC] = PURE,
+        ["lua/proj/ft.lua"] = "return { v = 1 }\n",
+        [name] = 'local ft = require("proj.ft")\nvim.g.my_ft = ft.v\n',
+      })
+      local k0, why, parts = key_of(root, SPEC)
+      ok(k0 ~= nil, name .. ": a key: " .. tostring(why))
+      ok(
+        table.concat(parts, "\n"):find("dep lua/proj/ft.lua=", 1, true) ~= nil,
+        name .. ": the module it requires is a dependency of the spec"
+      )
+      S.edit(root, "lua/proj/ft.lua", "return { v = 2 }\n")
+      ok(key_of(root, SPEC) ~= k0, name .. ": an edit of the module changes the key")
+      -- what it declares counts: `-- @cache off` leaves every spec without a key, and says which file
+      S.edit(root, name, "-- @cache off\nvim.g.my_ft = 1\n")
+      local k, why_off, _, detail = key_of(root, SPEC)
+      ok(k == nil, name .. ": `-- @cache off` in it: no key")
+      ok(
+        type(why_off) == "string" and why_off:find(name, 1, true) ~= nil,
+        name .. ": and the reason names it: " .. tostring(why_off)
+      )
+      eq(detail and detail.kind, "off", name .. ": the reason as data")
+      -- what it reads counts: the environment variable joins the key
+      S.edit(root, name, "vim.g.my_ft = tonumber(vim.env.MYLANG_INDENT) or 2\n")
+      local ke, why_env, parts_e = key_of(root, SPEC, with_env("2"))
+      ok(ke ~= nil, name .. ": a key: " .. tostring(why_env))
+      ok(has_line(parts_e, "env MYLANG_INDENT="), name .. ": the variable it reads is in the key")
+      ok(key_of(root, SPEC, with_env("4")) ~= ke, name .. ": and its value changes the key")
+      S.remove(root)
+    end
+    -- a `require` nobody resolves
+    local root = S.project({ [SPEC] = PURE, ["filetype.lua"] = 'require("optional.dep")\n' })
+    local k, why = key_of(root, SPEC)
+    ok(k == nil, "a require nobody resolves in filetype.lua: no key")
+    ok(
+      type(why) == "string" and why:find("optional.dep", 1, true) ~= nil,
+      "and the reason names the module: " .. tostring(why)
+    )
+    S.remove(root)
+  end)
+
+  -- ---------------------------------------------------------------- a symlinked directory below a runtime directory
+  -- The digest of `ftplugin/` follows links (a fixture directory that is a link is an input), the walk that lists the
+  -- Lua files of it did not: the file below the link was hashed and never analysed, so what it requires did not lead
+  -- anywhere and its `-- @cache off` was not read.
+  ---Make `<root>/ftplugin/lua` a link to `<root>/shared_ft`, which holds `x.lua`.
+  ---@param root string
+  ---@param text string The content of `x.lua`.
+  ---@return boolean made
+  local function linked_ftplugin(root, text)
+    S.write(root .. "/shared_ft/x.lua", text)
+    vim.fn.mkdir(root .. "/ftplugin", "p")
+    return vim.uv.fs_symlink(
+      root .. "/shared_ft",
+      root .. "/ftplugin/lua",
+      { dir = true, junction = true }
+    ) and true or false
+  end
+
+  section("runtime directory with a symlinked subdirectory", function()
+    local MODULE = 'local ft = require("proj.ft")\nvim.b.my_ft = ft.v\n'
+    local base = { [SPEC] = PURE, ["lua/proj/ft.lua"] = "return { v = 1 }\n" }
+    -- the control: the same layout with a real directory
+    local root = S.project(base)
+    S.write(root .. "/ftplugin/lua/x.lua", MODULE)
+    local kr = key_of(root, SPEC)
+    ok(kr ~= nil, "a real directory: a key")
+    S.edit(root, "lua/proj/ft.lua", "return { v = 2 }\n")
+    ok(key_of(root, SPEC) ~= kr, "a real directory: an edit of the required module changes the key")
+    S.remove(root)
+
+    root = S.project(base)
+    if not linked_ftplugin(root, MODULE) then
+      S.remove(root)
+      return -- links cannot be made here: nothing to test
+    end
+    local k0, why, parts = key_of(root, SPEC)
+    ok(k0 ~= nil, "a link: a key: " .. tostring(why))
+    ok(
+      table.concat(parts, "\n"):find("dep lua/proj/ft.lua=", 1, true) ~= nil,
+      "a link: the module the file below it requires is a dependency of the spec"
+    )
+    S.edit(root, "lua/proj/ft.lua", "return { v = 2 }\n")
+    ok(
+      key_of(root, SPEC) ~= k0,
+      "a link: an edit of the module the linked file requires changes the key"
+    )
+    -- the file below the link itself is an input (it was before)
+    local k1 = key_of(root, SPEC)
+    S.edit(root, "shared_ft/x.lua", MODULE .. "-- edit\n")
+    ok(key_of(root, SPEC) ~= k1, "a link: an edit of the linked file changes the key")
+    S.remove(root)
+
+    -- `-- @cache off` below a link is the author's word as much as below a real directory
+    root = S.project(base)
+    linked_ftplugin(root, "-- @cache off\nvim.b.my_ft = 1\n")
+    local k, why_off, _, detail = key_of(root, SPEC)
+    ok(k == nil, "a link: `-- @cache off` in the linked file: no key (it was ignored)")
+    ok(
+      type(why_off) == "string" and why_off:find("@cache off", 1, true) ~= nil,
+      "a link: and says why: " .. tostring(why_off)
+    )
+    eq(detail and detail.kind, "off", "a link: the reason as data")
+    S.remove(root)
+
+    -- the environment variable a linked file reads joins the key
+    root = S.project(base)
+    linked_ftplugin(root, "vim.bo.shiftwidth = tonumber(vim.env.MYLANG_INDENT) or 2\n")
+    local ke, why_env, parts_e = key_of(root, SPEC, with_env("2"))
+    ok(ke ~= nil, "a link: a key: " .. tostring(why_env))
+    ok(
+      has_line(parts_e, "env MYLANG_INDENT="),
+      "a link: the variable the linked file reads is in the key"
+    )
+    S.remove(root)
+  end)
+
   -- ---------------------------------------------------------------- a directory that does not exist is no line
   section("absent directories", function()
     local root = S.project({ [SPEC] = PURE })
@@ -140,7 +372,7 @@ return function(H)
   section("key version", function()
     local root = S.project({ [SPEC] = PURE })
     local _, _, parts = key_of(root, SPEC)
-    ok(cache.KEY_VERSION >= 2, "the key layout has a new version: " .. tostring(cache.KEY_VERSION))
+    ok(cache.KEY_VERSION >= 3, "the key layout has a new version: " .. tostring(cache.KEY_VERSION))
     eq(parts[1], "key-version " .. cache.KEY_VERSION, "and the first line names it")
     S.remove(root)
   end)
@@ -214,26 +446,7 @@ return function(H)
   -- What a module the spec requires reads or declares counts for the spec: the same holds for a Lua file the editor
   -- loads by itself (`ftplugin/mylang.lua` is run by `:set filetype=mylang` of a spec that names nothing).
 
-  ---Is there a key line that starts with `prefix`? (`env X=` is not `child-env X=`)
-  ---@param parts string[]|nil
-  ---@param prefix string
-  ---@return boolean
-  local function has_line(parts, prefix)
-    for _, l in ipairs(parts or {}) do
-      if l:sub(1, #prefix) == prefix then
-        return true
-      end
-    end
-    return false
-  end
   local RT_FILES = { "ftplugin/mylang.lua", "after/ftplugin/mylang.lua", "indent/mylang.lua" }
-  local function with_env(value)
-    return {
-      environ = function()
-        return { MYLANG_INDENT = value }
-      end,
-    }
-  end
 
   section("runtime file: the environment variable it reads joins the key", function()
     for _, where in ipairs(RT_FILES) do

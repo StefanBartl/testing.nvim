@@ -95,6 +95,77 @@ return function(H)
   eq(util.defuse_command("   "), "   ", "only whitespace")
   eq(util.defuse_command(""), "", "the empty line")
   eq(util.defuse_command("\\x3A:error"), "\\x3A:error", "an already defused line is left alone")
+  -- the legacy `##[command]` form: the runner searches the whole line for `##[` (.NET `IndexOf`, no trim, no
+  -- position), so it is defused anywhere, behind a colour sequence or a prefix too
+  eq(
+    util.defuse_command("##[error]x"),
+    "#\\x23[error]x",
+    "a legacy command at the start of the line"
+  )
+  eq(
+    util.defuse_command("boom ##[stop-commands]tok ##[error]forged"),
+    "boom #\\x23[stop-commands]tok #\\x23[error]forged",
+    "a legacy command in the middle, every one of them"
+  )
+  eq(
+    util.defuse_command("\27[31m##[warning]x\27[0m"),
+    "\27[31m#\\x23[warning]x\27[0m",
+    "a legacy command behind a colour sequence (the runner does not trim ESC)"
+  )
+  eq(
+    util.defuse_command("###[error]x"),
+    "##\\x23[error]x",
+    "a third `#` in front does not hide the command"
+  )
+  eq(util.defuse_command("####[x]"), "###\\x23[x]", "and neither do more")
+  eq(util.defuse_command("##[##[x]"), "#\\x23[#\\x23[x]", "adjacent commands")
+  eq(
+    util.defuse_command("# #[x] ##x [y] #[z]"),
+    "# #[x] ##x [y] #[z]",
+    "no `##[` in it, nothing to do"
+  )
+  eq(
+    util.defuse_command('{"message":"a ##[error]x","n":1}', true),
+    '{"message":"a #\\u0023[error]x","n":1}',
+    "a JSON line gets the JSON escape, so it stays valid JSON"
+  )
+  eq(
+    vim.json.decode(util.defuse_command('{"message":"a ##[error]x"}', true)).message,
+    "a ##[error]x",
+    "and decodes to the original text"
+  )
+  eq(
+    util.defuse_command("  ::x", true),
+    "  \\u003A:x",
+    "the leading `::` of a JSON text is written \\u003A:"
+  )
+  eq(
+    util.defuse_command("#\\x23[error]x"),
+    "#\\x23[error]x",
+    "an already defused legacy line is left alone"
+  )
+  eq(
+    util.defuse_command("  ::error::##[error]x"),
+    "  \\x3A:error::#\\x23[error]x",
+    "both forms in one line"
+  )
+  for _, l in ipairs({
+    "##[a]",
+    "x##[a]##[b]",
+    "###[a]",
+    "#####[a]",
+    "##[##[a]",
+    "\27[1m##[a]",
+    "::##[a]",
+  }) do
+    local once = util.defuse_command(l)
+    ok(not once:find("##[", 1, true), ("no `##[` is left in %s"):format(vim.inspect(once)))
+    eq(
+      util.defuse_command(once),
+      once,
+      ("a second pass changes nothing in %s"):format(vim.inspect(l))
+    )
+  end
   eq(util.has_space("plain-word"), false, "no whitespace")
   eq(util.has_space("a\226\128\139b"), false, "a zero-width space is none")
 

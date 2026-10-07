@@ -52,5 +52,27 @@ return function(H)
   local other = H.glob(tmp .. "/cache/testing/h-*/entries/*.json")
   ok(#host == 1, "its entry is in the folder of its own key (found " .. #host .. ")")
   ok(#other == 0, "and not in a folder named after the path (found " .. #other .. ")")
+
+  -- where the cache lives never decides a key: the same project stored below another cache directory has the same
+  -- entry name (else a cache restored to another path, or a stamp written on another machine, would never match)
+  code = cli.main({ tmp .. "/h", "--cached" }, {
+    out = function() end,
+    err = function() end,
+    state_dir = tmp .. "/state2",
+    cache_dir = tmp .. "/other-place/cache",
+    color = false,
+    affected = { getenv = function() end, provider = false },
+  })
+  store.project_key = saved
+  ok(code == 0, "the second run is green (exit " .. tostring(code) .. ")")
+  local moved = H.glob(tmp .. "/other-place/cache/testing/host-key-*/entries/*.json")
+  ok(#moved == 1, "the entry is below the other cache directory (found " .. #moved .. ")")
+  ok(
+    #host == 1 and #moved == 1 and vim.fs.basename(host[1]) == vim.fs.basename(moved[1]),
+    "and has the same key: "
+      .. tostring(host[1] and vim.fs.basename(host[1]))
+      .. " vs "
+      .. tostring(moved[1] and vim.fs.basename(moved[1]))
+  )
   vim.fn.delete(tmp, "rf")
 end

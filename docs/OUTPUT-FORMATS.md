@@ -114,7 +114,8 @@ FAIL  TESTS/b_spec.lua
   sequences, C1, bidi overrides, invalid UTF-8). Every line that would start with `::` (a workflow command, which
   the runner of GitHub Actions also reads behind indentation, ASCII or Unicode) is written with `\x3A:`, so a
   failure message cannot forge an annotation or switch the real ones off with `::stop-commands::`. A line that
-  begins that way is two columns wider than the width.
+  begins that way is two columns wider than the width. The legacy form `##[error]...` is read by the runner at
+  any position of a line, so every `##[` is written `#\x23[` (three columns wider each).
 * Colour is off unless asked for. The convention: an explicit option, then `NO_COLOR`, then
   `FORCE_COLOR` / `CLICOLOR_FORCE`, then whether stdout is a terminal.
 
@@ -189,7 +190,9 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   characters, escape sequences, C1, bidi overrides, invalid UTF-8), are cut to one line, and a line that would start
   with `::` (a workflow command) is written with `\x3A:`. That holds after any whitespace, ASCII or Unicode (a
   no-break space, an ideographic space, U+2028: the runner of GitHub Actions trims all of it before it looks for
-  `::`), and for every line the run writes to stderr, a line after a line break inside a message included.
+  `::`), and for every line the run writes to stderr, a line after a line break inside a message included. The
+  legacy form `##[command]` is found by the runner anywhere in a line, so every `##[` is written `#\x23[` (in the
+  `jsonl` form `##[`, a JSON escape: the line stays valid JSON and decodes to the original text).
 * **No sentinel.** `GREEN` is printed exactly where the sentinel would be. A script that greps for the sentinel
   uses `--reporter term` (or `TESTING_AGENT=0`).
 

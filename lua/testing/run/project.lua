@@ -289,7 +289,8 @@ end
 ---`\u{NNNN}` (the spec's own `print` must not be able to clear the screen, retitle the window, or
 ---forge a link), and a leading `::` (a GitHub workflow command such as `::error::` or
 ---`::stop-commands::`) is written as `\x3A:` so that no runner executes it, whatever a reporter does with the
----indent later (the runner trims Unicode whitespace as well, see `util.defuse_command`). One physical line.
+---indent later (the runner trims Unicode whitespace as well, see `util.defuse_command`); every `##[` (the legacy
+---command form, read anywhere in a line) is written `#\x23[`. One physical line.
 ---@param line string
 ---@return string
 local function safe_output_line(line)
