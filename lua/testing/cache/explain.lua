@@ -204,6 +204,7 @@ end
 ---@field compare? "ok"|"none"
 ---@field compare_why? string
 ---@field flipped? string[] The key has given these different results (and the spec is cached anyway).
+---@field vouched? Testing.Cache.Vouched[] Directives of the closure that vouch for inputs the scanner cannot see.
 
 ---Explain one spec file. ONE call of `cache.key` makes the key, the reason and the lines.
 ---@param info Testing.Cache.FileInfo
@@ -241,6 +242,7 @@ function M.explain(info, ctx, deps)
   end
   rec.key = key
   rec.flipped = detail and detail.flipped or nil
+  rec.vouched = detail and detail.vouched or nil
   local entry, miss = cache.peek(key, {
     root = deps.root,
     cache_dir = deps.cache_dir,

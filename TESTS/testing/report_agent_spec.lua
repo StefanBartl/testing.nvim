@@ -465,6 +465,13 @@ return function(H)
     eq(agent.shell_quote(""), "''", "the empty word")
     eq(agent.shell_quote("it's"), nil, "a single quote has no spelling that holds in both shells")
     eq(agent.shell_quote("a\nb"), nil, "a newline has none either")
+    for _, q in ipairs({ "\u{2018}", "\u{2019}", "\u{201A}", "\u{201B}" }) do
+      eq(
+        agent.shell_quote("it" .. q .. "s; calc"),
+        nil,
+        "a typographic single quote is a quote to PowerShell: no spelling"
+      )
+    end
     eq(agent.shell_quote("a\27[2Jb"), nil, "nor an escape sequence")
 
     local sq = new_run()

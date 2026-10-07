@@ -71,7 +71,7 @@ return function(H)
   local function getenv(name)
     return E[name]
   end
-  local clock = { now = nil }
+  local clock = { now = nil, git = nil }
 
   ---@param argv string[]
   ---@return { code: integer, out: string, err: string, last: string }
@@ -88,7 +88,7 @@ return function(H)
       cache_dir = cache_dir,
       color = false,
       affected = { getenv = getenv, provider = false },
-      stamp = { getenv = getenv, now = clock.now },
+      stamp = { getenv = getenv, now = clock.now, run = clock.git },
     })
     package.loaded["proj.mod"] = nil
     return {
@@ -226,6 +226,18 @@ return function(H)
   local vjr = run({ "verify", root, "--json" })
   eq(vjr.code, 0, "--json: the exit code is the verdict's")
   lacks(vjr.out, SENTINEL, "--json prints a document, not a sentinel")
+
+  -- ---------------------------------------------------------------- git that does not answer is never green
+  clock.git = function()
+    return { code = 128, stdout = "", stderr = "fatal: broken" }
+  end
+  local nogit = verify_json({ "verify", root, "--json" })
+  ok(nogit.status ~= "verified", "git failing while the stamp names a tree: never verified")
+  eq(nogit.verified, false, "and not green")
+  eq(nogit.status, "rejected", "rejected, with a clear message")
+  has(nogit.reason, "git did not answer", "says why")
+  ok(run({ "verify", root }).last ~= SENTINEL, "git failing: no sentinel")
+  clock.git = nil
 
   -- ---------------------------------------------------------------- age
   clock.now = st.head.ts + 8 * 86400
@@ -523,7 +535,28 @@ return function(H)
   eq(ci_main.code, 0, "a push to main writes a stamp\n" .. ci_main.err)
   eq(vim.json.decode(read(tmp .. "/ci-main.json")).origin.trusted, true, "trusted")
   doc = verify_json({ "verify", root, "--json", "--stamp", tmp .. "/ci-main.json" })
-  eq(doc.status, "verified", "a stamp CI wrote on a trusted ref is accepted in CI")
+  eq(doc.status, "untrusted", "in CI an unsigned stamp is never green, even a trusted-origin one")
+  has(doc.reason, "--allow-unsigned", "and the explicit way out is named")
+  local own_ci = vim.deepcopy(good)
+  own_ci.origin = { kind = "ci", trusted = true, event = "push", ref = "refs/heads/main" }
+  write(tmp .. "/self-ci.json", (stamp.encode(stamp.build({
+    head = own_ci.head,
+    origin = own_ci.origin,
+    env = own_ci.env,
+    records = own_ci.files,
+  }))))
+  eq(
+    verify_json({ "verify", root, "--json", "--stamp", tmp .. "/self-ci.json" }).status,
+    "untrusted",
+    "a self-built CI/trusted stamp without an HMAC is not green"
+  )
+  doc =
+    verify_json({ "verify", root, "--json", "--allow-unsigned", "--stamp", tmp .. "/ci-main.json" })
+  eq(
+    doc.status,
+    "verified",
+    "a stamp CI wrote on a trusted ref is accepted in CI with --allow-unsigned"
+  )
   has(
     table.concat(doc.notes, "\n"),
     "authenticity",

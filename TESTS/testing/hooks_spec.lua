@@ -201,6 +201,15 @@ return function(H)
   local stop = hook("claude-stop", '{"hook_event_name":"Stop","stop_hook_active":false}')
   eq(stop.code, 2, "a red suite blocks the stop\n" .. stop.out)
   has(stop.out, "RED", "and testing's own text reaches stderr")
+  local later = hook(
+    "claude-stop",
+    '{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"all true"}'
+  )
+  eq(
+    later.code,
+    2,
+    'stop_hook_active:false with a later "true" still runs the suite\n' .. later.out
+  )
   local loop = hook("claude-stop", '{"hook_event_name":"Stop","stop_hook_active": true}')
   eq(
     loop.code,

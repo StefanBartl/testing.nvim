@@ -14,9 +14,11 @@
 #      ever. If that is wrong, the guard is wrong; check it before relying on it.
 set -u
 input="$(cat)"
-case "$input" in
-  *'"stop_hook_active"'*:*true*) exit 0 ;;
-esac
+# exact match of the key with the value `true` (a later "true" elsewhere in the JSON must not count)
+active='"stop_hook_active"[[:space:]]*:[[:space:]]*true([^[:alnum:]_]|$)'
+if [[ $input =~ $active ]]; then
+  exit 0
+fi
 
 . "$(git rev-parse --show-toplevel)/scripts/hooks/_testing.sh"
 

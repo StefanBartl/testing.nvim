@@ -1,4 +1,5 @@
 ---@module 'testing.cli'
+-- @cache-env TESTING_DEBUG TESTING_STAMP_SECRET
 ---@brief Command-line entry: `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor] <root> [options]`.
 ---@description
 --- Parses the arguments (`testing.args`), loads the project's `.testing.lua`

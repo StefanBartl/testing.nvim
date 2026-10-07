@@ -1,4 +1,5 @@
 ---@module 'testing.stamp'
+-- @cache-env GITHUB_EVENT_NAME GITHUB_REF TESTING_STAMP_SECRET
 ---@brief The green stamp: a small, checkable statement "this tree was fully green", and its untrusted-input rules.
 ---@description
 --- After a COMPLETE green run (`verdict.kind == "green"`: nothing selected away, nothing skipped, nothing

@@ -321,6 +321,7 @@ Stamp and verify ~
     --max-age {dur}  Oldest accepted stamp (7d; s, m, h, d).
     --allow-dirty    Check a dirty working tree anyway (said in the answer).
     --require-hmac   Refuse a stamp unless TESTING_STAMP_SECRET is set.
+    --allow-unsigned In CI, accept a stamp without a checked HMAC (otherwise never green).
     --json           One JSON document (testing-verify/1).
                      TESTING_STAMP_SECRET (16 characters or more) adds an
                      HMAC when writing and checks it when verifying.

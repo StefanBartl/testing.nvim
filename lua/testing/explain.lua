@@ -146,6 +146,10 @@ function M.render(rec, sel, own)
       add("    way out: " .. rec.way_out)
     end
   end
+  for _, v in ipairs(rec.vouched or {}) do
+    -- the author vouches for what the key cannot see: a reviewer must be able to see it (`@cache-env *` most of all)
+    add(("  vouched: %s (%s)"):format(v.directive, v.file))
+  end
   if rec.flipped then
     add(
       ("    note: this key gave different results (%s); `-- @cache-allow nondeterministic` caches it anyway"):format(

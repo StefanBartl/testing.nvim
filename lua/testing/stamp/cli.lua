@@ -19,6 +19,7 @@ M.SPECS = {
       ["--from-note"] = "from_note",
       ["--allow-dirty"] = "allow_dirty",
       ["--require-hmac"] = "require_hmac",
+      ["--allow-unsigned"] = "allow_unsigned",
     },
     values = { ["--stamp"] = "stamp", ["--max-age"] = "max_age" },
   },

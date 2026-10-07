@@ -147,8 +147,9 @@ Rules specific to the stamp:
 - In CI `verify` accepts only a stamp that CI itself wrote on a trusted ref (a push to `main` or `master`, a schedule or
   a manual dispatch; never a pull request). The stamp says so itself, which is believed only as far as its transport is.
   With a secret in `TESTING_STAMP_SECRET` (a repository secret, at least 16 characters, **not** given to pull requests
-  from forks) the stamp carries an HMAC and `verify` refuses one without or with a wrong HMAC. Use the secret wherever
-  pull requests can reach the cache.
+  from forks) the stamp carries an HMAC and `verify` refuses one without or with a wrong HMAC. In CI the secret is
+  required: without it `verify` answers `untrusted` and is never green, unless you pass `--allow-unsigned` explicitly
+  and accept that authenticity then rests only on where the stamp file came from.
 - The stamp is bound to OS, architecture, Neovim version, runner and configuration: one stamp per matrix entry.
 - A skipped job is not a failed job, but what a required status check does with a skipped job is **not established**
   here: the workflow-syntax page fetched on 2026-10-07 says only that a workflow skipped by `paths` filtering leaves its

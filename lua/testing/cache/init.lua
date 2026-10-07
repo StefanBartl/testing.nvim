@@ -686,6 +686,12 @@ end
 ---@field classes? string[] `nondeterministic`: the results it gave.
 ---@field allow_nondeterministic? boolean With a key: the spec declares `-- @cache-allow nondeterministic`.
 ---@field flipped? string[] With a key: the results the key has given when they differ.
+---@field vouched? Testing.Cache.Vouched[] With a key: the directives of the closure (`-- @cache-allow ...`, `-- @cache-env ...`) that vouch for what the scanner cannot see.
+
+---A directive the author wrote to vouch for an input: `testing explain` and the audit say so.
+---@class Testing.Cache.Vouched
+---@field directive string `@cache-allow time`, `@cache-env *`, ...
+---@field file string The file that carries it (relative to the root where possible).
 
 ---@class Testing.Cache.Member
 ---@field abs string
@@ -702,6 +708,7 @@ end
 ---@field outside boolean Project code names a place outside the project.
 ---@field outside_literals { lit: string, dir: string }[] What it names, and the directory of the file that names it (a relative literal is read from there as well as from the root).
 ---@field readers Testing.Cache.Member[] Project files of the closure that read files.
+---@field vouched Testing.Cache.Vouched[] The directives of the project files of the closure.
 ---@field env table<string, true> Environment variables that modules of the project read by a literal name and the configuration does not list: their values join the key.
 
 ---Directory names a digest of the whole project does not enter.
@@ -779,8 +786,19 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
     outside = false,
     outside_literals = {},
     readers = {},
+    vouched = {},
     env = {},
   }
+  local root_prefix = ctx.root and (vim.fs.normalize(ctx.root):gsub("/+$", "") .. "/") or nil
+  ---@param abs string
+  ---@return string
+  local function shown(abs)
+    abs = abs:gsub("\\", "/")
+    if root_prefix and abs:sub(1, #root_prefix):lower() == root_prefix:lower() then
+      return abs:sub(#root_prefix + 1)
+    end
+    return abs:match("([^/]+)$") or abs
+  end
   ---@param info Testing.Scan.Info
   ---@param who string|nil Nil for the spec itself.
   ---@param inside boolean
@@ -821,6 +839,14 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
       allow[w] = true
     end
     if inside then
+      local at = shown(abs or spec_abs)
+      for _, w in ipairs(info.directives.allow or {}) do
+        agg.vouched[#agg.vouched + 1] = { directive = "@cache-allow " .. w, file = at }
+      end
+      if #(info.directives.env or {}) > 0 then
+        agg.vouched[#agg.vouched + 1] =
+          { directive = "@cache-env " .. table.concat(info.directives.env, " "), file = at }
+      end
       -- the clock and random numbers count for the spec itself only: in a module they are timers, throttles
       -- and log stamps far more often than the value a spec asserts on (a KNOWN LIMIT, see docs/CACHE.md)
       if not who and m.time and not allow.time then
@@ -1186,7 +1212,11 @@ function M.key(file_info, ctx)
   return key,
     nil,
     parts,
-    { allow_nondeterministic = allowed, flipped = flip and flip.classes or nil }
+    {
+      allow_nondeterministic = allowed,
+      flipped = flip and flip.classes or nil,
+      vouched = #agg.vouched > 0 and agg.vouched or nil,
+    }
 end
 
 ---@class Testing.Cache.Meta

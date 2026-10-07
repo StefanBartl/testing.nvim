@@ -191,6 +191,61 @@ return function(H)
     S.remove(root)
   end
 
+  -- ---------------------------------------------------------------- vouching is visible (explain, audit)
+  do
+    env = { DECL_A = "1" }
+    local root = project(
+      "-- @cache-allow time\n-- @cache-env *\n",
+      "return { get = function(getenv, n) return getenv(n) end }\n"
+    )
+    local c = ctx(root)
+    local k, _, _, detail = cache.key({ file = SPEC }, c)
+    ok(k ~= nil, "a vouched file has a key")
+    local seen = {}
+    for _, v in ipairs(detail.vouched or {}) do
+      seen[#seen + 1] = v.directive .. " (" .. v.file .. ")"
+    end
+    eq(
+      seen,
+      { "@cache-allow time (lua/dmod.lua)", "@cache-env * (lua/dmod.lua)" },
+      "the detail names every directive and the file that carries it"
+    )
+    local rec = require("testing.cache.explain").explain(
+      { file = SPEC },
+      c,
+      { cache = cache, root = root, cache_dir = c.cache_dir }
+    )
+    eq(#(rec.vouched or {}), 2, "the explain record carries them")
+    local text = table.concat(
+      require("testing.explain").render(rec, { selected = true, text = "x" }, {}),
+      "\n"
+    )
+    ok(
+      text:find("vouched: @cache-env * (lua/dmod.lua)", 1, true) ~= nil,
+      "and `testing explain` prints a vouched line: " .. text
+    )
+    local lines = require("testing.run.cached").audit_lines({
+      findings = {
+        {
+          code = "cache.stale_pass",
+          file = SPEC,
+          key = "k",
+          message = "m",
+          vouched = detail.vouched,
+        },
+      },
+    })
+    ok(
+      table.concat(lines, "\n"):find("vouched: @cache-env * (lua/dmod.lua)", 1, true) ~= nil,
+      "the audit finding prints it too"
+    )
+    S.remove(root)
+    root = project("", "return {}\n")
+    local _, _, _, d2 = cache.key({ file = SPEC }, ctx(root))
+    eq(d2.vouched, nil, "a file without directives vouches for nothing")
+    S.remove(root)
+  end
+
   -- ---------------------------------------------------------------- the spec itself
   do
     env = { DECL_A = "1" }
@@ -278,6 +333,35 @@ return function(H)
     "getenv(name) is a computed name"
   )
   eq(flags('return os.getenv("A")').dynamic, false, "a literal name is not")
+  -- a getenv that is not called with a parenthesis right away is still a read of the environment
+  local function named(text)
+    return info(text).markers.env
+  end
+  eq(
+    named('return pcall(os.getenv, "HOME")'),
+    { "HOME" },
+    "pcall(os.getenv, name) names the variable"
+  )
+  eq(flags('return pcall(os.getenv, "HOME")').dynamic, false, "and it is not dynamic then")
+  eq(named('return os.getenv"HOME"'), { "HOME" }, 'os.getenv"NAME" names the variable')
+  eq(flags('return os.getenv"HOME"').dynamic, false, "and is no computed read")
+  eq(
+    flags('local g = os.getenv\nreturn g("HOME")').computed,
+    true,
+    "an alias of os.getenv is a read under a name nobody can see: computed"
+  )
+  eq(
+    flags("return pcall(os.getenv, name)").computed,
+    true,
+    "pcall(os.getenv, name) with a computed name is computed"
+  )
+  eq(
+    flags("local get = seam.getenv or vim.uv.os_getenv\nreturn get(1)").computed,
+    true,
+    "a bare vim.uv.os_getenv is a read"
+  )
+  eq(flags("return seam.getenv(n)").computed, true, "(getenv(name) as before)")
+  eq(flags("local t = { getenv = seam.getenv }").computed, false, "an injected member is no read")
   -- `os = "x"` is a field name, no alias of the `os` table; the clock stays a hidden input where it is read
   eq(info('local t = { a = 1, os = "x" }').markers.time, false, "a field named os is no alias")
   eq(info("local t = f(1, os)").markers.time, true, "os handed on is an alias")

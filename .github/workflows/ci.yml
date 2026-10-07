@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: the token only reads the repository. The one job that pushes `ci-verified` asks for write itself.
+permissions:
+  contents: read
+
 jobs:
   stylua:
     name: stylua (format check)

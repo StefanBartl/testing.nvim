@@ -1,4 +1,5 @@
 ---@module 'testing.stamp.write'
+-- @cache-env TESTING_STAMP_SECRET
 ---@brief `testing stamp`: after a COMPLETE green run, write the stamp.
 ---@description
 --- `testing stamp [<root>] [--out <file>] [--note] [run options]` is a run (every option of a run applies: the key

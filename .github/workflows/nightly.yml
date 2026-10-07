@@ -9,6 +9,10 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
+# Least privilege: the token only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   full-and-audit:
     runs-on: ubuntu-latest

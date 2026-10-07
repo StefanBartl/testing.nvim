@@ -178,6 +178,8 @@ carry it (`testing.cache`, `testing.child`, `testing.guard.state`, `testing.isol
 runner script that exports a per-run directory (`XDG_STATE_HOME` of `scripts/test.sh`) would give every invocation
 another key.
 
+**Vouching is visible.** Every `-- @cache-allow ...` and `-- @cache-env ...` of the spec and of the project files it loads is a statement of the author that the scanner cannot check (`-- @cache-env *` most of all: the whole environment is then trusted not to matter). `testing explain` prints each as a line `vouched: <directive> (<file>)`, and a `cache.stale_pass` finding of the audit repeats them, so a reviewer sees what a cached result rests on. A spec from an untrusted source (a pull request) should be reviewed for these lines.
+
 `-- @cache-env <name|pattern>...` is for a file that reads the environment by a COMPUTED name (`getenv(name)` over a
 list, `vim.env[name]`) or reads it as a whole. It names the variables the read can reach (a plain name, `PREFIX_*`,
 `*_DIR`; `*` alone for the whole environment): their hashed values (a pattern: every variable it matches, and the
@@ -406,7 +408,9 @@ sentinel only when **all** files are proven.
   that CI itself wrote on a trusted ref: the event must not be a pull request (`push`, `schedule`, `workflow_dispatch`)
   and the ref must be one of `refs/heads/main`, `refs/heads/master` (or the comma list in
   `TESTING_STAMP_TRUSTED_REFS`). The origin is what the writer said of itself, so on its own it is an honest-writer
-  rule, not authentication.
+  rule, not authentication. Therefore, **in CI a stamp is never green without a checked HMAC**: without
+  `TESTING_STAMP_SECRET` the answer is `untrusted`, unless `--allow-unsigned` is passed explicitly (then authenticity
+  rests on where the file came from, and the answer says so).
 - *HMAC*: with `TESTING_STAMP_SECRET` (at least 16 characters) set when writing, the stamp carries an HMAC-SHA-256 of its
   canonical text; with the secret set when verifying, a stamp without or with a wrong HMAC is `untrusted`. This is what
   makes a forged stamp (digest recomputed by someone with a text editor) fail. Without a secret the digest only shows

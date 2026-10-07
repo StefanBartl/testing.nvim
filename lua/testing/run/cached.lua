@@ -56,6 +56,7 @@ local CONFIG_NOT_IN_KEY = {
 ---@field details table<string, Testing.Cache.Detail> Spec file -> why it has no key, in a form a program can read.
 ---@field parts table<string, string[]> Spec file -> the lines its key is the hash of (kept in the stored entry).
 ---@field allow_flip table<string, boolean> Spec file -> declares `-- @cache-allow nondeterministic`.
+---@field vouched table<string, Testing.Cache.Vouched[]> Spec file -> the directives of its closure that vouch for inputs.
 ---@field audits table<string, Testing.Run.CacheAudit> Spec file -> a cache hit that runs anyway (`--cache-audit`).
 ---@field audit? { rate: number, audited: integer, stale: integer, skipped: integer } The audit of this run (nil: none asked for).
 ---@field findings Testing.Run.CacheFinding[] `cache.stale_pass` findings of the audit.
@@ -78,6 +79,7 @@ local CONFIG_NOT_IN_KEY = {
 ---@field key string
 ---@field message string
 ---@field parts? string[]
+---@field vouched? Testing.Cache.Vouched[]
 
 ---The effective configuration that is part of every key: what the project and the command line say about HOW
 ---a spec runs, without what does not change a result (parallelism, sharding, the watcher).
@@ -290,6 +292,7 @@ function M.prepare(o)
     details = {},
     parts = {},
     allow_flip = {},
+    vouched = {},
     audits = {},
     findings = {},
     nondeterministic = {},
@@ -352,6 +355,7 @@ function M.prepare(o)
         run_files[#run_files + 1] = f
       else
         prep.allow_flip[f.rel] = detail and detail.allow_nondeterministic or false
+        prep.vouched[f.rel] = detail and detail.vouched or nil
         local cases
         if mode == "use" then
           cases = cache.get(key, { root = plan.root, cache_dir = o.cache_dir, file = f.rel })
@@ -476,6 +480,7 @@ function M.finish_inner(prep, report, opts)
   prep.findings = prep.findings or {}
   prep.parts = prep.parts or {}
   prep.allow_flip = prep.allow_flip or {}
+  prep.vouched = prep.vouched or {}
   prep.nondeterministic = prep.nondeterministic or {}
   local keylog = prep.keylog
   local run_id = res.run.id
@@ -516,6 +521,7 @@ function M.finish_inner(prep, report, opts)
             rel
           ),
           parts = a.parts,
+          vouched = prep.vouched[rel],
         }
         -- what is stored for this file cannot be trusted: it goes, and nothing new is written for it
         cache.discard(a.key, { root = base_root, cache_dir = opts.cache_dir })
@@ -746,6 +752,9 @@ function M.audit_lines(prep)
       break
     end
     lines[#lines + 1] = ("%s %s"):format(fd.code, fd.message)
+    for _, v in ipairs(fd.vouched or {}) do
+      lines[#lines + 1] = ("  vouched: %s (%s)"):format(v.directive, v.file)
+    end
     local parts = fd.parts or {}
     for k = 1, math.min(#parts, 8) do
       lines[#lines + 1] = "  key part: " .. parts[k]

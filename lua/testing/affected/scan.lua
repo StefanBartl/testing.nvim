@@ -28,7 +28,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 8
+M.VERSION = 9
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -519,7 +519,34 @@ local function scan_markers(code, text)
       literal_calls = literal_calls + 1
     end
   end
-  local env_calls = count_plain(code, "getenv(")
+  -- `os.getenv"HOME"` (call without parentheses) and `pcall(os.getenv, "HOME")` (the function handed on with its
+  -- name): the literal name is known
+  for _, pat in ipairs({
+    "%f[%w_]os%.getenv%s*[\"']([^\"']+)[\"']()",
+    "%f[%w_]os_getenv%s*[\"']([^\"']+)[\"']()",
+    "%f[%w_]fn%.getenv%s*[\"']([^\"']+)[\"']()",
+    "pcall%s*%(%s*[%w_%.]*getenv%s*,%s*[\"']([^\"']+)[\"']%s*[%),]()",
+  }) do
+    for name, after in text:gmatch(pat) do
+      if not text:find("^%s*%.%.", after) then
+        names[#names + 1] = name
+        literal_calls = literal_calls + 1
+      end
+    end
+  end
+  -- a function reference to the environment reader that is not called right away (`pcall(os.getenv, n)`,
+  -- `local g = os.getenv`, `os.getenv"X"`): a read, counted like a call so that an unnamed one is a computed name
+  local bare_refs = 0
+  for name, after in code:gmatch("([%w_%.]*getenv)()") do
+    if
+      (name:find("os%.getenv$") or name:find("os_getenv$") or name:find("fn%.getenv$"))
+      and not code:find("^%s*%(", after)
+    then
+      bare_refs = bare_refs + 1
+    end
+  end
+  local env_calls = bare_refs
+    + count_plain(code, "getenv(")
     + count_plain(code, "getenv (")
     + count_plain(code, "vim.env.")
     + count_plain(code, "vim.env[")

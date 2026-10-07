@@ -311,14 +311,19 @@ end
 ---A word that is only made of `[%w_./:=+-]` stays bare. Everything else goes in single quotes: nothing is
 ---interpreted inside them, in either shell (`$(...)`, backticks, `$var`, `!`, `%`, `;`, `&`, `,` and `@` are all
 ---inert), unlike inside double quotes. The one character a single-quoted word cannot hold is the single quote
----itself, and its escape differs between the shells (backslash-escaped in bash, doubled in PowerShell), so such a word,
+---itself (and, in PowerShell, the typographic U+2018..U+201B), and its escape differs between the shells (backslash-escaped in bash, doubled in PowerShell), so such a word,
 ---word with a control character, C1 or bidi character or a newline (it would not stay one line), has no safe
 ---spelling here: the caller leaves it out of the line. Whitespace is kept exactly as it is.
 ---@param s any
 ---@return string|nil
 function M.shell_quote(s)
   s = tostring(s)
-  if s:find("[%c']") or util.clean(s, { c1 = true, bidi = true }) ~= s then
+  -- U+2018..U+201B (typographic single quotes): PowerShell reads them as a plain `'`
+  if
+    s:find("[%c']")
+    or s:find("\226\128[\152-\155]")
+    or util.clean(s, { c1 = true, bidi = true }) ~= s
+  then
     return nil
   end
   if s ~= "" and not s:find("[^%w_%./:=+%-]") then

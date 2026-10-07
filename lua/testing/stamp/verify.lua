@@ -1,4 +1,5 @@
 ---@module 'testing.stamp.verify'
+-- @cache-env TESTING_STAMP_SECRET GITHUB_EVENT_NAME GITHUB_REF
 ---@brief `testing verify`: is the tree still the one a green stamp proved? Answered from the keys, no spec runs.
 ---@description
 --- Reads a stamp (`testing.stamp`, untrusted input), applies the trust, age and dirty-tree rules, recomputes the
@@ -40,6 +41,7 @@ M.MAX_RERUN_FILES = 25
 ---@field from_note boolean
 ---@field allow_dirty boolean
 ---@field require_hmac boolean
+---@field allow_unsigned boolean
 ---@field stamp? string
 ---@field max_age? integer
 
@@ -269,13 +271,24 @@ function M.check(plan, sv, own)
         ("--require-hmac needs the secret in %s, which is not set"):format(stamp.SECRET_ENV)
       )
     end
+    if in_ci and not own.allow_unsigned then
+      -- in CI an unchecked stamp is never green: whoever can write the file can write a "trusted" origin
+      return finish(
+        res,
+        "untrusted",
+        ("in CI a stamp is accepted only with its HMAC checked: set %s (at least %d characters) on the stamping and the verifying job, or pass --allow-unsigned to rest on where the file came from"):format(
+          stamp.SECRET_ENV,
+          stamp.MIN_SECRET
+        )
+      )
+    end
     if st.hmac then
       res.notes[#res.notes + 1] = ("the stamp carries an HMAC that was not checked (%s is not set)"):format(
         stamp.SECRET_ENV
       )
     elseif in_ci then
       res.notes[#res.notes + 1] =
-        "authenticity rests on where the stamp file came from (it has no HMAC); see docs/CACHE.md, Stamp"
+        "authenticity rests on where the stamp file came from (it has no HMAC, --allow-unsigned); see docs/CACHE.md, Stamp"
     end
     res.hmac = "unchecked"
   end
@@ -307,6 +320,14 @@ function M.check(plan, sv, own)
   local facts = collect.git_facts(plan.root, run)
   res.git = facts
   if not facts.git then
+    if st.head.tree or st.head.commit then
+      -- the stamp names a commit or tree: without git the claim cannot be compared, so it is never green
+      return finish(
+        res,
+        "rejected",
+        "git did not answer here (not a git checkout, or git failed), but the stamp names a commit/tree: whether this tree is the stamped one cannot be checked, so it is not accepted"
+      )
+    end
     res.notes[#res.notes + 1] =
       "not a git checkout: whether the tree matches a commit cannot be checked"
   elseif facts.dirty then
