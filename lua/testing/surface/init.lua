@@ -51,6 +51,7 @@ child editor after setup()) and, when a tracked run is given, which of them the 
   --baseline <file>           compare with a baseline: an entry that was exercised and is not now fails
   --fail-on-new               with --baseline: new entries that are not exercised fail as well
   --fail-on-removed           with --baseline: an entry that was exercised and is gone from the surface fails
+  --require-signed-baseline   with --baseline: a baseline that is edited or has no digest fails (exit 1)
   --write-baseline <file>     write the baseline of this run (only when nothing failed)
   --json | --markdown         output format (default: a text table)
   --out <file>                also write the output to a file
@@ -160,6 +161,7 @@ end
 ---@field baseline? string|table A baseline file or an already parsed baseline.
 ---@field fail_on_new? boolean
 ---@field fail_on_removed? boolean
+---@field require_signed_baseline? boolean A baseline that is `edited` or `unsigned` fails the run.
 ---@field write_baseline? string
 
 ---Write a file the way lib.nvim does (temp file, flush, rename): never half a file.
@@ -247,7 +249,7 @@ function M.report(root, opts)
     wants_gate = wants_gate or t > 0
   end
   if not hits then
-    if wants_gate or opts.baseline or opts.write_baseline then
+    if wants_gate or opts.baseline or opts.write_baseline or opts.require_signed_baseline then
       report.error =
         "a threshold or a baseline needs a tracked run: give --from <ir.json> or --hits <file>"
       report.exit_code = M.EXIT_USAGE
@@ -271,6 +273,11 @@ function M.report(root, opts)
   end
 
   local failed = #report.failures > 0
+  if opts.require_signed_baseline and not opts.baseline then
+    report.error = "--require-signed-baseline needs a baseline to check: give --baseline <file>"
+    report.exit_code = M.EXIT_USAGE
+    return report
+  end
   if opts.baseline then
     local base = opts.baseline
     if type(base) == "string" then
@@ -306,6 +313,12 @@ function M.report(root, opts)
     elseif base_state == "unsigned" then
       notes[#notes + 1] =
         "baseline: no digest (written by an older version or by hand): it cannot be told whether it was edited"
+    end
+    if opts.require_signed_baseline and base_state ~= "signed" then
+      failed = true
+      notes[#notes + 1] = ("baseline: not signed (%s): --require-signed-baseline fails the run; rewrite it with --write-baseline from a green run"):format(
+        base_state
+      )
     end
   end
   report.exit_code = failed and M.EXIT_FAILED or M.EXIT_OK
@@ -355,6 +368,7 @@ end
 ---@field baseline? string
 ---@field fail_on_new boolean
 ---@field fail_on_removed boolean
+---@field require_signed_baseline boolean
 ---@field write_baseline? string
 ---@field format "text"|"markdown"|"json"
 ---@field out? string
@@ -383,6 +397,7 @@ function M.parse_args(argv)
     thresholds = { kinds = {} },
     fail_on_new = false,
     fail_on_removed = false,
+    require_signed_baseline = false,
     format = "text",
     help = false,
   }
@@ -415,6 +430,8 @@ function M.parse_args(argv)
       a.fail_on_new = true
     elseif name == "--fail-on-removed" then
       a.fail_on_removed = true
+    elseif name == "--require-signed-baseline" then
+      a.require_signed_baseline = true
     elseif name == "--from" then
       v, err = value(name, inline)
       if not v then
@@ -532,6 +549,7 @@ function M.main(argv, services)
     baseline = args.baseline,
     fail_on_new = args.fail_on_new,
     fail_on_removed = args.fail_on_removed,
+    require_signed_baseline = args.require_signed_baseline,
     write_baseline = args.write_baseline,
   })
   if report.error and not report.surface then

@@ -109,7 +109,9 @@ keymaps ~
         gate is a warning, not an error).
 :Testing surface [{root}] [--from={ir.json}] [--threshold={n}] [--markdown]
         The keymaps, commands and autocmds of the plugin and how much of them
-        the specs exercised.
+        the specs exercised. `--baseline={file}` compares with a baseline;
+        with `--require-signed-baseline` a baseline that was edited or has
+        no digest fails the run (exit 1).
 :Testing budget [{root}] [--update] [--factor={x}] [--allow-new]
         Measure the performance budgets of the runner. A measured case
         without a baseline entry compared nothing: exit 2 unless

@@ -303,6 +303,31 @@ return function(H)
   )
   has(text, "no digest", "a baseline without a digest says that it cannot be checked")
 
+  -- --require-signed-baseline: only a baseline a run wrote passes; edited, unsigned and missing ones do not
+  local unsigned_path = write("unsigned2.json", vim.json.encode(signed))
+  code, text = main({ "--hits", sink, "--baseline", base_path, "--require-signed-baseline" })
+  eq(code, 0, "a signed baseline passes the requirement")
+  eq(text:find("not signed", 1, true), nil, "and raises no note")
+  code, text = main({ "--hits", sink, "--baseline", edited_path, "--require-signed-baseline" })
+  eq(code, 1, "an edited baseline fails the requirement")
+  has(text, "not signed (edited)", "and the note says edited")
+  code, text = main({ "--hits", sink, "--baseline", unsigned_path, "--require-signed-baseline" })
+  eq(code, 1, "a baseline without a digest fails the requirement")
+  has(text, "not signed (unsigned)", "and the note says unsigned")
+  code = main({ "--hits", sink, "--baseline", edited_path })
+  eq(code, 0, "without the flag the same edited baseline stays a note")
+  code, text = main({
+    "--hits",
+    sink,
+    "--baseline",
+    tmp .. "/no-such-baseline.json",
+    "--require-signed-baseline",
+  })
+  eq(code, 2, "a missing baseline file is a usage error")
+  code, text = main({ "--hits", sink, "--require-signed-baseline" })
+  eq(code, 2, "the requirement without a baseline is a usage error")
+  has(text, "needs a baseline", "and says what is missing")
+
   -- --out and --write-baseline go through the atomic writer: no temp file stays behind
   local leftovers = 0
   for name in vim.fs.dir(tmp) do

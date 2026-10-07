@@ -183,6 +183,13 @@ regression, deleting its only test coverage by deleting the command may be). A b
 entries: a run that finds the entries edited since (by hand, or by another tool: the bar then is whatever the file
 says) names that in a note, and so does a baseline without a digest (written by an older version). New exercised entries and entries that are exercised now are listed as well.
 
+The digest is a hint, not a seal: it is stored next to the entries it covers, so whoever can edit the entries can
+recompute it. What `--require-signed-baseline` enforces is that the file is what a run wrote: with it, a baseline
+whose entries do not match its digest (`edited`) or that has no digest (`unsigned`) fails the run (exit `1`, the
+note names which of the two). It needs `--baseline` (without one the run is a usage error, exit `2`). It is for
+gates that must not pass because someone lowered the bar by hand; to accept an intended change, rewrite the file
+with `--write-baseline` from a green run and review the diff.
+
 Output: a text table (default), `--markdown`, `--json`; `--out FILE` also writes it (atomically, like the
 baseline: a crash leaves the old file or the new one, never half of it). Text from the plugin
 (names, descriptions, paths) is scrubbed of control characters and bidi overrides.
