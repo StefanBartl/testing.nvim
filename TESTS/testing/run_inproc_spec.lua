@@ -193,7 +193,7 @@ return function(H)
   if user and #user >= 3 then
     ok(not body:lower():find(user:lower(), 1, true), "the user name does not appear in the IR")
   end
-  eq(vim.fn.glob(root .. "/out/*.atomic-tmp*", false, true), {}, "atomic write leaves no temp file")
+  eq(H.glob(root .. "/out/*.atomic-tmp*"), {}, "atomic write leaves no temp file")
 
   -- sanitize hands out the decoded, validated IR for reporters
   local ir, text, serr = inproc.sanitize(report.result, root)

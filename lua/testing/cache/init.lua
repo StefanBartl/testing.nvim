@@ -905,6 +905,22 @@ end
 ---@return string|nil present The literal that names an existing file or directory outside the project.
 ---@return string[] lines Key lines for the literals that name nothing.
 local function outside_files(root, literals)
+  -- a device that holds no content is no input: `/dev/null` in a git or shell call exists on POSIX only and
+  -- must not decide whether a spec has a key (it did: every spec that loads the runner lost it on Linux and macOS)
+  local content_free = {
+    ["/dev/null"] = true,
+    ["/dev/stdin"] = true,
+    ["/dev/stdout"] = true,
+    ["/dev/stderr"] = true,
+    nul = true,
+  }
+  local kept = {}
+  for _, item in ipairs(literals) do
+    if not content_free[item.lit:lower()] then
+      kept[#kept + 1] = item
+    end
+  end
+  literals = kept
   local lines, seen = {}, {}
   local real_root = vim.uv.fs_realpath(root) or root
   local is_subpath = require("lib.nvim.fs.is_subpath")

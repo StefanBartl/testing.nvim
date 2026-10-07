@@ -176,7 +176,7 @@ return function(H)
 
     -- no temp file is left next to the trace (atomic write)
     do
-      local leftovers = vim.fn.glob(dir .. "/*.atomic-tmp*", false, true)
+      local leftovers = H.glob(dir .. "/*.atomic-tmp*")
       eq(#leftovers, 0, "no temp file left behind")
     end
   end, debug.traceback)

@@ -31,7 +31,7 @@ return function(H)
   })
   -- the specs the project has, in discovery order
   local specs = {}
-  for _, p in ipairs(vim.fn.glob(root .. "/TESTS/proj/*_spec.lua", false, true)) do
+  for _, p in ipairs(H.glob(root .. "/TESTS/proj/*_spec.lua")) do
     specs[#specs + 1] = vim.fs.normalize(p):sub(#vim.fs.normalize(root) + 2)
   end
   table.sort(specs)
@@ -111,7 +111,7 @@ return function(H)
   do
     local ndir = vim.fs.normalize(vim.fn.tempname())
     local function indexes()
-      return vim.fn.globpath(ndir, "**/index.json", false, true)
+      return H.glob(ndir .. "/**/index.json")
     end
     local plain = sel({ "lua/proj/c.lua" }, { cache_dir = ndir, no_cache = true })
     eq(#indexes(), 0, "no_cache: no index.json is written")

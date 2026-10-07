@@ -240,14 +240,14 @@ return function(H)
   local plain = run(root, { "--changed", "--no-cache" })
   eq(plain.code, 0, "--changed --no-cache: " .. plain.err)
   eq(
-    #vim.fn.globpath(tmp .. "/cache", "**/index.json", false, true),
+    #H.glob(tmp .. "/cache/**/index.json"),
     0,
     "--no-cache writes no index.json (the selection reads every file it needs)"
   )
   local with_index = run(root, { "--changed" })
   eq(with_index.code, 0, "--changed: " .. with_index.err)
   eq(
-    #vim.fn.globpath(tmp .. "/cache", "**/index.json", false, true),
+    #H.glob(tmp .. "/cache/**/index.json"),
     1,
     "without --no-cache the index is written (the check above is not blind)"
   )

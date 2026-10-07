@@ -255,7 +255,7 @@ return function(H)
 
   -- the selection end to end on that repository
   local specs = {}
-  for _, p in ipairs(vim.fn.glob(root .. "/TESTS/proj/*_spec.lua", false, true)) do
+  for _, p in ipairs(H.glob(root .. "/TESTS/proj/*_spec.lua")) do
     specs[#specs + 1] = vim.fs.normalize(p):sub(#vim.fs.normalize(root) + 2)
   end
   table.sort(specs)

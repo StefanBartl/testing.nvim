@@ -125,6 +125,32 @@ return function(H)
   end
   eq(failed, {}, "a spec that requires a runner module has a cache key")
 
+  -- ---------------------------------------------------------------- a device without content is no input
+  -- `/dev/null` (git and shell calls) exists on POSIX only: it must not take the key of a spec that loads such a
+  -- module, on any platform. A real file outside the project still does.
+  ---A spec that opens `path` (a literal the scanner sees as a read, not a bare assignment).
+  ---@param path string
+  ---@return string
+  local function opener(path)
+    return table.concat({
+      "return function(H)",
+      ("  local f = io.open(%q, 'rb')"):format(path),
+      "  H.ok(true, 'x')",
+      "  if f then f:close() end",
+      "end",
+      "",
+    }, "\n")
+  end
+  write(root .. "/TESTS/devnull_spec.lua", opener("/dev/null"))
+  local dkey, dwhy = cache.key({ file = "TESTS/devnull_spec.lua" }, new_ctx("devnull"))
+  ok(dkey ~= nil, "a spec opening /dev/null has a key: " .. tostring(dwhy))
+  local outside_real = vim.fn.has("win32") == 1 and "C:/Windows/win.ini" or "/etc/hosts"
+  if vim.uv.fs_stat(outside_real) then
+    write(root .. "/TESTS/outside_spec.lua", opener(outside_real))
+    local okey = cache.key({ file = "TESTS/outside_spec.lua" }, new_ctx("outside"))
+    eq(okey, nil, "control: a spec opening an existing file outside the project has no key")
+  end
+
   -- ---------------------------------------------------------------- the control: the scenario is real
   -- the same copy without the directive loses the key of a spec that loads the runner, and the reason names the file
   local collect = root .. "/lua/testing/stamp/collect.lua"

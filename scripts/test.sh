@@ -38,6 +38,16 @@ trap 'rm -rf "$scratch"' EXIT
 if command -v cygpath >/dev/null 2>&1; then
   scratch="$(cygpath -m "$scratch")"
 fi
+# Windows: TMP/TEMP often hold the 8.3 short form (C:/Users/RUNNER~1/...). Neovim's glob and :checkhealth cannot
+# find files below a path with a "~1" component, so the specs are run with the long form.
+if command -v cygpath >/dev/null 2>&1; then
+  for var in TMP TEMP; do
+    val="${!var:-}"
+    if [ -n "$val" ]; then
+      export "$var=$(cygpath -w -l "$val")"
+    fi
+  done
+fi
 export XDG_STATE_HOME="$scratch/state"
 # The specs always get a throwaway cache home (they run the runner themselves and must not write into a shared
 # cache); a shared one is handed to the outer run only, through --cache-dir.

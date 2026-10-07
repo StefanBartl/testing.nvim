@@ -415,7 +415,7 @@ return function(H)
 
   -- the real cases, at toy size: every one of them runs and measures
   do
-    local before_dirs = vim.fn.glob(vim.fs.dirname(vim.fn.tempname()) .. "/*-budget-*", false, true)
+    local before_dirs = H.glob(vim.fs.dirname(vim.fn.tempname()) .. "/*-budget-*")
     local real = budget.run({
       runs = 1,
       warmup = 0,
@@ -438,7 +438,7 @@ return function(H)
       "child_kill",
       "child_spawn_warm",
     }, "the real cases, in order")
-    local after_dirs = vim.fn.glob(vim.fs.dirname(vim.fn.tempname()) .. "/*-budget-*", false, true)
+    local after_dirs = H.glob(vim.fs.dirname(vim.fn.tempname()) .. "/*-budget-*")
     eq(#after_dirs, #before_dirs, "the scratch directories are removed")
   end
 

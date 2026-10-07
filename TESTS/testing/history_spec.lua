@@ -98,7 +98,7 @@ return function(H)
   eq(rec.summary.fail, 1, "summary")
   eq(type(rec.ts), "number", "timestamp")
   eq(
-    vim.fn.glob(vim.fs.dirname(path) .. "/*.atomic-tmp*", false, true),
+    H.glob(vim.fs.dirname(path) .. "/*.atomic-tmp*"),
     {},
     "no temp file left behind (atomic write)"
   )

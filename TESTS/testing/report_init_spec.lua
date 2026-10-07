@@ -75,7 +75,7 @@ return function(H)
   ok(bytes:find('name="from-spec"', 1, true), "per-reporter opts reach the reporter")
   ok(bytes:sub(-1) == "\n" and not bytes:find("\r", 1, true), "file ends in LF, no CR")
   ok(F.parse_xml(bytes) ~= nil, "the written file is well-formed XML")
-  local leftovers = vim.fn.glob(base .. "/nested/dir/*", false, true)
+  local leftovers = H.glob(base .. "/nested/dir/*")
   eq(#leftovers, 1, "the atomic write leaves no temp file behind")
 
   -- defaults and spec opts: spec wins ----------------------------------------------------------------------------------

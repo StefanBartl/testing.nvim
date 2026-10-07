@@ -392,7 +392,7 @@ return function(H)
   eq(ncases, 4, "one testcase per case")
   has(xml, "<failure", "the failure is a <failure>")
   lacks(xml, rroot, "no absolute root in the file artifact")
-  eq(vim.fn.glob(rroot .. "/out/*.atomic-tmp*", false, true), {}, "no temp file left")
+  eq(H.glob(rroot .. "/out/*.atomic-tmp*"), {}, "no temp file left")
   has(r.out, "FAIL  TESTS/calc_spec.lua", "the terminal report is still printed")
 
   -- CI sets GITHUB_STEP_SUMMARY for the real job: the runs below must never append to it
