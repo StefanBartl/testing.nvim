@@ -305,16 +305,6 @@ function M.main(ctx)
     data.facts1 = try(function()
       return P("facts")
     end)
-    if has_guard then
-      data.guard = guard_data(
-        try(function()
-          return child.guard.end_case()
-        end),
-        true
-      )
-    else
-      data.guard = guard_data(nil, false)
-    end
     if data.setup1 and data.setup1.ok then
       data.setup2 = try(function()
         return P("setup", plugin, opts)
@@ -322,6 +312,18 @@ function M.main(ctx)
       data.facts2 = try(function()
         return P("facts")
       end)
+      -- the window ends after the SECOND setup(): a plugin that spawns, writes or deprecates only on a repeated
+      -- call (or only when its state already exists) is seen too; the remeasure below is timing, not behaviour
+      if has_guard then
+        data.guard = guard_data(
+          try(function()
+            return child.guard.end_case()
+          end),
+          true
+        )
+      else
+        data.guard = guard_data(nil, false)
+      end
       local again = try(function()
         return P("remeasure", plugin, opts, 2)
       end)
@@ -334,6 +336,19 @@ function M.main(ctx)
       data.timings = timings
     elseif data.load.ok then
       data.timings = { data.load.ms or 0 }
+    end
+    if data.guard == nil then
+      -- no second setup() (the plugin has none, or the first one failed): the window ends here
+      if has_guard then
+        data.guard = guard_data(
+          try(function()
+            return child.guard.end_case()
+          end),
+          true
+        )
+      else
+        data.guard = guard_data(nil, false)
+      end
     end
     data.audit = try(function()
       return P("audit")

@@ -20,7 +20,7 @@
 ---   K5  every user command has completion                 K13  fragile keys, command-name prefix collisions
 ---   K6  :checkhealth <plugin> runs without an error       K14  BINDINGS.md / commands.md match the registry
 ---   K7  every soft dependency has a health check          K15  static gate rules (NEW-36/45/48/49, REL-16, ...)
----   K8  no vim.deprecate message on load and setup
+---   K8  no vim.deprecate message and no scheduled error on load and setup
 ---
 --- A check is `{ id, title, rules, kind = "static"|"runtime", level, run(ctx) }` and returns findings; the
 --- runtime ones run in a child editor (`testing.rpc`) with the plugin loaded from the repository and the

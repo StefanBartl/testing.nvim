@@ -71,8 +71,8 @@ Baseline of `2026-10-06` (median of 9 runs after one warm-up; `TESTS/bench/basel
 | --- | --- | --- | --- |
 | lib.nvim, in-process | < 3 s | 137.6 s (87 files; CPU shared with other runs) | **missed** |
 | lib.nvim, `--isolated file --jobs 8` | < 15 s | 39.7 s (same machine state) | **missed** |
-| incremental (`--changed`, `--cached`) after one spec file changed | < 1 s median | 2.6 s wall for `scripts/test.sh --changed` on a copy of this repository with one spec edited: 1 of 118 files selected, the run itself 76 ms, the rest is the editor start, discovery and the git/`require` scan (see "Cache and affected selection") | **missed**, for the process start alone |
-| incremental after one module change | < 1 s median | `--changed` after a change of `core/result.lua`: 86 of 118 files (what depends on it), 193 s | the selection is right, the budget is not reachable for a module everything loads |
+| incremental (`--changed`, `--cached`) after one spec file changed | < 1 s median | lib.nvim, one spec edited: 1.14 - 1.52 s median (1 of 87 selected). The fixed parts (editor, discovery, git, key) are about 0.9 s here: see "Incremental run" | **missed** (by 0.15 - 0.5 s) |
+| incremental after one module change | < 1 s median | `--changed` after a change of `core/result.lua`: 86 of 118 files (what depends on it), 193 s; lib.nvim, a leaf module: 62 of 87 files, 67 - 83 s | the selection is a safe superset; the budget is not reachable (see "Incremental run") |
 | conformance suite per plugin | < 2 s | `testing conformance`, wall clock with the editor start, warm file cache: runtime-analysis.nvim 0.95 - 1.04 s, documentation.nvim 1.8 s, lib.nvim (300 modules) 2.7 - 2.9 s; the very first run after a long idle was 6.1 s | met except for lib.nvim |
 | one Tier-1 feature test in the warm pool | 50 - 200 ms | 106 ms per trivial file at `--jobs 1`, 249 ms at `--jobs 4` (finding 3) | met at `--jobs 1`, **missed at `--jobs 4`** |
 | fleet, 35 plugins x 30 features | 2 - 3 min | needs M6 | open |
@@ -142,8 +142,45 @@ selects every spec below the topmost directory that holds specs. The price is pr
 module of lib.nvim selects 61 of 87 specs, because lib.nvim loads its modules by computed names and a computed
 `require` is an edge to every module below the prefix. An imprecise selection is the safe error.
 
-The developer loop is `--changed` after one edited spec: one file runs, 2.6 s instead of five minutes (the editor start
-and the git/`require` scan are the rest).
+### Incremental run: the D.7 budget "under 1 s median" (measured 2026-10-07)
+
+Protocol (`scripts/bench-incremental.sh`, a manual tool, never a CI step): a copy of lib.nvim (87 spec files, 300
+modules) with a throwaway cache; one untimed run builds the indexes; then per timed run one new comment line is appended
+to one file, `testing . --first-run --changed --cached` is timed (wall clock, editor start included) and the file is
+restored; median of 5 - 7 runs, run twice.
+
+| One file edited | Selected | Median | Min - max |
+| --- | ---: | ---: | ---: |
+| `TESTS/which_key_spec.lua` (a spec that runs 0.2 s) | 1 of 87 | 1.14 s | 1.06 - 2.2 s |
+| `TESTS/cache_spec.lua` (a spec that runs 0.56 s) | 1 of 87 | 1.26 / 1.30 s | 1.23 - 2.4 s |
+| `TESTS/async_spec.lua` | 1 of 87 | 1.52 s | 1.51 - 1.56 s |
+| `lua/lib/lua/numeral/roman.lua` (a leaf module), `--changed` | 62 of 87 | 67.5 s (one run) | |
+| the same, `--affected` (HEAD~1) | 62 of 87 | 80.1 s / 83.0 s | |
+
+**The budget is missed, and the cause is not one slow step.** Where the 1.26 s of the `cache_spec.lua` case go: editor start
+0.15 s, discovery of 87 spec files 0.23 s, the selection (git and the `require` scan with a warm index) 0.13 s, the key
+of the selected spec 0.38 s, the spec itself 0.56 s. Even with an empty spec the sum of the fixed parts is about 0.9 s
+on this machine (Windows: every `git` is a process start, and so is the editor). Before the git commands of the
+selection ran at once (`testing.affected.git.run_parallel`: five process starts, one wait) the same case took
+1.47 s. What is left to win is small: the key of one spec (0.38 s: a closure of its modules, hashed with a warm
+index), and the discovery that reads every spec header.
+
+For a **module** change the budget is out of reach by a factor of 60 - 80, and the reasons are in the selection and the
+cache, not in the runner:
+
+* 62 of 87 specs are selected for *any* module of lib.nvim, even a leaf like `lib.lua.numeral.roman`: `lib.lua.lazy`
+  and a few other modules do `require(name)` with a name they were given, a computed `require` is an edge to every
+  module, and nearly every `lib.nvim` module reaches one of them (`reaches lib.nvim.logger <- ... <-
+  lib.lua.lazy <- (computed require)`). With the one module `lazy` turned into a non-dynamic call, 46 of 87 would
+  be selected; the others (`usercmd.composer.parse`, ...) hold the rest. The lever is the call sites of such a
+  wrapper: `lazy.require("lib.x")` with a literal is an edge to `lib.x`, and the wrapper itself then reaches nothing
+  by its own account (a declaration in the wrapper, or the module graph of documentation.nvim, which has to
+  treat a wrapper that way: `documentation.nvim/testing-contract-dynamic-require`).
+* Only 10 of the 87 files can be cached (30 files: a module reads the environment by a computed name; 28 read the
+  clock; 9 start a process), so a selected file runs again even when its key matches.
+
+So on lib.nvim the incremental loop is "about 1.3 s after editing a spec" and "one to two minutes after editing a
+module". The budget stays missed; it is not adjusted.
 
 ## The worker pool
 

@@ -224,6 +224,12 @@ function M.classify(cmd)
     then
       return "legacy"
     end
+    -- `-c "lua dofile('scripts/ci/headless_tests.lua')"`: a spec script started from a -c command (gopath.nvim)
+    if
+      rest:match("%-c%s+[\"']lua%s+dofile%s*%(%s*[\"']scripts/[%w_%./%-]*test[%w_%-]*%.lua[\"']")
+    then
+      return "legacy"
+    end
     for path in rest:gmatch("[%w_%./%-]+%.lua") do
       if
         (path:find("test", 1, true) or path:find("/ci/", 1, true))
@@ -443,6 +449,7 @@ end
 ---@field dep_step fun(name: string, prefix?: string): string|nil, string|nil Text of a checkout step (6-space indent, no trailing newline); `prefix` is the directory prefix of its `path:`.
 ---@field artifact_step fun(suffix: string): string|nil, string|nil
 ---@field keep_cmd? fun(cmd: string): boolean A runner call that must stay (a test no `spec_pattern` can name).
+---@field sentinel? string The green-run sentinel the old runner printed: scripts/test.sh passes it (`--sentinel`), so a `grep -q` of it is superfluous.
 ---@field read_script? fun(rel: string): string|nil Text of a repository script (a CI step that calls `scripts/ci.sh tests` wraps the runner).
 ---@field names? table
 
@@ -640,6 +647,14 @@ function M.edit(src, ctx)
               add(c.first, c.last, { (" "):rep(indent_of(old)) .. command })
             end
             changed("job %s: the old runner call becomes `%s`", job.id, M.RUN_COMMAND)
+            local script = c.cmd:match("dofile%s*%(%s*[\"'](scripts/[%w_%./%-]+%.lua)[\"']")
+            if script then
+              result.notes[#result.notes + 1] = ("job %s: `dofile('%s')` started one spec script; the new call runs the WHOLE suite. Narrow it with `--file %s` if the job should run only that script"):format(
+                job.id,
+                script,
+                (vim.fs.basename(script):gsub("%.lua$", ""))
+              )
+            end
           else
             add(c.first, c.last, {})
             changed("job %s: a second old runner call in the same step is removed", job.id)
@@ -662,6 +677,47 @@ function M.edit(src, ctx)
         end
       end
 
+      -- (a2) the old call wrote its output to a file and the step read it back (`> out.log 2>&1`, then
+      -- `cat out.log` and `grep -q <SENTINEL> out.log`): the new call writes no such file (the runner
+      -- prints the sentinel check itself, `--sentinel`), so those reads would fail or read nothing
+      do
+        local out_file, legacy_last
+        for _, c in ipairs(rs.cmds) do
+          if c.kind == "legacy" and not out_file then
+            out_file = c.cmd:match(">%s*([%w_%.%-/]+)%s+2>&1%s*$")
+              or c.cmd:match(">%s*([%w_%.%-/]+)%s*$")
+            legacy_last = c.last
+          end
+        end
+        if out_file and replaced then
+          local f = out_file:gsub("%p", "%%%0")
+          for _, c in ipairs(rs.cmds) do
+            if c.kind == "other" and c.first > legacy_last then
+              local cmd = vim.trim(c.cmd)
+              -- a `grep -q` goes only when the new call checks the very same sentinel (`--sentinel`)
+              local greps = cmd:match("^grep%s+%-[%a]*q[%a]*%s+.*%s" .. f .. "$") ~= nil
+              local covered = greps and ctx.sentinel and cmd:find(ctx.sentinel, 1, true) ~= nil
+              if cmd:match("^cat%s+" .. f .. "$") or covered then
+                add(c.first, c.last, {})
+                changed(
+                  "job %s: `%s` is removed (the new call writes no %s)",
+                  job.id,
+                  text.show(cmd, 80),
+                  out_file
+                )
+              elseif greps or cmd:find(out_file, 1, true) then
+                result.notes[#result.notes + 1] = ("job %s: `%s` (line %d) still reads %s, which the new call does not write: change it by hand"):format(
+                  job.id,
+                  text.show(cmd, 100),
+                  c.first,
+                  out_file
+                )
+              end
+            end
+          end
+        end
+      end
+
       -- (b) environment lines of the step the runner makes superfluous: PLENARY* when plenary goes,
       -- and LIB_NVIM_PATH when it points to the sibling checkout `scripts/test.sh` finds by itself
       do
@@ -673,6 +729,13 @@ function M.edit(src, ctx)
         end
         if env_at then
           local kept, dropped, dropped_plenary, dropped_lib = 0, {}, false, false
+          -- `<DEP>_PATH` of a dependency the plan resolves by `$<DEP>_DIR` (the spelling of testing.deps)
+          local renamed = {}
+          local dir_names = {}
+          for _, dep in ipairs(ctx.fleet_deps or {}) do
+            local env = require("testing.deps").env_name(dep)
+            dir_names[env:gsub("_DIR$", "_PATH")] = env
+          end
           for i = env_at + 1, step.last do
             local l = lines[i]
             if structural(l) and indent_of(l) <= fi then
@@ -687,9 +750,17 @@ function M.edit(src, ctx)
                 dropped[#dropped + 1] = i
                 dropped_lib = true
               else
+                local old_key = l:match("^ +([A-Z][A-Z0-9_]*):")
+                if old_key and dir_names[old_key] then
+                  renamed[#renamed + 1] = { line = i, old = old_key, new = dir_names[old_key] }
+                end
                 kept = kept + 1
               end
             end
+          end
+          for _, r in ipairs(renamed) do
+            add(r.line, r.line, { (lines[r.line]:gsub(r.old .. ":", r.new .. ":", 1)) })
+            changed("job %s: %s is now %s (the name testing.deps reads)", job.id, r.old, r.new)
           end
           if #dropped > 0 then
             if kept == 0 then

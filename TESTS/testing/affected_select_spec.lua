@@ -105,6 +105,25 @@ return function(H)
     "a marker inside a string is none"
   )
 
+  -- ---------------------------------------------------------------- --no-cache keeps the analysis index off the disk
+  do
+    local ndir = vim.fs.normalize(vim.fn.tempname())
+    local function indexes()
+      return vim.fn.globpath(ndir, "**/index.json", false, true)
+    end
+    local plain = sel({ "lua/proj/c.lua" }, { cache_dir = ndir, no_cache = true })
+    eq(#indexes(), 0, "no_cache: no index.json is written")
+    eq(vim.uv.fs_stat(ndir), nil, "no_cache: nothing is created below the cache directory")
+    local cached = sel({ "lua/proj/c.lua" }, { cache_dir = ndir })
+    eq(#indexes(), 1, "without it the analysis index is written")
+    eq(
+      vim.deepcopy(plain.files),
+      vim.deepcopy(cached.files),
+      "and the selection is the same either way"
+    )
+    S.remove(ndir)
+  end
+
   -- ---------------------------------------------------------------- a changed spec
   local r = sel({ P("c") })
   selected(r, { "c" }, "a changed spec selects itself")

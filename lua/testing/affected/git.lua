@@ -47,6 +47,40 @@ function M.default_run(argv, cwd)
   return { code = res.code, stdout = res.stdout or "", stderr = res.stderr or "" }
 end
 
+---Run several git commands AT ONCE (each is a process start, which costs tens of milliseconds on Windows) and
+---wait for all of them. The results come back in the order of `argvs`; a command that cannot start is a result
+---with code 127, never an error.
+---@param argvs string[][]
+---@param cwd string
+---@return Testing.Affected.GitResult[]
+function M.run_parallel(argvs, cwd)
+  local procs, results = {}, {}
+  for i, argv in ipairs(argvs) do
+    local ok, proc = pcall(function()
+      return vim.system(argv, {
+        cwd = cwd,
+        text = true,
+        timeout = M.TIMEOUT_MS,
+        env = { GIT_OPTIONAL_LOCKS = "0", GIT_TERMINAL_PROMPT = "0" },
+      })
+    end)
+    if ok and proc then
+      procs[i] = proc
+    else
+      results[i] = { code = 127, stdout = "", stderr = "cannot run git: " .. tostring(proc) }
+    end
+  end
+  for i, proc in pairs(procs) do
+    local ok, res = pcall(proc.wait, proc, M.TIMEOUT_MS + 1000)
+    if ok and res then
+      results[i] = { code = res.code, stdout = res.stdout or "", stderr = res.stderr or "" }
+    else
+      results[i] = { code = 127, stdout = "", stderr = "cannot run git: " .. tostring(res) }
+    end
+  end
+  return results
+end
+
 ---Is `ref` an acceptable revision text for argv use?
 ---@param ref any
 ---@return boolean ok
@@ -143,7 +177,27 @@ function M.changed(root, opts)
   if not ok then
     return nil, why
   end
-  local verify = run({ "git", "rev-parse", "--verify", "--quiet", base .. "^{commit}" }, root)
+  local verify_argv = { "git", "rev-parse", "--verify", "--quiet", base .. "^{commit}" }
+  local diff_argv = { "git", "diff", "--name-only", "-z", "--no-renames", "--relative", base, "--" }
+  local untracked_argv = { "git", "ls-files", "--others", "--exclude-standard", "-z", "--" }
+  if not opts.run then
+    -- the real git: every command this selection needs starts at once, the answers are read in the usual order
+    local batch = { verify_argv, diff_argv, untracked_argv }
+    local ignored_argv = M.ignored_argv(opts)
+    if ignored_argv then
+      batch[#batch + 1] = ignored_argv
+      batch[#batch + 1] = M.since_argv(base)
+    end
+    local answers = M.run_parallel(batch, root)
+    local by_key = {}
+    for i, argv in ipairs(batch) do
+      by_key[table.concat(argv, "\0")] = answers[i]
+    end
+    run = function(argv, cwd)
+      return by_key[table.concat(argv, "\0")] or M.default_run(argv, cwd)
+    end
+  end
+  local verify = run(verify_argv, root)
   if verify.code ~= 0 then
     return nil,
       ("git does not know the revision '%s'%s"):format(
@@ -151,12 +205,11 @@ function M.changed(root, opts)
         verify.stderr ~= "" and (": " .. vim.trim(verify.stderr)) or ""
       )
   end
-  local diff =
-    run({ "git", "diff", "--name-only", "-z", "--no-renames", "--relative", base, "--" }, root)
+  local diff = run(diff_argv, root)
   if diff.code ~= 0 then
     return nil, "git diff failed: " .. vim.trim(diff.stderr)
   end
-  local untracked = run({ "git", "ls-files", "--others", "--exclude-standard", "-z", "--" }, root)
+  local untracked = run(untracked_argv, root)
   if untracked.code ~= 0 then
     return nil, "git ls-files failed: " .. vim.trim(untracked.stderr)
   end
@@ -179,6 +232,29 @@ function M.changed(root, opts)
   return files, nil, vim.list_extend(vim.list_extend(ua, ub), uc)
 end
 
+---The command that lists the ignored files below `opts.ignored_dirs` (nil: no directory is usable).
+---@param opts { ignored_dirs?: string[] }
+---@return string[]|nil argv
+function M.ignored_argv(opts)
+  local argv = { "git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--" }
+  for _, d in ipairs(opts.ignored_dirs or {}) do
+    if safe_path(d) then
+      argv[#argv + 1] = d
+    end
+  end
+  if #argv == 7 then
+    return nil
+  end
+  return argv
+end
+
+---The command that gives the commit time of `base`.
+---@param base string
+---@return string[] argv
+function M.since_argv(base)
+  return { "git", "log", "-1", "--format=%ct", base, "--" }
+end
+
 ---Ignored files below `opts.ignored_dirs` that are newer than the commit `base`.
 ---@param root string
 ---@param base string A revision that was verified.
@@ -187,20 +263,15 @@ end
 ---@return string[] files
 ---@return string[] unsafe
 function M.ignored_newer(root, base, opts, run)
-  local argv = { "git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--" }
-  for _, d in ipairs(opts.ignored_dirs or {}) do
-    if safe_path(d) then
-      argv[#argv + 1] = d
-    end
-  end
-  if #argv == 7 then
+  local argv = M.ignored_argv(opts)
+  if not argv then
     return {}, {}
   end
   local listed = run(argv, root)
   if listed.code ~= 0 then
     return {}, {}
   end
-  local since = run({ "git", "log", "-1", "--format=%ct", base, "--" }, root)
+  local since = run(M.since_argv(base), root)
   local base_time = since.code == 0 and tonumber(vim.trim(since.stdout)) or nil
   if not base_time then
     return {}, {}

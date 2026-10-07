@@ -44,6 +44,7 @@ local M = {}
 ---@field soft_keep string[]
 ---@field guards table<string, string|boolean> Mode per guard (`clock`: boolean).
 ---@field guard_allow { fs: string[], spawn: string[], network: string[] }
+---@field guard_tuning table<string, table> Per guard the keys of its table form in `.testing.lua` (`guards.state = { categories = ..., ignore_groups = ... }`), without `mode`; validated by `testing.config.project`.
 ---@field pool { size: integer, reuse: boolean }
 ---@field determinism boolean
 ---@field trace boolean
@@ -106,7 +107,12 @@ local function guards_of(cfg, args)
       local v = from_cfg.clock
       out.clock = type(v) == "boolean" and v or defaults.clock
     else
-      out[name] = one_of(from_cfg[name], { "off", "warn", "error" }) or defaults[name]
+      -- a section is a bare mode or a table `{ mode = ..., <tuning> }` (no mode: the default one)
+      local v = from_cfg[name]
+      if type(v) == "table" then
+        v = v.mode
+      end
+      out[name] = one_of(v, { "off", "warn", "error" }) or defaults[name]
     end
   end
   for _, item in ipairs(args.guard or {}) do
@@ -118,6 +124,27 @@ local function guards_of(cfg, args)
       end
     elseif name and defaults[name] ~= nil and one_of(mode, { "off", "warn", "error" }) then
       out[name] = mode
+    end
+  end
+  return out
+end
+
+---The table forms of `cfg.guards` without their `mode`: what a project tunes per guard.
+---@param cfg table
+---@return table<string, table>
+local function tuning_of(cfg)
+  local out = {}
+  if type(cfg.guards) ~= "table" then
+    return out
+  end
+  for _, name in ipairs(M.GUARD_NAMES) do
+    local v = cfg.guards[name]
+    if name ~= "clock" and type(v) == "table" then
+      local t = vim.deepcopy(v)
+      t.mode = nil
+      if next(t) ~= nil then
+        out[name] = t
+      end
     end
   end
   return out
@@ -157,6 +184,7 @@ function M.of(plan)
     ) --[[@as "auto"|"none"|"file"|"case"|"soft"]],
     soft_keep = strings_of(cfg.soft_keep),
     guards = guards_of(cfg, args),
+    guard_tuning = tuning_of(cfg),
     guard_allow = {
       fs = strings_of(allow_cfg.fs, args.allow_fs),
       spawn = strings_of(allow_cfg.spawn, args.allow_spawn),
@@ -270,8 +298,9 @@ local RANK = { off = 0, info = 1, warn = 2, error = 3 }
 ---The categories of the state guard, each capped at `mode`. Read from the guard layer's own defaults
 ---(nil when there is none: its defaults then apply as they are).
 ---@param mode string
+---@param own? table<string, string> categories the project set explicitly (capped at `mode` too)
 ---@return table<string, string>|nil
-local function state_categories(mode)
+local function state_categories(mode, own)
   local ok, gcfg = pcall(require, "testing.guard.config")
   local cats = ok
     and type(gcfg) == "table"
@@ -281,10 +310,52 @@ local function state_categories(mode)
     return nil
   end
   local out = {}
-  for cat, own in pairs(cats) do
-    out[cat] = (RANK[own] or 0) <= (RANK[mode] or 0) and own or mode
+  for cat, default in pairs(cats) do
+    local want = own and own[cat] or default
+    out[cat] = (RANK[want] or 0) <= (RANK[mode] or 0) and want or mode
   end
   return out
+end
+
+---`base` with the tuning of the project on top: lists named in `APPEND` are added to the guard layer's
+---own list (a project's `ignore_groups` must not drop the editor's `nvim.` default), everything else
+---replaces.
+---@type table<string, true>
+local APPEND = {
+  allow_exec = true,
+  allow_hosts = true,
+  allow = true,
+  ignore_groups = true,
+  ignore_vars = true,
+  ignore = true,
+  ignore_patterns = true,
+}
+
+---@param base table
+---@param tuning table|nil
+---@param defaults table the guard layer's defaults of that guard
+local function tune(base, tuning, defaults)
+  tuning = tuning or {}
+  for key, value in pairs(tuning) do
+    if key ~= "keep" and key ~= "categories" then
+      if APPEND[key] then
+        local merged = vim.deepcopy(defaults[key] or {})
+        vim.list_extend(merged, base[key] or {})
+        vim.list_extend(merged, value)
+        base[key] = merged
+      else
+        base[key] = vim.deepcopy(value)
+      end
+    end
+  end
+  if tuning.keep then
+    -- names `setup()` leaves on purpose: autocmd groups, user commands and keymap lhs (prefix match)
+    for _, k in ipairs({ "ignore_groups", "ignore_usercmds", "ignore_keymaps" }) do
+      base[k] = base[k] or vim.deepcopy(defaults[k] or {})
+      vim.list_extend(base[k], tuning.keep)
+    end
+  end
+  return base
 end
 
 ---@param opts Testing.Run.Options
@@ -293,6 +364,14 @@ end
 function M.guard_config(opts, ctx)
   ctx = ctx or {}
   local g, allow = opts.guards, opts.guard_allow
+  local tuning = opts.guard_tuning or {}
+  local gdef = {}
+  do
+    local ok, gcfg = pcall(require, "testing.guard.config")
+    if ok and type(gcfg) == "table" and gcfg.DEFAULTS then
+      gdef = gcfg.DEFAULTS.guards
+    end
+  end
   if ctx.throwaway and g.state ~= "off" then
     g = vim.tbl_extend("force", g, { state = "off" })
   end
@@ -302,19 +381,23 @@ function M.guard_config(opts, ctx)
     restore = false,
     surface = opts.surface and vim.deepcopy(opts.surface) or nil,
     guards = {
-      fs = { mode = g.fs, allow = vim.deepcopy(allow.fs) },
-      state = {
+      fs = tune({ mode = g.fs, allow = vim.deepcopy(allow.fs) }, tuning.fs, gdef.fs or {}),
+      state = tune({
         mode = g.state,
-        categories = state_categories(g.state --[[@as string]]),
-      },
-      scheduled_error = { mode = g.scheduled_error },
-      prompt = { mode = g.prompt },
-      deprecation = { mode = g.deprecation },
-      process_net = {
+        categories = state_categories(g.state --[[@as string]], (tuning.state or {}).categories),
+      }, tuning.state, gdef.state or {}),
+      scheduled_error = tune(
+        { mode = g.scheduled_error },
+        tuning.scheduled_error,
+        gdef.scheduled_error or {}
+      ),
+      prompt = tune({ mode = g.prompt }, tuning.prompt, gdef.prompt or {}),
+      deprecation = tune({ mode = g.deprecation }, tuning.deprecation, gdef.deprecation or {}),
+      process_net = tune({
         mode = g.process_net,
         allow_exec = vim.deepcopy(allow.spawn),
         allow_hosts = vim.deepcopy(allow.network),
-      },
+      }, tuning.process_net, gdef.process_net or {}),
       clock = { mode = g.clock == true and "warn" or "off", seed = ctx.seed },
     },
   }

@@ -91,7 +91,7 @@ function M.render(plan, opts)
     )
     bullet(
       ("own harness: %s%s%s"):format(
-        a.own_harness and "yes (TESTS/harness.lua)" or "no",
+        a.own_harness and ("yes (%s)"):format(sh(a.harness_path or "TESTS/harness.lua")) or "no",
         a.run_lua and ", TESTS/run.lua" or "",
         a.sentinel and (", sentinel " .. sh(a.sentinel)) or ""
       )

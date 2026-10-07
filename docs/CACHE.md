@@ -177,7 +177,9 @@ An entry is validated when read back: size cap before decoding, `pcall` around t
 file name and to the key asked for, file equal to the file asked for, every case a `pass` of that file with an empty
 ledger and no guard finding or error, and the case list valid against the Result-IR schema. Anything else is a miss
 with a reason (`absent`, `corrupt`, `invalid: ...`, `entry too large`), never a partial hit. Anything that is not an
-entry (files in the directory that do not have a key as name) is never touched by `prune` or `clear`.
+entry (files in the directory that do not have a key as name) is never touched by `prune` or `clear`. The one
+exception is a DIRECTORY named like an entry (`<64 hex>.json/`): nothing could ever write that key again, so `put`
+replaces it and `clear` removes it (a link is unlinked, never followed).
 
 ### Hash index and the stat pre-check
 
@@ -187,7 +189,12 @@ rule), is not read again. The `ctime` is what `touch -r` cannot reset: an edit t
 moves it. The analysis is kept only while the scanner that wrote it is the one that runs (`scan` in the index header,
 `testing.affected.scan.VERSION`): a better scanner reads every file again. The index is validated when loaded; a bad
 index is ignored (everything is hashed again). Within one run a file is hashed, analysed and stat-ed once (`ctx.memo`),
-so a closure of 600 files costs its listing once, not once per spec.
+so a closure of 600 files costs its listing once, not once per spec. `--no-cache` keeps this index off the disk as
+well: `--changed --no-cache` reads and analyses the files it needs and writes nothing below the cache directory.
+
+A directory tree that joins a key (fixtures, the spec root, the whole project) is walked **through symbolic links and
+junctions**: a linked directory is entered once per real directory (a link that points back at an ancestor ends
+there), up to 64 of them; more means no key.
 
 ### API
 

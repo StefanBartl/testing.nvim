@@ -183,6 +183,63 @@ return function(H)
     end
     ok(has_effect, "the plugin's own command still is: " .. S.messages(own_run, "K1"))
 
+    -- one cause, one finding: modules that load the same missing dependency (or show the same side effect) are
+    -- named in ONE finding instead of one warning each
+    local function many_probe(name)
+      if name == "require" then
+        local fx = { globals = {}, keymaps = 0, commands = { "OwnCmd" }, autocmds = 0 }
+        return {
+          results = {
+            { module = "goodp.a", ok = false, missing = "dep.x", err = "module 'dep.x' not found" },
+            { module = "goodp.b", ok = false, missing = "dep.x", err = "module 'dep.x' not found" },
+            { module = "goodp.c", ok = false, missing = "dep.x", err = "module 'dep.x' not found" },
+            { module = "goodp.d", ok = false, missing = "dep.y", err = "module 'dep.y' not found" },
+            { module = "goodp.e", ok = true, effects = fx },
+            { module = "goodp.f", ok = true, effects = fx },
+          },
+        }
+      end
+      return nil, "no child editor in this spec"
+    end
+    local noisy =
+      S.check(conformance.run(fp, { only = { "K1" }, settings = {}, probe = many_probe }), "K1")
+    local n_dep_x, n_dep_y, n_effect = 0, 0, 0
+    for _, f in ipairs(noisy.findings) do
+      if f.message:find('"dep.x"', 1, true) then
+        n_dep_x = n_dep_x + 1
+        ok(
+          f.message:find("2 other module(s)", 1, true) ~= nil,
+          "the others are counted: " .. f.message
+        )
+        ok(f.message:find("goodp.b", 1, true) ~= nil, "and named: " .. f.message)
+      elseif f.message:find('"dep.y"', 1, true) then
+        n_dep_y = n_dep_y + 1
+      elseif f.message:find("side effect", 1, true) then
+        n_effect = n_effect + 1
+        ok(
+          f.message:find("1 other module(s)", 1, true) ~= nil,
+          "the effect names the other: " .. f.message
+        )
+      end
+    end
+    -- a cut chunk name (`...ame/lua/x/y.lua:3:`) gets its repository path back; an ambiguous one is left alone
+    local util = require("testing.conformance.util")
+    ok(
+      util.uncut_paths(
+        "...ome/me/lua/goodp/broken.lua:3: boom",
+        { "lua/goodp/broken.lua", "lua/goodp/a.lua" }
+      ) == "<REPO>/lua/goodp/broken.lua:3: boom",
+      "a cut chunk name is completed"
+    )
+    ok(
+      util.uncut_paths("...ua/goodp/x.lua:3: boom", { "lua/goodp/x.lua", "ext/lua/goodp/x.lua" })
+        == "...ua/goodp/x.lua:3: boom",
+      "two files that end the same way: nothing is guessed"
+    )
+    ok(n_dep_x == 1, "one finding for a dependency three modules miss, got " .. n_dep_x)
+    ok(n_dep_y == 1, "another dependency is its own finding")
+    ok(n_effect == 1, "one finding for the same side effect in two modules, got " .. n_effect)
+
     -- ===================================================================
     -- 2c. K14 compared substrings: `gl` was "documented" by the word "global", `:Foo` by `:FooBar`
     local k14 = require("testing.conformance.checks.k14_docs")

@@ -157,6 +157,47 @@ return function(H)
     "a hidden directory is not a module"
   )
 
+  -- the module root decides, the repository name is only a fallback (buffer-ctx.nvim ships lua/buffer_ctx)
+  eq(
+    scaffold.detect_plugin(mkproj("buffer-ctx.nvim", { "lua/buffer_ctx" })),
+    "buffer_ctx",
+    "the module directory, not the repository spelling"
+  )
+  do
+    local r = mkproj("wide-cfg.nvim", { "lua/wide_cfg", "lua/helper_a", "lua/helper_b" })
+    eq(
+      scaffold.detect_plugin(r),
+      "wide_cfg",
+      "several directories: the one that matches the name loosely"
+    )
+  end
+  do
+    local r = mkproj("odd-name.nvim", { "lua/aaa", "lua/real_mod" })
+    vim.fn.writefile({ "return {}" }, r .. "/lua/real_mod/init.lua")
+    local name, how = scaffold.detect_plugin(r)
+    eq(
+      { name, how },
+      { "real_mod", "lua-dir" },
+      "several directories: the only one with an entry module"
+    )
+  end
+  do
+    local r = mkproj("single-file.nvim", { "lua" })
+    vim.fn.writefile({ "return {}" }, r .. "/lua/sfile.lua")
+    eq(scaffold.detect_plugin(r), "sfile", "a single-file module root (lua/sfile.lua)")
+  end
+  do
+    local r = mkproj("both.nvim", { "lua/x1", "lua/x2" })
+    vim.fn.writefile({ "return {}" }, r .. "/lua/x1/init.lua")
+    vim.fn.writefile({ "return {}" }, r .. "/lua/x2/init.lua")
+    local name, how = scaffold.detect_plugin(r)
+    eq(
+      { name, how },
+      { "both", "directory-name" },
+      "two entry modules and no name match: the repository name"
+    )
+  end
+
   -- ---------------------------------------------------------------- init: files and invariants
 
   local root = mkproj("myplug.nvim", { "lua/myplug" })

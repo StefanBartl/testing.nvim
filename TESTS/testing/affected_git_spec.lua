@@ -168,6 +168,17 @@ return function(H)
     eq(files, nil, which .. " failing: no files")
     ok(err ~= nil, which .. " failing: a message")
   end
+  -- several commands at once: the answers come back in the order they were asked, a failure stays its own
+  local par = git.run_parallel(
+    { { "git", "--version" }, { "does-not-exist" }, { "git", "no-such-command" } },
+    "."
+  )
+  eq(#par, 3, "run_parallel: one answer per command")
+  eq(par[1].code, 0, "run_parallel: the first command ran")
+  has(par[1].stdout, "git version", "run_parallel: and its output is the first answer")
+  eq(par[2].code, 127, "run_parallel: a command that cannot start is code 127, not an error")
+  ok(par[3].code ~= 0, "run_parallel: a failing command is a failing answer")
+  eq(git.run_parallel({}, "."), {}, "run_parallel: nothing to run")
   local missing = git.default_run({ "does-not-exist" }, ".")
   ok(missing.code ~= 0, "an executable that is not there is a failed run, not an error")
 

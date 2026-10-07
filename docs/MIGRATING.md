@@ -92,9 +92,34 @@ If a spec or a module of the plugin requires a plenary module other than its tes
 (`plenary.async`, `plenary.path`, ...), plenary is a **dependency**, not just a runner: the checkout step
 and the minimal_init lines stay, and `plenary.nvim` is added to `deps` (recorded as "external, not in
 fleet"). A plenary module that is only required behind `pcall` keeps the CI checkout but is not a hard
-dependency.
+dependency. The same holds when plenary is in `deps` only because `telescope.nvim` needs it: `deps` and
+the workflow never disagree (the plan does not drop a checkout that `scripts/test.sh` would then miss).
+
+### What the workflow edit also handles
+
+* The old call wrote its output to a file and the step read it back (`... > out.log 2>&1`, then `cat
+  out.log` and `grep -q <SENTINEL> out.log`): the new call writes no such file, so `cat` and the
+  `grep` of the sentinel that `scripts/test.sh` passes with `--sentinel` are removed; any other read of
+  the file stays and is a note ("still reads out.log").
+* `<DEP>_PATH: ...` in the environment of the run step, for a dependency the plan resolves, becomes
+  `<DEP>_DIR` (the name `testing.deps` reads): `HOVER_NVIM_PATH` is now `HOVER_NVIM_DIR`.
+* `-c "lua dofile('scripts/ci/headless_tests.lua')"` (a spec script started from a `-c` command) is
+  mapped to the runner call, with the policy `isolated = "file"`, `host = "c"` (one editor per file,
+  started like that `-c` command; `nvim -l` would be red for specs that read `<cword>` or
+  `vim_did_enter`). The call now runs the WHOLE suite: a note says how to narrow it (`--file
+  headless_tests`).
+* A workflow **comment** that says a plugin is deliberately not checked out ("ui.nvim is deliberately
+  NOT checked out") keeps it out of `deps` and out of the checkout steps the plan adds; it is listed as
+  optional with a risk, because the old CI is the reference for what the specs need.
+* A harness beside the specs (`scripts/ci/harness.lua` next to `scripts/ci/specs/`) counts as the
+  project's own harness, not only `TESTS/harness.lua`.
 
 ## How dependencies are found
+
+The plugin name of `.testing.lua` is the Lua module root below `lua/` (the only one, else the only
+one with an entry module, else the one that matches the repository name with `-` and `_` treated alike:
+`buffer-ctx.nvim` ships `lua/buffer_ctx`, so the name is `buffer_ctx`); the repository name is only the
+fallback.
 
 Every `require("x")` in `lua/` and `TESTS/` is read from the source with comments and strings left out
 (a `require` in a string is not a dependency). A module is mapped, in this order, to: nothing needed

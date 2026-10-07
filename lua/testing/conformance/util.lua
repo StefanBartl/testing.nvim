@@ -52,6 +52,33 @@ function M.finding(check, rule, level, message, file, line)
 end
 
 ---Replace the repository root in a text of the repository's own code (an error message) with `<REPO>`.
+---Give the cut chunk names of a Lua error their repository path: Neovim shortens a long chunk name to
+---`...ame/lua/x/y.lua:12:`, which names a file nobody can open. When exactly one of `rels` ends with the cut
+---text it takes its place; an ambiguous or unknown one stays as it is.
+---@param text string
+---@param rels string[] Repository-relative file names (forward slashes).
+---@return string
+function M.uncut_paths(text, rels)
+  return (
+    text:gsub("%.%.%.([%w_%-%./]+%.lua):(%d+)", function(tail, line)
+      local found
+      for _, rel in ipairs(rels) do
+        -- the cut fell inside the repository path (`rel` ends with the text) or above it (the text ends with `rel`)
+        if (#rel >= #tail and rel:sub(-#tail) == tail) or tail:sub(-(#rel + 1)) == "/" .. rel then
+          if found then
+            return nil -- two files end the same way: say nothing wrong
+          end
+          found = rel
+        end
+      end
+      if found then
+        return "<REPO>/" .. found .. ":" .. line
+      end
+      return nil
+    end)
+  )
+end
+
 ---@param text any
 ---@param root string
 ---@return string

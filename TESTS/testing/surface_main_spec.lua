@@ -269,6 +269,49 @@ return function(H)
   code = surface.main({ "--hits", sink, "--baseline", base_path, "--fail-on-new" }, grown_services)
   eq(code, 1, "--fail-on-new makes it a failure")
 
+  -- an entry that was exercised and is gone from the surface: listed, a failure only with --fail-on-removed
+  local shrunk = vim.deepcopy(fixed)
+  shrunk.entries = vim.tbl_filter(function(e)
+    return e.id ~= "binding:<leader>a"
+  end, shrunk.entries)
+  local shrunk_services = vim.tbl_extend("force", services, {
+    collect = function()
+      return vim.deepcopy(shrunk)
+    end,
+  })
+  code, text = surface.main({ "--hits", sink, "--baseline", base_path }, shrunk_services)
+  eq(code, 0, "a vanished entry does not fail by default")
+  has(text, "binding:<leader>a", "but is listed")
+  code, text =
+    surface.main({ "--hits", sink, "--baseline", base_path, "--fail-on-removed" }, shrunk_services)
+  eq(code, 1, "--fail-on-removed makes it a failure")
+  has(text, "gone from the surface", "and says why")
+
+  -- a baseline that was edited after a run wrote it says so (the bar is whatever the file holds now)
+  local signed = vim.json.decode(slurp(base_path))
+  eq(type(signed.digest), "string", "a written baseline carries a digest")
+  text = select(2, main({ "--hits", sink, "--baseline", base_path }))
+  eq(text:find("digest", 1, true), nil, "an untouched baseline raises no note")
+  signed.entries["binding:<leader>a"] = "missing"
+  local edited_path = write("edited.json", vim.json.encode(signed))
+  text = select(2, main({ "--hits", sink, "--baseline", edited_path }))
+  has(text, "do not match its digest", "an edited baseline is named")
+  signed.digest = nil
+  text = select(
+    2,
+    main({ "--hits", sink, "--baseline", write("unsigned.json", vim.json.encode(signed)) })
+  )
+  has(text, "no digest", "a baseline without a digest says that it cannot be checked")
+
+  -- --out and --write-baseline go through the atomic writer: no temp file stays behind
+  local leftovers = 0
+  for name in vim.fs.dir(tmp) do
+    if name:find("atomic-tmp", 1, true) then
+      leftovers = leftovers + 1
+    end
+  end
+  eq(leftovers, 0, "no temp file of an atomic write is left in the directory")
+
   code, text = main({ "--hits", sink, "--baseline", write("nobase.json", "{}") })
   eq(code, 2, "a baseline that is none")
   has(text, "not a surface baseline", "says so")

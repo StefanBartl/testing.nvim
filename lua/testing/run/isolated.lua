@@ -165,6 +165,7 @@ end
 ---@field grace_ms integer
 ---@field describe_exit string Text for "how it ended".
 ---@field abandoned? boolean The process did not end after the kill and was given up on.
+---@field guard_cfg? table The guard configuration the child got (for the "not measured" notes of a `script` case).
 ---@field case_id? string CASE mode: the id the child was started for; a synthetic case (timeout, crash) takes it.
 
 ---Signals / NTSTATUS values that mean "the editor itself died", for a script whose own non-zero exit
@@ -186,9 +187,9 @@ local function died_natively(code, signal)
   return code == 132 or code == 134 or code == 135 or code == 136 or code == 139
 end
 
----Note on every case of a `script` file: the guard layer does not run in it.
+---Note on the case of a `script` file that has no guard record: nothing was measured.
 local SCRIPT_UNMEASURED_NOTE =
-  "guards: not installed in a `script` file (it runs as its own `nvim -l` process); no finding and no effect is measured, an empty list is not a result"
+  "guards: no record from this `script` file (guards are off, or the file ended the editor with :cquit / :qa! instead of returning or os.exit); no finding and no effect is measured, an empty list is not a result"
 
 ---Cases of a `script` file: one case, built by `testing.dialect.script` from the exit code AND the
 ---printed failure lines (never greener than the script's own report).
@@ -206,9 +207,26 @@ local function classify_script(input)
     timeout_ms = input.file_ms,
   }, { assertions = input.assertions })
   case.duration_ms = input.wall_ms
-  -- a script is its own `nvim -l` process: no guard layer is installed in it, so an empty list of
-  -- findings or effects says nothing (a consumer must be able to tell "clean" from "not measured")
-  case.notes[#case.notes + 1] = SCRIPT_UNMEASURED_NOTE
+  local rec = input.frag.script_guards
+  if rec then
+    -- one window for the whole file: its findings and effects belong to the file's one case
+    guards_mod.attach({ case }, rec.findings, rec.effects)
+    for _, n in ipairs(rec.notes or {}) do
+      if type(n) == "string" then
+        case.notes[#case.notes + 1] = n
+      end
+    end
+    if type(rec.error) == "string" then
+      case.notes[#case.notes + 1] = "guards: " .. rec.error
+    end
+    for _, n in ipairs(guards_mod.unmeasured_notes(input.guard_cfg)) do
+      case.notes[#case.notes + 1] = n
+    end
+  else
+    -- no record: an empty list of findings or effects says nothing (a consumer must be able to tell
+    -- "clean" from "not measured")
+    case.notes[#case.notes + 1] = SCRIPT_UNMEASURED_NOTE
+  end
   return { case }
 end
 
@@ -768,6 +786,7 @@ function M.run(opts)
       describe_exit = ended.describe,
       abandoned = h.abandoned,
       case_id = slot.case_id,
+      guard_cfg = guard_for_child(true),
     })
     if slot.case_id then
       -- CASE mode: the child must have reported the case it was started for

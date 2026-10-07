@@ -124,6 +124,44 @@ return function(H)
   has(failures[1], "'bar.nvim'", "first failure")
   has(failures[2], "'baz.nvim'", "second failure")
 
+  -- a project checked out where its siblings are not (a worktree, a temp copy): a dependency that the
+  -- project's own base lacks is found beside the runner's checkout, with no $<NAME>_DIR set
+  do
+    local runner_base = tmp .. "/runner/testing.nvim"
+    vim.fn.mkdir(runner_base, "p")
+    vim.fn.mkdir(tmp .. "/runner/qux.nvim/lua", "p")
+    local with = vim.tbl_extend("force", opts, { fallback = runner_base })
+    local got, fails = deps.resolve_all({ "qux.nvim" }, base, with)
+    eq(#fails, 0, "found beside the runner: " .. vim.inspect(fails))
+    eq(got[1] and got[1].dir, tmp .. "/runner/qux.nvim", "the checkout beside the runner")
+    has(got[1] and got[1].source, "beside the runner", "and the source says so")
+    local none =
+      deps.resolve_all({ "qux.nvim" }, base, vim.tbl_extend("force", opts, { fallback = false }))
+    eq(#none, 0, "fallback = false: only the project's own places")
+    -- an override that is set but invalid is never skipped for the fallback
+    env.QUX_NVIM_DIR = tmp .. "/nowhere"
+    local _, bad = deps.resolve_all({ "qux.nvim" }, base, with)
+    eq(#bad, 1, "an invalid override still fails")
+    env.QUX_NVIM_DIR = nil
+  end
+
+  -- a stale lib.nvim (without fs.write.atomic) that comes first is named, with the commit that fixes it
+  do
+    local stale = tmp .. "/stale/lib.nvim"
+    vim.fn.mkdir(stale .. "/lua/lib/nvim", "p")
+    local res = { name = "lib.nvim", dir = stale, source = ".deps/lib.nvim", locations = {} }
+    local problem = deps.lib_problem(res)
+    has(problem, "too old", "a lib.nvim without fs.write.atomic is too old")
+    has(problem, "6304829", "and the message names the commit that has it")
+    has(problem, stale, "and the checkout")
+    vim.fn.mkdir(stale .. "/lua/lib/nvim/fs/write", "p")
+    vim.fn.writefile({ "return function() end" }, stale .. "/lua/lib/nvim/fs/write/atomic.lua")
+    eq(deps.lib_problem(res), nil, "with the module present there is no problem")
+    -- the real lib.nvim this suite runs on must pass its own check
+    local real_lib = deps.resolve("lib.nvim", deps.self_dir())
+    eq(real_lib and deps.lib_problem(real_lib), nil, "the lib.nvim of this run is recent enough")
+  end
+
   -- report rows
   local rows = deps.report({ "foo.nvim", "bar.nvim" }, base, opts)
   eq(rows[1].ok, true, "report: found")

@@ -354,6 +354,31 @@ function M.asserts_absence(src, name)
   return false
 end
 
+---Does a workflow COMMENT say that `name` is kept out of the run on purpose ("ui.nvim is deliberately NOT
+---checked out")? The old CI chose that (a spec simulates the absence, or degrades without it), so the plan
+---must not add a checkout nor list it in `deps`.
+---@param ci_src string The workflows, comments included.
+---@param name string
+---@return boolean
+function M.kept_away(ci_src, name)
+  local needle = name:lower()
+  for line in ci_src:lower():gmatch("[^\n]+") do
+    if line:match("^%s*#") and line:find(needle, 1, true) then
+      if
+        line:find("not checked out", 1, true)
+        or line:find("deliberately not", 1, true)
+        or line:find("deliberately absent", 1, true)
+        or line:find("kept off", 1, true)
+        or line:find("stays off", 1, true)
+        or line:find("not on the runtimepath", 1, true)
+      then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 ---@class Testing.Migrate.CleanupLine
 ---@field lnum integer
 ---@field text string
@@ -660,8 +685,19 @@ function M.analyze(root, opts)
   -- ---------------------------------------------------------------- own harness
   local run_text = text.read(root .. "/TESTS/run.lua")
   local harness_text = text.read(root .. "/TESTS/harness.lua")
+  -- the harness a spec file names (`scripts/ci/harness.lua` beside `scripts/ci/specs/`): not only TESTS/harness.lua
+  local own_harness = harness_text and "TESTS/harness.lua" or nil
+  if not own_harness then
+    for _, f in ipairs(specs.files) do
+      if f.harness and f.dialect == "h" then
+        own_harness = f.harness
+        break
+      end
+    end
+  end
   report.harness = {
     file = harness_text and "TESTS/harness.lua" or nil,
+    path = own_harness,
     run_lua = run_text ~= nil,
     listed = disc.runner.listed or {},
     sentinel = run_text and M.find_sentinel(run_text) or disc.runner.sentinel,
@@ -900,6 +936,42 @@ function M.analyze(root, opts)
       })
     end
   end
+  -- plenary in `deps` (for whatever reason) and the plan removing its CI checkout would contradict each
+  -- other: scripts/test.sh requires the dependency, the workflow would not provide it any more
+  do
+    local in_deps = false
+    for _, d in ipairs(deps.list) do
+      in_deps = in_deps or d.name == "plenary.nvim"
+    end
+    if in_deps and not report.plenary.keep_ci then
+      report.plenary.keep_ci = true
+      risk(
+        "plenary.nvim is a dependency (telescope.nvim does not load without it): the CI keeps its plenary checkout"
+      )
+    end
+  end
+  -- a dependency the old CI keeps away on purpose (a comment says so) is not proposed: it moves to the
+  -- optional ones (the old CI is the reference: nothing needed it for the specs to pass)
+  do
+    local kept = {}
+    for _, d in ipairs(deps.list) do
+      if d.name ~= "plenary.nvim" and M.kept_away(ci_text, d.name) then
+        d.note = "kept away on purpose (a CI comment says it is deliberately not checked out)"
+        deps.optional[#deps.optional + 1] = d
+        risk(
+          ("%s is not in `deps`: a comment of the workflow says it is deliberately not checked out (the specs run without it)%s"):format(
+            d.name,
+            d.hard_lua
+                and "; lua/ requires it at the top of a module, check that the specs reach no such module"
+              or ""
+          )
+        )
+      else
+        kept[#kept + 1] = d
+      end
+    end
+    deps.list = kept
+  end
   -- a dependency the specs also mention as ABSENT (`applies directly when ui.nvim is absent`): a spec that
   -- needs the plugin missing turns red with it on the runtimepath, a spec that simulates the absence
   -- (`package.preload`) runs fewer cases without it. Nothing is guessed: it stays, and the report says so
@@ -931,11 +1003,22 @@ function M.analyze(root, opts)
 
   -- ---------------------------------------------------------------- policy suggestions
   local busted = (specs.by_dialect.busted or 0) > 0
+  -- the old CI started each spec script from a `-c` command (`-c "lua dofile('...')"`): host `c`, where
+  -- `vim.v.vim_did_enter` is 0; one process under `nvim -l` is red for specs that depend on it
+  local started_from_c = false
+  for line in strip_comments(ci_text, "#"):gmatch("[^\n]+") do
+    if line:match("%-c%s+[\"']lua%s+dofile%s*%(") then
+      started_from_c = true
+      break
+    end
+  end
+  local per_file = busted or started_from_c
   report.policy = {
-    isolated = busted and "file" or "none",
+    isolated = per_file and "file" or "none",
     isolated_reason = busted and "busted/plenary specs ran one nvim per file under plenary"
+      or started_from_c and "the old CI started every spec script from a `-c` command in its own editor"
       or "specs ran in one process under the old runner",
-    host = busted and "c" or nil,
+    host = per_file and "c" or nil,
     assertions = "warn",
     assertions_reason = "cases without assertions pass under plenary and the old runners; counting them needs a run, so the suggestion is `warn` (use `error` once they are fixed)",
   }

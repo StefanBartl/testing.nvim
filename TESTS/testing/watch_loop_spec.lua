@@ -425,7 +425,7 @@ return function(H)
     eq(h.w:failed_list(), { "TESTS/a_spec.lua" }, "and the failing set")
   end
 
-  -- no run ever completed: exit 0, still a clean stop
+  -- no run ever completed (Ctrl-C in the first run): an aborted run is never a green exit
   do
     local h = harness()
     h.result = function()
@@ -434,7 +434,64 @@ return function(H)
     h.script = function()
       h.w:interrupt()
     end
-    eq(h.w:loop(), 0, "interrupted before anything finished: exit 0")
+    eq(h.w:loop(), 3, "interrupted before anything finished: exit 3, not 0")
+    local last = h.said[#h.said]
+    ok(last:find("before a run completed", 1, true) ~= nil, "and the last line says why: " .. last)
+  end
+
+  -- a spec that writes a file below a watched root: after SELF_WRITE_LIMIT runs the file is ignored
+  do
+    local h = harness()
+    h.on_run = function()
+      -- every run (the first one included) rewrites the same Lua file: the event arrives while it runs
+      touch(h, "lua/generated.lua")
+      h.on_event()
+    end
+    h.script = function(n)
+      if n > 400 then
+        h.w:interrupt()
+      end
+    end
+    h.result = function()
+      return { exit_code = 0, failed = {} }
+    end
+    eq(h.w:loop(), 0, "the loop ends by itself being interrupted, green")
+    eq(
+      #h.runs,
+      watch.SELF_WRITE_LIMIT,
+      "the writer re-triggers the watcher a bounded number of times"
+    )
+    eq(h.w.ignored["/proj/lua/generated.lua"], true, "and is ignored")
+    local told = false
+    for _, line in ipairs(h.said) do
+      if line:find("generated.lua", 1, true) and line:find("ignored from now on", 1, true) then
+        told = true
+      end
+    end
+    eq(told, true, "the status line names the ignored file")
+  end
+
+  -- a file that changes in ONE run only (a person saved during it) is never ignored
+  do
+    local h = harness()
+    h.result = function()
+      return { exit_code = 0, failed = {} }
+    end
+    local n_runs = 0
+    h.on_run = function()
+      n_runs = n_runs + 1
+      if n_runs % 2 == 1 then
+        touch(h, "lua/edited.lua")
+        h.on_event()
+      end
+    end
+    h.script = function(n)
+      if n >= 10 then
+        h.w:interrupt()
+      end
+    end
+    h.w:loop()
+    eq(next(h.w.ignored), nil, "a file written during every other run is not a self-writer")
   end
 
   -- `vim.wait` interrupted (Ctrl-C reaches it as `nil, -2`) ends the loop too

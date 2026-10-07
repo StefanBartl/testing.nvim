@@ -210,6 +210,18 @@ function M.read(dir, key, expect)
   return entry
 end
 
+---Remove `path` when it is a directory (or a link to one): the cache owns this namespace, a directory named like
+---an entry is debris that would block the key. A link is unlinked, never followed. Returns true when it removed one.
+---@param path string
+---@return boolean removed
+local function remove_dir_in_place(path)
+  local st = uv.fs_lstat(path)
+  if not st or st.type ~= "directory" then
+    return false
+  end
+  return vim.fn.delete(path, "rf") == 0
+end
+
 ---Write an entry (atomic, bounded).
 ---@param dir string
 ---@param entry Testing.Cache.Entry
@@ -226,7 +238,14 @@ function M.write(dir, entry)
   if #enc > M.MAX_ENTRY_BYTES then
     return false, ("entry larger than %d bytes"):format(M.MAX_ENTRY_BYTES)
   end
-  return require("lib.nvim.fs.write.atomic")(M.entry_path(dir, entry.key), enc, { mkdirp = true })
+  local path = M.entry_path(dir, entry.key)
+  local atomic = require("lib.nvim.fs.write.atomic")
+  local ok, werr = atomic(path, enc, { mkdirp = true })
+  if not ok and remove_dir_in_place(path) then
+    -- a DIRECTORY where the entry file belongs would block this key for good (nothing else ever removes it)
+    ok, werr = atomic(path, enc, { mkdirp = true })
+  end
+  return ok, werr
 end
 
 ---@class Testing.Cache.Listed
@@ -352,6 +371,23 @@ function M.clear(dir)
     end
   end
   sweep_tmp(dir, math.huge)
+  -- a directory named like an entry (`list` skips it) is debris of the same cache: it goes too
+  local handle = uv.fs_scandir(dir .. "/entries")
+  while handle do
+    local name, kind = uv.fs_scandir_next(handle)
+    if not name then
+      break
+    end
+    local key = name:match("^(%x+)%.json$")
+    if
+      key
+      and is_key(key)
+      and kind == "directory"
+      and remove_dir_in_place(dir .. "/entries/" .. name)
+    then
+      n = n + 1
+    end
+  end
   uv.fs_unlink(dir .. "/index.json")
   return n
 end

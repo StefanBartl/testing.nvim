@@ -389,6 +389,70 @@ local function guards_block(result, paint, width)
   return out
 end
 
+---Processes and connections the specs started (the effects ledger, `case.effects`), one line per distinct
+---entry with its call count and the number of cases that made it: the guard findings above are capped,
+---and `process_net` in mode `warn` produces one per call, so this is the list that says WHAT was started.
+---@param result Testing.Result
+---@param paint fun(kind: string, s: string): string
+---@param width integer
+---@return string[]
+local function effects_block(result, paint, width)
+  local out = {}
+  local kinds = { { "spawned", "processes started", 25 }, { "network", "network connections", 15 } }
+  for _, k in ipairs(kinds) do
+    local agg, order = {}, {}
+    local calls = 0
+    for _, c in ipairs(result.cases or {}) do
+      local seen = {}
+      for _, e in ipairs(type(c.effects) == "table" and c.effects[k[1]] or {}) do
+        if type(e) == "string" and not e:find("^%.%.%. %d+ more not recorded") then
+          local n = tonumber(e:match(" %(x(%d+)%)$")) or 1
+          local text = e:gsub(" %(x%d+%)$", "")
+          local blocked = text:find(" [blocked]", 1, true) ~= nil
+          text = text:gsub(" %[blocked%]$", "")
+          local a = agg[text]
+          if not a then
+            a = { text = text, count = 0, cases = 0, blocked = false }
+            agg[text] = a
+            order[#order + 1] = a
+          end
+          a.count = a.count + n
+          a.blocked = a.blocked or blocked
+          if not seen[text] then
+            seen[text] = true
+            a.cases = a.cases + 1
+          end
+          calls = calls + n
+        end
+      end
+    end
+    if #order > 0 then
+      table.sort(order, function(x, y)
+        if x.count ~= y.count then
+          return x.count > y.count
+        end
+        return x.text < y.text
+      end)
+      out[#out + 1] = paint("bold", ("%s: %d call(s), %d distinct"):format(k[2], calls, #order))
+      for i, a in ipairs(order) do
+        if i > k[3] then
+          out[#out + 1] = ("  ... and %d more distinct (all of them: --json <file>, field effects)"):format(
+            #order - k[3]
+          )
+          break
+        end
+        local tail = ("  x%d in %d case(s)%s"):format(
+          a.count,
+          a.cases,
+          a.blocked and " [blocked]" or ""
+        )
+        out[#out + 1] = "  " .. fit(a.text, math.max(width - 2 - #tail, 40)) .. tail
+      end
+    end
+  end
+  return out
+end
+
 ---@param result Testing.Result
 ---@param n integer
 ---@param paint fun(kind: string, s: string): string
@@ -486,6 +550,14 @@ function M.render(result, opts)
   if #guard_lines > 0 then
     lines[#lines + 1] = ""
     for _, l in ipairs(guard_lines) do
+      lines[#lines + 1] = l
+    end
+  end
+
+  local effect_lines = effects_block(result, paint, width)
+  if #effect_lines > 0 then
+    lines[#lines + 1] = ""
+    for _, l in ipairs(effect_lines) do
       lines[#lines + 1] = l
     end
   end

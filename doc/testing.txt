@@ -267,7 +267,9 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
                             fails; "warn": it passes and is listed.
   isolated     string       "auto" (default), "none", "file", "case", "soft".
   guards       table        fs, state, deprecation, scheduled_error, prompt,
-                            process_net: "off"|"warn"|"error"; clock: boolean.
+                            process_net: "off"|"warn"|"error" or a table
+                            { mode = ..., categories, ignore_*, keep, allow,
+                            ... } (docs/GUARDS.md); clock: boolean.
   guard_allow  table        { fs, spawn, network } string lists.
   pool         table        { size = n, reuse = boolean }: the warm pool.
   determinism  boolean      Fixed LANG/LC_ALL/TZ in a child. Default true.

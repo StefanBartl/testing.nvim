@@ -50,6 +50,7 @@ child editor after setup()) and, when a tracked run is given, which of them the 
   --ignore <lua-pattern>      leave the ids that match out of the ratio (repeatable)
   --baseline <file>           compare with a baseline: an entry that was exercised and is not now fails
   --fail-on-new               with --baseline: new entries that are not exercised fail as well
+  --fail-on-removed           with --baseline: an entry that was exercised and is gone from the surface fails
   --write-baseline <file>     write the baseline of this run (only when nothing failed)
   --json | --markdown         output format (default: a text table)
   --out <file>                also write the output to a file
@@ -158,7 +159,19 @@ end
 ---@field thresholds? Testing.Surface.CliThresholds From the command line.
 ---@field baseline? string|table A baseline file or an already parsed baseline.
 ---@field fail_on_new? boolean
+---@field fail_on_removed? boolean
 ---@field write_baseline? string
+
+---Write a file the way lib.nvim does (temp file, flush, rename): never half a file.
+---@param path string
+---@param text string
+---@return boolean ok
+local function atomic_write(path, text)
+  local ok, written = pcall(function()
+    return (require("lib.nvim.fs.write.atomic")(path, text))
+  end)
+  return ok and written == true
+end
 
 ---Build the report: surface, coverage (when hits are given), thresholds, baseline diff, exit code.
 ---@param root string
@@ -279,6 +292,21 @@ function M.report(root, opts)
     if #report.diff.regressions > 0 or (opts.fail_on_new and #report.diff.new_missing > 0) then
       failed = true
     end
+    if opts.fail_on_removed and #report.diff.removed > 0 then
+      failed = true
+      notes[#notes + 1] = ("baseline: %d entry(ies) that were exercised are gone from the surface (--fail-on-removed)"):format(
+        #report.diff.removed
+      )
+    end
+    -- a baseline is the bar the next run is measured against: say when the file is not what a run wrote
+    local base_state = coverage.baseline_state(base --[[@as table]])
+    if base_state == "edited" then
+      notes[#notes + 1] =
+        "baseline: its entries do not match its digest: edited by hand (or by another tool); the bar is what the file says now"
+    elseif base_state == "unsigned" then
+      notes[#notes + 1] =
+        "baseline: no digest (written by an older version or by hand): it cannot be told whether it was edited"
+    end
   end
   report.exit_code = failed and M.EXIT_FAILED or M.EXIT_OK
   if opts.write_baseline then
@@ -289,10 +317,9 @@ function M.report(root, opts)
       if not ok then
         ok, enc = pcall(vim.json.encode, coverage.baseline(cov))
       end
-      local f = ok and io.open(opts.write_baseline, "wb") or nil
-      if f then
-        f:write(enc, "\n")
-        f:close()
+      -- atomic: a baseline that is half written would lower the bar of every later run
+      local wrote = ok and atomic_write(opts.write_baseline, enc .. "\n")
+      if wrote then
         notes[#notes + 1] = "baseline written: " .. opts.write_baseline
       else
         report.error = "cannot write the baseline " .. tostring(opts.write_baseline)
@@ -327,6 +354,7 @@ end
 ---@field thresholds Testing.Surface.CliThresholds
 ---@field baseline? string
 ---@field fail_on_new boolean
+---@field fail_on_removed boolean
 ---@field write_baseline? string
 ---@field format "text"|"markdown"|"json"
 ---@field out? string
@@ -354,6 +382,7 @@ function M.parse_args(argv)
     ignore = {},
     thresholds = { kinds = {} },
     fail_on_new = false,
+    fail_on_removed = false,
     format = "text",
     help = false,
   }
@@ -384,6 +413,8 @@ function M.parse_args(argv)
       a.format = "markdown"
     elseif name == "--fail-on-new" then
       a.fail_on_new = true
+    elseif name == "--fail-on-removed" then
+      a.fail_on_removed = true
     elseif name == "--from" then
       v, err = value(name, inline)
       if not v then
@@ -500,6 +531,7 @@ function M.main(argv, services)
     thresholds = args.thresholds,
     baseline = args.baseline,
     fail_on_new = args.fail_on_new,
+    fail_on_removed = args.fail_on_removed,
     write_baseline = args.write_baseline,
   })
   if report.error and not report.surface then
@@ -511,11 +543,7 @@ function M.main(argv, services)
     text = text .. "testing surface: " .. tostring(report.error) .. "\n"
   end
   if args.out then
-    local f = io.open(args.out, "wb")
-    if f then
-      f:write(text)
-      f:close()
-    else
+    if not atomic_write(args.out, text) then
       text = text .. "testing surface: cannot write " .. args.out .. "\n"
       if report.exit_code == M.EXIT_OK then
         report.exit_code = M.EXIT_INFRA

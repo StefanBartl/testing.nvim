@@ -34,8 +34,9 @@
 ---                 "file" for busted files, "none" for the others;
 ---                 `M.isolated_for(config, dialect)` resolves it
 ---   soft_keep     modules ("name" or "prefix*") that "soft" never unloads
----   guards        { fs, state, scheduled_error, prompt, deprecation, process_net = "off"|"warn"|"error",
----                 clock = bool }: the guards (`testing.guard`; safety nets, not a sandbox)
+---   guards        { fs, state, scheduled_error, prompt, deprecation, process_net = "off"|"warn"|"error"
+---                 or a table { mode = ..., <tuning> } (see docs/GUARDS.md), clock = bool }: the guards
+---                 (`testing.guard`; safety nets, not a sandbox)
 ---   guard_allow   { fs, spawn, network = string[] }: what the guards let through
 ---   pool          { size = 0..256 (0 = jobs), reuse = bool }: the warm child pool
 ---   determinism   true (default): children start with a fixed LANG/LC_ALL and TZ
@@ -193,6 +194,111 @@ local function is_waiver(v)
     and (v.text == nil or type(v.text) == "string")
 end
 
+---Guard names that take a table (everything but `clock`) and the keys each accepts besides `mode`.
+---Every list is checked entry by entry (`is_allow_entry` or a Lua pattern).
+---@type table<string, table<string, "list"|"patterns"|"state_modes"|"notify"|"count">>
+local GUARD_KEYS = {
+  fs = {
+    allow = "list",
+    allow_patterns = "patterns",
+    ignore = "list",
+    ignore_patterns = "patterns",
+  },
+  state = {
+    categories = "state_modes",
+    keep = "list",
+    ignore_groups = "list",
+    ignore_vars = "list",
+    ignore_options = "list",
+    ignore_env = "list",
+    ignore_globals = "list",
+    ignore_highlights = "list",
+    ignore_usercmds = "list",
+    ignore_keymaps = "list",
+    max_per_category = "count",
+  },
+  scheduled_error = { allow_patterns = "patterns", notify = "notify" },
+  prompt = { getchar_wait_ms = "count" },
+  deprecation = {},
+  process_net = { allow_exec = "list", allow_hosts = "list" },
+}
+
+---Categories of the state guard (the guard layer's own list is the source of truth).
+---@return table<string, boolean>
+local function state_category_names()
+  local ok, gcfg = pcall(require, "testing.guard.config")
+  local out = {}
+  if ok and type(gcfg) == "table" and gcfg.DEFAULTS then
+    for cat in pairs(gcfg.DEFAULTS.guards.state.categories) do
+      out[cat] = true
+    end
+  end
+  return out
+end
+
+---@param kind string
+---@param v any
+---@return boolean
+local function guard_value_ok(kind, v)
+  if kind == "list" then
+    return list_of(is_allow_entry, 0)(v)
+  elseif kind == "patterns" then
+    return list_of(is_lua_pattern, 0)(v)
+  elseif kind == "notify" then
+    return v == "error" or v == "warn" or v == "info" or v == "off"
+  elseif kind == "count" then
+    return type(v) == "number" and v == math.floor(v) and v >= 0 and v <= 100000
+  elseif kind == "state_modes" then
+    if type(v) ~= "table" then
+      return false
+    end
+    local known = state_category_names()
+    for cat, mode in pairs(v) do
+      if
+        known[cat] ~= true
+        or not (mode == "error" or mode == "warn" or mode == "info" or mode == "off")
+      then
+        return false
+      end
+    end
+    return true
+  end
+  return false
+end
+
+---A guard section of `.testing.lua`: a bare mode (`state = "warn"`) or a table
+---`{ mode = "warn", <keys of GUARD_KEYS[name]> }`; no key may be unknown.
+---@param name string
+---@return Testing.Config.Leaf
+local function guard_section(name)
+  local keys = GUARD_KEYS[name]
+  local names = vim.tbl_keys(keys)
+  table.sort(names)
+  return {
+    check = function(v)
+      if is_guard_mode(v) then
+        return true
+      end
+      if type(v) ~= "table" then
+        return false
+      end
+      for k, val in pairs(v) do
+        if k == "mode" then
+          if not is_guard_mode(val) then
+            return false
+          end
+        elseif type(k) ~= "string" or keys[k] == nil or not guard_value_ok(keys[k], val) then
+          return false
+        end
+      end
+      return true
+    end,
+    expect = ('"off", "warn" or "error", or a table { mode = ..., %s }'):format(
+      #names > 0 and table.concat(names, ", ") .. " = ..." or "(no further keys)"
+    ),
+  }
+end
+
 ---Schema: a leaf (`check` + `expect`) or a group of named nodes. Keys of the file that the
 ---schema does not name are reported as unknown.
 ---@type table<string, table>
@@ -228,12 +334,12 @@ local SCHEMA = {
     expect = 'a list of module names, each optionally ending in "*" (e.g. { "my.plugin.cache", "my.shared*" })',
   },
   guards = {
-    fs = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
-    state = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
-    scheduled_error = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
-    prompt = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
-    deprecation = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
-    process_net = { check = is_guard_mode, expect = '"off", "warn" or "error"' },
+    fs = guard_section("fs"),
+    state = guard_section("state"),
+    scheduled_error = guard_section("scheduled_error"),
+    prompt = guard_section("prompt"),
+    deprecation = guard_section("deprecation"),
+    process_net = guard_section("process_net"),
     clock = { check = is_bool, expect = "true or false" },
   },
   guard_allow = {

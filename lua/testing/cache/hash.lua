@@ -33,6 +33,9 @@ M.MAX_FILE_BYTES = 16 * 1024 * 1024
 ---@type integer
 M.MAX_TREE_FILES = 5000
 
+---Most symlinked directories one tree digest follows (more: no digest, so no key).
+M.MAX_LINKS = 64
+
 ---@class Testing.Cache.IndexEntry
 ---@field m integer mtime seconds
 ---@field n integer mtime nanoseconds
@@ -244,11 +247,40 @@ function Hasher:tree(dir, opts)
   if vim.fn.isdirectory(dir) ~= 1 then
     return vim.fn.sha256("absent:" .. dir)
   end
-  local files = require("lib.nvim.fs.collect_recursive").files(dir, {
-    ignore = ignore_dirs and function(path, is_dir)
-      return is_dir and ignore_dirs[path:match("([^/]+)$") or ""] == true
-    end or nil,
-  })
+  -- The walker lists a symlinked directory but never enters it (a link can point at an ancestor): the links are
+  -- collected here (the callback sees every directory, so no per-file stat) and followed one by one, each real
+  -- directory once, so a fixture directory that is a link is part of the digest and a loop ends.
+  local collect = require("lib.nvim.fs.collect_recursive")
+  local uv = vim.uv
+  local links = {}
+  local function ignore(path, is_dir)
+    if not is_dir then
+      return false
+    end
+    if ignore_dirs and ignore_dirs[path:match("([^/]+)$") or ""] == true then
+      return true
+    end
+    local lst = uv.fs_lstat(path)
+    if lst and lst.type == "link" then
+      links[#links + 1] = path
+    end
+    return false
+  end
+  local files = collect.files(dir, { ignore = ignore })
+  local seen = { [uv.fs_realpath(dir) or dir] = true }
+  local followed = 0
+  while #links > 0 do
+    local link = table.remove(links, 1)
+    local real = uv.fs_realpath(link)
+    if real and not seen[real] then
+      seen[real] = true
+      followed = followed + 1
+      if followed > M.MAX_LINKS then
+        return nil, ("more than %d symlinked directories below %s"):format(M.MAX_LINKS, dir)
+      end
+      vim.list_extend(files, collect.files(link, { ignore = ignore }))
+    end
+  end
   local rels = {}
   for _, p in ipairs(files) do
     p = vim.fs.normalize(p)

@@ -80,7 +80,12 @@ A section is a table or a bare mode string (`fs = "off"`, `prompt = false`).
 (`testing.guard.install` takes all of these; `.testing.lua` and the flags reach the modes and
 `guard_allow` only, through `testing.run.options.guard_config`.)
 
-| Guard | Default mode | Fails the case by default |
+These are the defaults of the guard layer itself (`guard.install` called by a spec or a tool). **The runner
+(`testing`, `.testing.lua`) starts from its own, safer set** ([CONFIG.md](CONFIG.md)): `fs = "warn"`,
+`state = "warn"`, `process_net = "off"` (its ledger then says "not measured"), the rest as below. A project
+switches `process_net` on with `guards = { process_net = "warn" }` and lists what is expected.
+
+| Guard | Default mode (guard layer) | Fails the case by default |
 | --- | --- | --- |
 | `fs` | `error` | yes |
 | `state` | `error` (per category, see below) | yes (`options`, `vars`, `env`, `highlights`, `lua_globals`, `preload`, `channels` only warn; `modules` is info) |
@@ -89,6 +94,31 @@ A section is a table or a bare mode string (`fs = "off"`, `prompt = false`).
 | `deprecation` | `warn` | no, `error` under `strict` |
 | `process_net` | `error` | yes |
 | `clock` | `off` | never produces findings |
+
+### Tuning a guard in `.testing.lua`
+
+`guards.<name>` is a bare mode or a table `{ mode = ..., <key> = ... }`. The table form reaches the guard
+layer through `require("testing.run.options").guard_config`; lists add to the layer's own defaults (a
+project's `ignore_groups` does not drop the editor's `nvim.`), plain values replace them.
+
+| Guard | Keys besides `mode` |
+| --- | --- |
+| `fs` | `allow` (directories, added to `guard_allow.fs`), `allow_patterns`, `ignore`, `ignore_patterns` |
+| `state` | `categories` (`{ <category> = "error"|"warn"|"info"|"off" }`, capped at the guard's mode), `ignore_groups`, `ignore_vars`, `ignore_options`, `ignore_env`, `ignore_globals`, `ignore_highlights`, `ignore_usercmds`, `ignore_keymaps` (name or left-hand-side prefixes), `keep`, `max_per_category` |
+| `scheduled_error` | `allow_patterns`, `notify` |
+| `process_net` | `allow_exec`, `allow_hosts` (added to `guard_allow.spawn` / `.network`) |
+| `prompt` | `getchar_wait_ms` |
+
+`state.keep` is the short way to say "`setup()` leaves these on purpose": every name in it is ignored as an
+autocmd group, a user command and a keymap left-hand side (prefix match). A plugin whose `setup()`
+creates a hundred commands under one prefix needs one line instead of one per category:
+
+```lua
+guards = {
+  state = { mode = "warn", keep = { "MyPlugin" }, categories = { options = "off" } },
+  process_net = { mode = "warn", allow_exec = { "git" } },
+}
+```
 
 ## Findings
 
@@ -296,7 +326,7 @@ Every guard has RED scenarios (the guard must trigger and must name the problem)
 | --- | --- | --- |
 | in this editor (`isolated = "none"` / `"soft"`) | `testing.run.inproc` installs the layer once for the run (`guard_cfg`) | one per case |
 | a child editor per file | the job carries the configuration (`guard`), `testing.child.runner` installs it for the file and uninstalls it with the file; **the state guard is off** in a child that runs ONE case (a file of a one-case dialect, `isolated = "case"`): everything it leaves dies with the process, and naming it was 90 percent of the findings of some fleet runs. The cases say so (`state: leaks ... are not measured`). A busted file keeps it: its cases share the editor | one per case |
-| a `script` file | nothing: it is its own `nvim -l` process. Its case says `guards: not installed in a script file`; an empty list of findings or effects there is not a result | none |
+| a `script` file | its own `nvim -l` process, one window around the whole file (the state guard is off: the process ends with the file). The window closes and the findings are written when the script returns, raises or calls `os.exit`; a script that leaves the editor with `:cquit` / `:qa!` writes no record and its case says so (`guards: no record from this script file`): an empty list there is not a result | one for the file |
 | a warm pool member | the same runner, per file: patches never pile up in a member that runs many files | one per case |
 
 What the guards found travels back with the cases: `case.guards`, `case.effects`, and for findings that

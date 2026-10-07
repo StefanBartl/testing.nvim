@@ -434,6 +434,7 @@ end
 ---@field getenv? fun(name: string): string|nil Environment lookup (CI detection).
 ---@field run? function Git runner.
 ---@field provider? any Replaces `documentation.testing.affected_specs` (`false`: never ask).
+---@field cache_dir? string Replaces `stdpath("cache")` for the analysis index of the selection (the run passes its own `cache_dir`).
 
 ---@class Testing.Run.AffectedResult
 ---@field files Testing.Discover.File[] The selected files that are affected (order kept).
@@ -476,6 +477,9 @@ function M.select_affected(plan, all_files, files, over)
     getenv = over.getenv,
     run = over.run,
     provider = over.provider,
+    -- `--no-cache` means the whole cache directory, the analysis index (`index.json`) included
+    no_cache = plan.args.no_cache == true,
+    cache_dir = over.cache_dir,
   })
   local chosen = {}
   for _, rel in ipairs(r.files) do

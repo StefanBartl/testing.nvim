@@ -80,7 +80,7 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
 - **Guards** ([docs/GUARDS.md](docs/GUARDS.md)): safety nets, not a sandbox. They name what a spec
   leaves behind ("spec X leaves autocmd Y in group Z", a stub in `package.preload`, a running job), what
   it writes outside the run folder, an error in a scheduled callback, a prompt nobody answers, a
-  deprecation, and a process or connection (`process_net`, off by default). They run in this editor
+  deprecation, and a process or connection (`process_net`, off by default; `guards.<name>` also takes a table to tune a guard, see [docs/GUARDS.md](docs/GUARDS.md#tuning-a-guard-in-testinglua)). They run in this editor
   and in every child; findings are in the terminal report, JUnit, GitHub and the IR (`case.guards`,
   `case.effects`). This repository's own suite runs with every guard on `error`.
 - **The RPC child** ([docs/CHILD.md](docs/CHILD.md)): `testing.rpc` starts an embedded, headless,
@@ -139,7 +139,7 @@ Known limits, not hidden:
   lists, marks, highlight groups, `v:vim_did_enter` and state inside a C library they cannot. A child
   per file is the exact isolation.
 - The state guard has nothing to protect in a child that runs one case (it dies with its case) and is off
-  there; the cases say so. A `script` file runs without any guard, and says so as well.
+  there; the cases say so. A `script` file runs under the other guards (one window for the whole file); one that leaves the editor with `:cquit` / `:qa!` writes no record, and its case says so.
 - The result cache does not know what a spec reads from a path it builds at run time with no literal anywhere
   (declare it with `-- @cache-inputs` or opt out with `-- @cache off`), does not treat the clock or a process
   of a MODULE as a hidden input (the effects ledger refuses a file that really started one; a clock is not seen:
@@ -313,6 +313,15 @@ TESTING_CACHE_HOME=~/.cache/testing-nvim-tests scripts/test.sh --cached   # unch
 state directory. It exits `3` (and names the four places) when `nvim` or lib.nvim cannot be found.
 CI runs the same on three operating systems and uploads the JSON result and the JUnit report when
 it fails; a second job runs lib.nvim's whole suite, unchanged, through the runner.
+
+Formatting and lint are CI gates (`stylua --check .`, `luacheck lua TESTS scripts plugin`).
+`lua-language-server --check` is deliberately **not** a CI gate: a CI runner has no Neovim runtime
+types, so the check there reports every use of `vim` as an undefined global (about 3600 findings
+here), and handing it the runtime as `workspace.library` in `.luarc.json` would replace the editor's
+own library injection and make the local numbers and the CI numbers different measurements. With
+`vim` declared as a bare global it still reports about 100 findings that come from the missing `uv`
+and tree-sitter types (`uv.uv_pipe_t`, `TSNode`) and from the spec shims, not from the code. Run it
+locally, with the runtime your editor injects, as a measure before and after a change.
 
 ## License
 

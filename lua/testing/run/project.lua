@@ -459,8 +459,12 @@ function M.execute_run(plan, sv, run_opts, err)
   -- 3b. --changed / --since / --affected: only the specs the changes can reach (never the default in CI)
   local selection_label
   do
-    local sel, aerr =
-      require("testing.run.cached").select_affected(plan, ordered, files, sv.affected)
+    local sel, aerr = require("testing.run.cached").select_affected(
+      plan,
+      ordered,
+      files,
+      vim.tbl_extend("keep", sv.affected or {}, { cache_dir = sv.cache_dir })
+    )
     if aerr then
       err("testing: " .. aerr)
       return M.EXIT_USAGE

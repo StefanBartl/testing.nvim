@@ -268,6 +268,31 @@ return function(H)
   has_line(term.render(seeded), "seed: 7", "seed is printed")
   has_no_line(term.render(seeded), "reproduce", "no reproduce hint when green")
 
+  -- the effects ledger: one line per distinct process / connection with its call and case counts --------
+  do
+    local r = result.new({ id = "2026-10-05T10:00:00Z-0007" })
+    F.add(r, { file = "TESTS/a_spec.lua", name = "one", ms = 1 })
+    F.add(r, { file = "TESTS/b_spec.lua", name = "two", ms = 1 })
+    for _, c in ipairs(r.cases) do
+      c.effects = { spawned = {}, network = {}, fs_outside_tmp = {} }
+    end
+    r.cases[1].effects.spawned = { "git status (x3)", "nvim --version [blocked]" }
+    r.cases[2].effects.spawned = { "git status (x2)" }
+    r.cases[2].effects.network = { "example.com" }
+    local out = term.render(r)
+    has_line(
+      out,
+      "processes started: 6 call(s), 2 distinct",
+      "the spawn block counts calls and distinct entries"
+    )
+    has_line(out, "git status  x5 in 2 case(s)", "an entry seen in two cases is summed")
+    has_line(out, "nvim --version  x1 in 1 case(s) [blocked]", "a blocked entry says so")
+    has_line(out, "network connections: 1 call(s), 1 distinct", "the network block")
+    local quiet = result.new({ id = "2026-10-05T10:00:00Z-0008" })
+    F.add(quiet, { file = "TESTS/a_spec.lua", name = "one", ms = 1 })
+    has_no_line(term.render(quiet), "processes started", "no effects, no block")
+  end
+
   -- empty and determinism ----------------------------------------------------------------------------------
   local empty = term.render(result.new({ id = "2026-10-05T10:00:00Z-0006" }))
   eq(empty[#empty], "summary: 0 pass (0 case(s)) in 0.00 s", "an empty run renders")

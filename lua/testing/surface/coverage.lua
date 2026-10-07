@@ -614,6 +614,31 @@ end
 -- baseline
 -- ===========================================================
 
+---Digest of the entries of a baseline: `sha256` over the sorted `id=status` lines. A run writes it next to the
+---entries; a reader that finds a different one knows the file was edited since (by hand or by another tool).
+---@param entries table<string, string>
+---@return string
+function M.baseline_digest(entries)
+  local names = vim.tbl_keys(entries)
+  table.sort(names)
+  local lines = {}
+  for _, id in ipairs(names) do
+    lines[#lines + 1] = id .. "=" .. tostring(entries[id])
+  end
+  return vim.fn.sha256(table.concat(lines, "\n"))
+end
+
+---What a reader can say about a parsed baseline: `signed` (the digest matches the entries), `edited` (it does
+---not), `unsigned` (the file has no digest: an older version, or written by hand).
+---@param base table
+---@return "signed"|"edited"|"unsigned"
+function M.baseline_state(base)
+  if type(base.digest) ~= "string" then
+    return "unsigned"
+  end
+  return base.digest == M.baseline_digest(base.entries) and "signed" or "edited"
+end
+
 ---The baseline of a coverage: the status of every entry that counts.
 ---@param cov Testing.Surface.Coverage
 ---@return table
@@ -629,6 +654,7 @@ function M.baseline(cov)
     plugin = cov.plugin,
     ratio = cov.ratio,
     total = cov.total,
+    digest = M.baseline_digest(statuses),
     entries = statuses,
   }
 end

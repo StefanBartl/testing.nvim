@@ -31,6 +31,10 @@ if not lib then
   die(why or "testing: lib.nvim was not found")
   return -- not reached (`die` exits); tells the type checker that `lib` is set below
 end
+local too_old = deps.lib_problem(lib)
+if too_old then
+  die(too_old)
+end
 vim.opt.rtp:append(lib.dir)
 
 local ok_cli, cli = pcall(require, "testing.cli")

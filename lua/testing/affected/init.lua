@@ -139,6 +139,7 @@ end
 ---@field read? fun(path: string): string|nil, string|nil File reader of the heuristic (specs).
 ---@field analyze? fun(path: string): Testing.Scan.Info|nil Replaces the analysis cache of the heuristic (default: the hash index of `testing.cache`, so an unchanged file is not read again).
 ---@field cache_dir? string Replaces `stdpath('cache')` for that index (specs).
+---@field no_cache? boolean `--no-cache`: the analysis index on disk is neither read nor written (every file is read and analysed again).
 
 ---@class Testing.Affected.Result
 ---@field files string[] Selected specs, in the order of `opts.specs`.
@@ -348,7 +349,7 @@ function M.select(opts)
   local reason, source, graph = nil, "heuristic", nil
   local analyze = opts.analyze
   local cache_mod
-  if not analyze and not opts.read then
+  if not analyze and not opts.read and not opts.no_cache then
     local okc, mod = pcall(require, "testing.cache")
     if okc then
       cache_mod = mod

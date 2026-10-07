@@ -85,6 +85,7 @@ return function(H)
         '  vim.api.nvim_create_autocmd("BufEnter", { callback = function() end }) -- K2: no group',
         '  vim.keymap.set("n", "<leader>gz", function() end) -- K3 and K4: always bound, no desc',
         '  vim.deprecate("goodp.old()", "goodp.new()", "9.9.9", "goodp", false) -- K8',
+        '  vim.schedule(function() error("goodp scheduled boom") end) -- K8: a scheduled error',
         '  vim.system({ vim.v.progpath, "--version" }):wait() -- K9: a process',
         '  local src = debug.getinfo(1, "S").source:sub(2)',
         "  local root = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(src)))",
@@ -191,6 +192,7 @@ return function(H)
 
     -- K8: vim.deprecate
     expect(report, "K8", "goodp.old()", "K8 a deprecation message")
+    expect(report, "K8", "goodp scheduled boom", "K8 a scheduled error")
     eq(status(report, "K8"), "fail", "K8 fails")
 
     -- K9: a process and a write outside tmp

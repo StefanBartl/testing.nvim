@@ -96,43 +96,75 @@ function M.sanitize_plugin(name)
   return s
 end
 
----Names of the directories directly below `<root>/lua`.
+---Module roots directly below `<root>/lua`: directories, and single-file modules (`lua/x.lua`).
 ---@param root string
----@return string[]
-local function lua_dirs(root)
-  local dirs = {}
+---@return { name: string, entry: boolean }[] roots Sorted by name; `entry`: it has an entry module (`init.lua`, or the file itself).
+local function lua_roots(root)
+  local roots = {}
   local handle = vim.uv.fs_scandir(root .. "/lua")
   if not handle then
-    return dirs
+    return roots
   end
   while true do
     local name, kind = vim.uv.fs_scandir_next(handle)
     if not name then
       break
     end
-    if kind == "directory" and name:sub(1, 1) ~= "." then
-      dirs[#dirs + 1] = name
+    if name:sub(1, 1) ~= "." then
+      if kind == "directory" then
+        roots[#roots + 1] = {
+          name = name,
+          entry = vim.uv.fs_stat(root .. "/lua/" .. name .. "/init.lua") ~= nil,
+        }
+      elseif kind == "file" and name:match("%.lua$") then
+        roots[#roots + 1] = { name = name:gsub("%.lua$", ""), entry = true }
+      end
     end
   end
-  table.sort(dirs)
-  return dirs
+  table.sort(roots, function(x, y)
+    return x.name < y.name
+  end)
+  return roots
 end
 
----Plugin name of a repository: the Lua module root below `lua/` when it is unambiguous, else the
----directory name without `.nvim`. The result is sanitized.
+---A module name and a repository name are "the same" when they differ only in case and in `-` / `_`
+---(`buffer-ctx.nvim` ships `lua/buffer_ctx`).
+---@param s string
+---@return string
+local function loose(s)
+  return (s:lower():gsub("[%-_]", ""))
+end
+
+---Plugin name of a repository: the Lua module root below `lua/` (the only one, else the only one with an
+---entry module, else the one that matches the repository name), else the directory name without
+---`.nvim`. The repository name is a fallback, never a preference: a repository called `buffer-ctx.nvim`
+---whose module is `lua/buffer_ctx` is `buffer_ctx` (every conformance check is `n/a` under the wrong
+---name). The result is sanitized.
 ---@param root string
 ---@return string|nil name
 ---@return string|nil how "lua-dir" or "directory-name"
 function M.detect_plugin(root)
   local base = vim.fs.basename(root):gsub("%.nvim$", "")
-  local dirs = lua_dirs(root)
-  if #dirs == 1 then
-    return M.sanitize_plugin(dirs[1]), "lua-dir"
+  local roots = lua_roots(root)
+  if #roots == 1 then
+    return M.sanitize_plugin(roots[1].name), "lua-dir"
   end
-  for _, dir in ipairs(dirs) do
-    if dir:lower() == base:lower() then
-      return M.sanitize_plugin(dir), "lua-dir"
+  local with_entry = vim.tbl_filter(function(r)
+    return r.entry
+  end, roots)
+  -- the one that matches the repository name wins among several (any spelling of the separator)
+  for _, r in ipairs(roots) do
+    if r.name:lower() == base:lower() then
+      return M.sanitize_plugin(r.name), "lua-dir"
     end
+  end
+  for _, r in ipairs(roots) do
+    if loose(r.name) == loose(base) then
+      return M.sanitize_plugin(r.name), "lua-dir"
+    end
+  end
+  if #with_entry == 1 then
+    return M.sanitize_plugin(with_entry[1].name), "lua-dir"
   end
   return M.sanitize_plugin(base), "directory-name"
 end

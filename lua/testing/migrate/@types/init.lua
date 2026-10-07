@@ -98,6 +98,7 @@
 ---@field specs_total integer
 ---@field by_dialect table<string, integer>
 ---@field own_harness boolean
+---@field harness_path? string
 ---@field run_lua boolean
 ---@field sentinel? string
 ---@field plenary_lines integer Plenary lines the plan removes.

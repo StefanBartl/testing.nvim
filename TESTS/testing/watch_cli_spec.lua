@@ -204,6 +204,12 @@ return function(H)
     )
     eq(seen.changed, { "lua/m.lua" }, "and the changed files")
     eq(seen.implicit, false, "an explicit use")
+    eq(seen.no_cache, false, "the analysis index is allowed on disk by default")
+    watch.select_affected(root, cfg, { "lua/m.lua" }, {
+      affected = fake({ files = {}, all = false }),
+      no_cache = true,
+    })
+    eq(seen.no_cache, true, "--no-cache reaches the selection (the index stays off the disk)")
     files, note = watch.select_affected(root, cfg, { "lua/m.lua" }, {
       affected = fake({
         files = { "TESTS/a_spec.lua" },

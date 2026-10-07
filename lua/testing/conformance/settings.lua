@@ -16,7 +16,9 @@
 ---     gate = false,                                -- true: `testing conformance` exits 1 on a failed check
 ---     skip = { "K10" },                            -- check ids that do not run
 ---     waivers = {                                  -- a waiver MUST carry a reason
----       { check = "K4", file = "lua/x/maps.lua", rule = "REL-21", text = "plain text", reason = "why" },
+---       { check = "K4", file = "lua/x/maps.lua", rule = "REL-21", text = "plain text", reason = "why",
+---         level = "warn",                          -- optional: only findings of this level (an error is not waived)
+---         expires = "2027-01-31" },                -- optional: after this day the findings count again
 ---     },
 ---     keymaps_off = { keymaps = false },           -- what K3 passes to setup() on top of `setup`
 ---     timeout_ms = 20000,                          -- timeout of one call into the child editor
@@ -42,6 +44,25 @@ M.MAX_BYTES = 262144
 
 ---Shortest accepted waiver reason (characters, trimmed): "ok" is not a reason.
 M.MIN_REASON = 8
+
+---Levels a waiver can be limited to.
+---@type table<string, boolean>
+local LEVELS = { error = true, warn = true, info = true }
+
+---Is `s` a real calendar day written `YYYY-MM-DD`?
+---@param s any
+---@return boolean
+function M.valid_date(s)
+  if type(s) ~= "string" then
+    return false
+  end
+  local y, m, d = s:match("^(%d%d%d%d)-(%d%d)-(%d%d)$")
+  if not y then
+    return false
+  end
+  local t = os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
+  return t ~= nil and os.date("%Y-%m-%d", t) == s
+end
 
 ---Keys of `conformance` this module owns (the project loader's "unknown key" warnings for them are dropped).
 ---@type table<string, boolean>
@@ -142,6 +163,12 @@ function M.parse(raw, ids, budget)
               break
             end
           end
+          if ok and w.level ~= nil and not LEVELS[w.level] then
+            ok, why = false, 'level must be "error", "warn" or "info"'
+          end
+          if ok and w.expires ~= nil and not M.valid_date(w.expires) then
+            ok, why = false, 'expires must be a real calendar day written "YYYY-MM-DD"'
+          end
         end
         if ok then
           s.waivers[#s.waivers + 1] = {
@@ -150,6 +177,8 @@ function M.parse(raw, ids, budget)
             rule = w.rule,
             file = w.file and (w.file:gsub("\\", "/")) or nil,
             text = w.text,
+            level = w.level,
+            expires = w.expires,
           }
         else
           problems[#problems + 1] = ("%s is ignored: %s"):format(where, why)

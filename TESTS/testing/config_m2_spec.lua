@@ -115,7 +115,7 @@ return function(H)
     { { guards = { fs = true } }, "guards.fs" },
     { { guards = { state = 1 } }, "guards.state" },
     { { guards = { scheduled_error = "ERROR" } }, "guards.scheduled_error" },
-    { { guards = { prompt = {} } }, "guards.prompt" },
+    { { guards = { prompt = { nonsense = 1 } } }, "guards.prompt" },
     { { guards = { deprecation = "" } }, "guards.deprecation" },
     { { guards = { process_net = "block" } }, "guards.process_net" },
     { { guards = { clock = "on" } }, "guards.clock" },

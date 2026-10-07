@@ -98,6 +98,31 @@ local function resolve(fs, name, cache)
   return "ok"
 end
 
+---One cause, one finding: a module that loads another one shows the other one's problem too, so the same
+---missing dependency (or the same top-level side effect) would be reported once per module that loads it. The
+---first module that shows it carries the finding; the others are named in the message.
+---@class Testing.Conformance.K1.Group
+---@field modules string[]
+---@field rel? string
+---@field make fun(module: string, others: string): Testing.Conformance.Finding
+
+---@param modules string[]
+---@return string others "" or " (the same shows when requiring N other module(s): a, b, ...)"
+local function others_text(modules)
+  if #modules <= 1 then
+    return ""
+  end
+  local shown = {}
+  for i = 2, math.min(#modules, 4) do
+    shown[#shown + 1] = modules[i]
+  end
+  return (" (the same shows when requiring %d other module(s): %s%s)"):format(
+    #modules - 1,
+    table.concat(shown, ", "),
+    #modules > 4 and ", ..." or ""
+  )
+end
+
 ---The static half: case and in-tree resolution of every literal require.
 ---@param ctx Testing.Conformance.Ctx
 ---@return Testing.Conformance.Finding[]
@@ -193,23 +218,42 @@ function M.run(ctx)
   local own = common.owned(ctx)
   local foreign = {}
   local ok_count = 0
+  local rels = {}
+  for _, src in ipairs(ctx.sources("lua")) do
+    rels[#rels + 1] = src.rel
+  end
+  ---@type table<string, Testing.Conformance.K1.Group>
+  local groups, group_order = {}, {}
+  local function add_group(key, module, rel, make)
+    local g = groups[key]
+    if not g then
+      g = { modules = {}, rel = rel, make = make }
+      groups[key] = g
+      group_order[#group_order + 1] = key
+    end
+    g.modules[#g.modules + 1] = module
+  end
   for _, r in ipairs(data.results or {}) do
     local rel = ctx.module_file(r.module)
     if r.ok then
       ok_count = ok_count + 1
     else
-      local msg = util.relativize((tostring(r.err):match("^[^\n]*") or ""), ctx.root)
+      local msg =
+        util.uncut_paths(util.relativize((tostring(r.err):match("^[^\n]*") or ""), ctx.root), rels)
       if r.missing and r.missing ~= plugin and r.missing:sub(1, #plugin + 1) ~= plugin .. "." then
-        findings[#findings + 1] = util.finding(
-          "K1",
-          "XP-06",
-          "warn",
-          ("require(%q) needs module %q, which is not in this editor's minimal environment (declare it in `deps` of .testing.lua or guard it with pcall)"):format(
-            r.module,
-            r.missing
-          ),
-          rel
-        )
+        add_group("missing\0" .. r.missing, r.module, rel, function(module, others)
+          return util.finding(
+            "K1",
+            "XP-06",
+            "warn",
+            ("require(%q) needs module %q, which is not in this editor's minimal environment (declare it in `deps` of .testing.lua or guard it with pcall)%s"):format(
+              module,
+              r.missing,
+              others
+            ),
+            rel
+          )
+        end)
       else
         findings[#findings + 1] = util.finding(
           "K1",
@@ -262,18 +306,22 @@ function M.run(ctx)
         parts[#parts + 1] = fx.autocmds .. " autocmd(s)"
       end
       if #parts > 0 then
-        findings[#findings + 1] = util.finding(
-          "K1",
-          "NEW-47",
-          "warn",
-          ("requiring %q alone has a top-level side effect: %s"):format(
-            r.module,
-            table.concat(parts, "; ")
-          ),
-          rel
-        )
+        local effect = table.concat(parts, "; ")
+        add_group("effect\0" .. effect, r.module, rel, function(module, others)
+          return util.finding(
+            "K1",
+            "NEW-47",
+            "warn",
+            ("requiring %q alone has a top-level side effect: %s%s"):format(module, effect, others),
+            rel
+          )
+        end)
       end
     end
+  end
+  for _, key in ipairs(group_order) do
+    local g = groups[key]
+    findings[#findings + 1] = g.make(g.modules[1], others_text(g.modules))
   end
   local foreign_names = vim.tbl_keys(foreign)
   table.sort(foreign_names)

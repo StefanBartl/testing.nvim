@@ -1,17 +1,19 @@
 ---@module 'testing.conformance.checks.k08_deprecation'
----@brief K8: no `vim.deprecate` message while the plugin loads and sets up.
+---@brief K8: no `vim.deprecate` message and no scheduled error while the plugin loads and sets up.
 ---@description
 --- The deprecation guard (`testing.guard.deprecation`) is on in the child while `plugin/` is sourced, the
---- plugin is required and `setup()` runs once. Every `vim.deprecate` call it saw is a finding with the
---- message the editor would have shown the user.
+--- plugin is required and `setup()` runs twice. Every `vim.deprecate` call it saw is a finding with the
+--- message the editor would have shown the user. The scheduled-error guard of the same window adds the error of a
+--- `vim.schedule`/luv callback that the plugin started during load or `setup()`: the editor prints it and goes
+--- on, so a plugin that throws there looks healthy (`ERR-01`).
 
 local util = require("testing.conformance.util")
 local common = require("testing.conformance.checks.common")
 
 local M = {
   id = "K8",
-  title = "no vim.deprecate message on load and setup",
-  rules = { "DEP-01" },
+  title = "no vim.deprecate message and no scheduled error on load and setup",
+  rules = { "DEP-01", "ERR-01" },
   kind = "runtime",
   level = "error",
 }
@@ -36,6 +38,22 @@ function M.run(ctx)
     if f.guard == "deprecation" or tostring(f.id):sub(1, 12) == "deprecation." then
       findings[#findings + 1] =
         util.finding("K8", "DEP-01", "error", util.relativize(tostring(f.message), ctx.root))
+    end
+  end
+  for _, f in ipairs(data.guard and data.guard.findings or {}) do
+    local id = tostring(f.id)
+    if
+      id == "scheduled.schedule_callback"
+      or id == "scheduled.luv_callback"
+      or id == "scheduled.error_message"
+    then
+      findings[#findings + 1] = util.finding(
+        "K8",
+        "ERR-01",
+        "error",
+        "a scheduled callback raised while loading/setting up: "
+          .. util.relativize(tostring(f.message), ctx.root)
+      )
     end
   end
   return { findings = findings }

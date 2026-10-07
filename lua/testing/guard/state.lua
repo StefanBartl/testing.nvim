@@ -471,34 +471,53 @@ end
 
 function DIFF.usercmds(self, b, a, ctx)
   local items = {}
+  local ignore = self.cfg.ignore_usercmds or {}
   for _, it in ipairs(diff_map(b.global, a.global, eq_always)) do
-    it.scope = "global"
-    items[#items + 1] = it
+    if not has_prefix(it.key, ignore) then
+      it.scope = "global"
+      items[#items + 1] = it
+    end
   end
   for buf, cmds in pairs(a.buf) do
     if b.buf[buf] and not ctx.new_bufs[buf] then
       for _, it in ipairs(diff_map(b.buf[buf], cmds, eq_always)) do
-        it.scope = "buffer"
-        it.buf = buf
-        items[#items + 1] = it
+        if not has_prefix(it.key, ignore) then
+          it.scope = "buffer"
+          it.buf = buf
+          items[#items + 1] = it
+        end
       end
     end
   end
   return items
 end
 
+---Left-hand side of a keymap key (`<mode>` .. NUL .. `<lhs>`).
+---@param key string
+---@return string
+local function lhs_of(key)
+  local k = tostring(key)
+  local nul = k:find("\0", 1, true)
+  return nul and k:sub(nul + 1) or k
+end
+
 function DIFF.keymaps(self, b, a, ctx)
   local items = {}
+  local ignore = self.cfg.ignore_keymaps or {}
   for _, it in ipairs(diff_map(b.global, a.global, same_map)) do
-    it.scope = "global"
-    items[#items + 1] = it
+    if not has_prefix(lhs_of(it.key), ignore) then
+      it.scope = "global"
+      items[#items + 1] = it
+    end
   end
   for buf, maps in pairs(a.buf) do
     if b.buf[buf] and not ctx.new_bufs[buf] then
       for _, it in ipairs(diff_map(b.buf[buf], maps, same_map)) do
-        it.scope = "buffer"
-        it.buf = buf
-        items[#items + 1] = it
+        if not has_prefix(lhs_of(it.key), ignore) then
+          it.scope = "buffer"
+          it.buf = buf
+          items[#items + 1] = it
+        end
       end
     end
   end

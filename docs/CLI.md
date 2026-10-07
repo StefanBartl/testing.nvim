@@ -263,7 +263,10 @@ first and lets the loop turn once before it returns.
 
 Ctrl-C ends the watch cleanly: the handles are closed, running children are killed with their process trees
 (`testing.child.kill_all`, which covers warm pool members), and the **exit code is the one of the last completed
-run** (`0` when none finished). A run Ctrl-C cut short does not replace it. In-process runs forget the modules
+run** (`3` when none finished: Ctrl-C in the first run is an aborted run, never a green exit). A run Ctrl-C cut short
+does not replace it. A file that changes during three runs in a row (a spec that writes a Lua file below a watched
+root) is taken for a product of the run, not an edit: it is ignored from then on and the status line names it, so the
+watcher does not re-trigger itself for ever (restart `--watch` to watch it again). In-process runs forget the modules
 that were not loaded before the first run (except `testing*`, `lib.nvim*`, `lib.lua*`), so an edit to a plugin
 module is seen by the next run; child editors start fresh anyway. `--watch` cannot be combined with `--list`,
 `--shard` or `--profile`.

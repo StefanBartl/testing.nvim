@@ -2,7 +2,7 @@
 ---@brief K9: no write outside the temp directory, no process, no network while the plugin loads and sets up (SEC-22).
 ---@description
 --- The guards (`process_net`, `fs`) are on in the child, in observing mode, while `plugin/` is sourced,
---- the plugin is required and `setup()` runs once. What the effects ledger recorded is a finding:
+--- the plugin is required and `setup()` runs twice. What the effects ledger recorded is a finding:
 ---
 ---   * a process that was started (`vim.system`, `jobstart`, `io.popen`, ...: the redacted argv),
 ---   * a network connection (host),

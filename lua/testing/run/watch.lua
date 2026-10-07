@@ -57,6 +57,14 @@ M.IGNORE_DIRS = { ".git", ".deps", ".repro", "node_modules", ".cache" }
 ---Most changed paths named in a status line.
 M.MAX_NAMED = 5
 
+---A file that changes during this many runs in a row is taken to be written BY the run (a spec that writes a Lua
+---file below a watched root) and is ignored from then on: otherwise every run would start the next one.
+M.SELF_WRITE_LIMIT = 3
+
+---Exit code of a watcher that was ended before any run completed (Ctrl-C in the first run): an aborted run is
+---never a green exit.
+M.EXIT_NO_RUN = 3
+
 ---@class Testing.Watch.RunResult
 ---@field exit_code integer The exit code of the run (0 green, 1 red, 2 nothing to run, 3 infrastructure).
 ---@field failed? table<string, true> Files that are red after the run (rel); nil = derive nothing.
@@ -99,6 +107,9 @@ M.MAX_NAMED = 5
 ---@field stopped boolean
 ---@field runs integer
 ---@field last_exit integer Exit code of the last completed run.
+---@field completed integer Runs that completed (an interrupted run does not count).
+---@field writes table<string, integer> Path -> runs in a row during which it changed.
+---@field ignored table<string, true> Paths that changed during `SELF_WRITE_LIMIT` runs in a row.
 ---@field failed table<string, true>
 ---@field snapshot table<string, string>
 ---@field src? Testing.Watch.Source
@@ -122,6 +133,9 @@ function M.new(opts)
     stopped = false,
     runs = 0,
     last_exit = 0,
+    completed = 0,
+    writes = {},
+    ignored = {},
     failed = {},
     snapshot = {},
   }, Watch)
@@ -292,6 +306,7 @@ function Watch:execute(files, first)
   end
   if not res.interrupted then
     self.last_exit = res.exit_code
+    self.completed = self.completed + 1
     if files == nil then
       self.failed = {}
     else
@@ -306,6 +321,39 @@ function Watch:execute(files, first)
   return res
 end
 
+---Find the files that changed while the run was going and ignore the ones that do so run after run: a spec that
+---writes a Lua file below a watched root would otherwise re-trigger the watcher for ever. A person who saves the
+---same file during three runs in a row is taken for such a writer too (the status line names the file; ending and
+---restarting the watcher watches it again).
+---@param before table<string, string> The snapshot the run started from.
+function Watch:track_writes(before)
+  local o = self.opts
+  local ok, after = pcall(o.scan)
+  if not ok or type(after) ~= "table" then
+    return
+  end
+  local now = {}
+  for _, path in ipairs(M.diff(before, after)) do
+    now[path] = true
+    local n = (self.writes[path] or 0) + 1
+    self.writes[path] = n
+    if n >= M.SELF_WRITE_LIMIT and not self.ignored[path] then
+      self.ignored[path] = true
+      o.say(
+        ("watch: %s changed during %d runs in a row (written by a spec?); ignored from now on"):format(
+          M.rel_of(o.root, path),
+          n
+        )
+      )
+    end
+  end
+  for path in pairs(self.writes) do
+    if not now[path] then
+      self.writes[path] = nil
+    end
+  end
+end
+
 ---One cycle: diff the trees, decide, run. Returns true when something ran.
 ---@return boolean ran
 function Watch:cycle()
@@ -315,6 +363,11 @@ function Watch:cycle()
   local new = o.scan()
   local changed = M.diff(self.snapshot, new)
   self.snapshot = new
+  if next(self.ignored) ~= nil then
+    changed = vim.tbl_filter(function(p)
+      return not self.ignored[p]
+    end, changed)
+  end
   if self.src and self.src.resync then
     pcall(self.src.resync)
   end
@@ -339,6 +392,9 @@ function Watch:cycle()
     )
   )
   local res = self:execute(files, false)
+  if not res.interrupted then
+    self:track_writes(new)
+  end
   local bad = self:failed_list()
   o.say(
     ("watch: run %d finished (exit %d%s). %s"):format(
@@ -381,7 +437,11 @@ function Watch:start()
       o.debounce_ms
     )
   )
+  local before = self.snapshot
   local res = self:execute(nil, true)
+  if not res.interrupted then
+    self:track_writes(before)
+  end
   local bad = self:failed_list()
   o.say(
     ("watch: run 1 finished (exit %d%s). Waiting for changes (Ctrl-C quits)."):format(
@@ -414,6 +474,9 @@ function Watch:stop()
   pcall(kill)
   local wait = o.wait or vim.wait
   pcall(wait, 20)
+  if self.completed == 0 then
+    return M.EXIT_NO_RUN
+  end
   return self.last_exit
 end
 
@@ -421,7 +484,10 @@ end
 ---@return integer exit_code
 function Watch:stop_and_say()
   local code = self:stop()
-  self.opts.say(("watch: stopped; exit code %d (the last completed run)"):format(code))
+  self.opts.say(
+    self.completed == 0 and ("watch: stopped before a run completed; exit code %d"):format(code)
+      or ("watch: stopped; exit code %d (the last completed run)"):format(code)
+  )
   return code
 end
 
@@ -754,7 +820,7 @@ local leave_count = 0
 ---@param root string
 ---@param cfg Testing.ProjectConfig
 ---@param changed string[] Changed files, relative to the root.
----@param over? { affected?: table, discover?: table } Replaces the modules (specs).
+---@param over? { affected?: table, discover?: table, no_cache?: boolean } Replaces the modules (specs); `no_cache` keeps the analysis index off the disk.
 ---@return string[]|nil files nil = unknown: every spec runs
 ---@return string|nil note Why it is unknown.
 function M.select_affected(root, cfg, changed, over)
@@ -783,6 +849,7 @@ function M.select_affected(root, cfg, changed, over)
     changed = changed,
     implicit = false,
     roots = cfg.roots,
+    no_cache = over.no_cache == true,
   })
   if type(res) ~= "table" or type(res.files) ~= "table" then
     return nil, err and tostring(err) or "the affected-module gave no answer"
@@ -847,7 +914,7 @@ function M.run_cli(plan, sv, seams)
     end,
     is_spec = is_spec,
     select = function(changed)
-      return M.select_affected(root, cfg, changed)
+      return M.select_affected(root, cfg, changed, { no_cache = args.no_cache })
     end,
     run = function(files, ctx)
       if not ctx.first then

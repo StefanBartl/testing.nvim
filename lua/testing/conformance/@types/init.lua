@@ -74,6 +74,8 @@
 ---@field rule? string Only findings of this rule.
 ---@field file? string Only findings in this file (`dir/` = everything below it).
 ---@field text? string Only findings whose message contains this text (plain).
+---@field level? "error"|"warn"|"info" Only findings of this level (a waiver for a warning never hides an error).
+---@field expires? string `YYYY-MM-DD`: from the day after, the waiver no longer applies and says so.
 
 ---@class Testing.Conformance.Ctx
 ---@field root string Absolute, forward slashes.

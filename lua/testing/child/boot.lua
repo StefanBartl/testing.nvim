@@ -130,7 +130,48 @@ if job.kind == "script" then
   for i, a in ipairs(job.script_args or {}) do
     _G.arg[i] = a
   end
+  -- The guard layer around the script: ONE window for the whole file. A script ends its own process
+  -- (`os.exit`), so the window is closed and the findings are written (`script_guards` record of the
+  -- fragment) in an `os.exit` wrapper and on the normal and the error exit. A script that leaves the
+  -- editor another way (`:cquit`, `:qa!`) writes no record; the parent says so.
+  local flushed = false
+  local flush_guards = function() end
+  if type(job.guard) == "table" and type(job.fragment) == "string" then
+    -- everything the flush needs is loaded BEFORE the window opens (a `require` inside it would be seen)
+    local gmod_ok, guards_mod = pcall(require, "testing.run.guards")
+    local frag_ok, frag_mod = pcall(require, "testing.child.fragment")
+    if gmod_ok and frag_ok then
+      local gsession = guards_mod.install(job.guard)
+      if gsession.active then
+        gsession:open({ id = entry.rel, file = entry.rel }, { heavy = true })
+        flush_guards = function()
+          if flushed then
+            return
+          end
+          flushed = true
+          rawset(os, "exit", real_exit)
+          local findings, effects = gsession:close()
+          gsession:uninstall()
+          frag_mod.append(job.fragment, {
+            k = "script_guards",
+            findings = findings,
+            effects = effects,
+            notes = gsession.notes,
+            error = gsession.error,
+          })
+        end
+        rawset(os, "exit", function(...)
+          flush_guards()
+          return real_exit(...)
+        end)
+      elseif gsession.error then
+        io.stderr:write("testing child: ", gsession.error, "\n")
+      end
+    end
+  end
+
   local ok, err = xpcall(dofile, debug.traceback, entry.path)
+  flush_guards()
   if not ok then
     -- the very shape `nvim -l` prints for an uncaught error (testing.dialect.script reads it)
     io.stderr:write("E5113: Error while calling lua chunk: ", tostring(err), "\n")

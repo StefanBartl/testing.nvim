@@ -7,6 +7,7 @@
 ---   {"k":"progress","case":{...}}                      a case the moment it finished (may still change)
 ---   {"k":"case","case":{...Testing.Result.Case...}}     the FINAL cases, written when the file is over
 ---   {"k":"done","files_run":1,"files_unselected":0}      last line, written when the file is over
+---   {"k":"script_guards","findings":[...],"effects":{}}  a `script` file only: what the guards saw in the whole file
 ---
 --- Streaming (`progress` lines, one per case, not one document at the end) is what keeps the results of
 --- a file whose child is killed by the hard timeout: the cases that finished before the kill are not
@@ -53,6 +54,7 @@ end
 ---@field cases Testing.Result.Case[] The final cases, in file order.
 ---@field progress Testing.Result.Case[] The cases streamed while the file ran, in file order.
 ---@field done? table The `done` record, nil when the child never got that far.
+---@field script_guards? table The `script_guards` record of a `script` file: `{ findings, effects?, notes?, error? }` (what the guard layer saw in the whole file).
 ---@field list? table[] The `list` record of a listing child (`kind = "list"`): the `Testing.Inproc.ListItem`s.
 ---@field bad_lines integer Lines that were not valid JSON records (a torn last line counts).
 ---@field missing boolean The file does not exist.
@@ -90,6 +92,8 @@ function M.read(path)
       frag.progress[#frag.progress + 1] = rec.case
     elseif rec.k == "done" then
       frag.done = rec
+    elseif rec.k == "script_guards" and type(rec.findings) == "table" then
+      frag.script_guards = rec
     elseif rec.k == "list" and type(rec.items) == "table" then
       frag.list = rec.items
     else

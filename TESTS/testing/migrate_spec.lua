@@ -373,7 +373,8 @@ jobs:
     ["bash scripts/test.sh"] = "testsh",
     ["scripts/test.sh --file x"] = "testsh",
     ["./scripts/test.sh"] = "testsh",
-    ["nvim --headless -c \"lua dofile('scripts/ci/unit_tests.lua')\""] = "manual",
+    ["nvim --headless -c \"lua dofile('scripts/ci/unit_tests.lua')\""] = "legacy",
+    ["nvim --headless -c \"lua dofile('scripts/ci/release_check.lua')\""] = "manual",
     ["nvim --headless -l scripts/gen_map.lua"] = "other",
     ["luarocks install luacheck"] = "other",
     ["echo hello"] = "other",
@@ -461,6 +462,22 @@ jobs:
   eq(cfg.host, "c", "host")
   eq(cfg.assertions, nil, "no assertion policy is set: a run decides, the plan only hints")
   eq(cfg.timeouts, nil, "no case limit is set: a run decides, the plan only hints")
+  -- the plugin name is the module root below lua/, never the repository spelling
+  do
+    local root = tmp .. "/buffer-ctx.nvim"
+    write(root .. "/lua/buffer_ctx/init.lua", "return {}\n")
+    write(root .. "/lua/helper_x/util.lua", "return {}\n")
+    write(root .. "/TESTS/minimal_init.lua", "vim.opt.rtp:append('.')\n")
+    write(
+      root .. "/TESTS/x_spec.lua",
+      'describe("x", function() it("y", function() assert.is_true(true) end) end)\n'
+    )
+    local rep = migrate.analyze(root)
+    eq(rep.plugin, "buffer_ctx", "analysis: plugin = the module root, not the repository spelling")
+    local cfg2 =
+      assert(loadstring(op_by_path(migrate.plan(rep), ".testing.lua").after, "=.testing.lua"))()
+    eq(cfg2.plugin, "buffer_ctx", "the generated .testing.lua carries the module root")
+  end
   local hint_text = table.concat(plan.notes, "\n")
   has(hint_text, "`assertions` is not set", "the assertion policy is a hint")
   has(hint_text, "`timeouts` is not set", "the case limit is a hint")

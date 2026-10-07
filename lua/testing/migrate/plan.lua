@@ -687,6 +687,9 @@ function M.plan(report, opts)
       return text.read(report.root .. "/" .. rel)
     end,
     drop_plenary = not report.plenary.keep_ci,
+    sentinel = type(report.harness.sentinel) == "string" and report.harness.sentinel:match(
+      "^[%u%d_]+$"
+    ) and report.harness.sentinel or nil,
     fleet_deps = fleet_deps,
     is_self = report.is_self == true,
     owner = owner,
@@ -933,7 +936,8 @@ function M.summarize(report, plan)
   return {
     specs_total = report.specs.total,
     by_dialect = report.specs.by_dialect,
-    own_harness = report.harness.file ~= nil,
+    own_harness = report.harness.path ~= nil,
+    harness_path = report.harness.path,
     run_lua = report.harness.run_lua,
     sentinel = report.harness.sentinel,
     plenary_lines = plenary_lines,

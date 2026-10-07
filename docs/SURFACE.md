@@ -177,10 +177,14 @@ An IR of a run that was **not tracked** (no `cases[].surface` anywhere) measured
 
 `--write-baseline FILE` writes the status of every counted entry (only when nothing failed).
 `--baseline FILE` fails when an entry that was `hit` in the baseline is not now (a regression), and with
-`--fail-on-new` also when a new entry is not exercised. Entries removed from the surface are listed, not
-failed. New exercised entries and entries that are exercised now are listed as well.
+`--fail-on-new` also when a new entry is not exercised, and with `--fail-on-removed` also when an entry that was
+exercised is gone from the surface (without it a vanished entry is only listed: renaming a command is not a
+regression, deleting its only test coverage by deleting the command may be). A baseline carries a `digest` of its
+entries: a run that finds the entries edited since (by hand, or by another tool: the bar then is whatever the file
+says) names that in a note, and so does a baseline without a digest (written by an older version). New exercised entries and entries that are exercised now are listed as well.
 
-Output: a text table (default), `--markdown`, `--json`; `--out FILE` also writes it. Text from the plugin
+Output: a text table (default), `--markdown`, `--json`; `--out FILE` also writes it (atomically, like the
+baseline: a crash leaves the old file or the new one, never half of it). Text from the plugin
 (names, descriptions, paths) is scrubbed of control characters and bidi overrides.
 
 ## Honest limits

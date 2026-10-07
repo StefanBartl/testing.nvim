@@ -1,8 +1,8 @@
 -- TESTS/testing/child_guards_m2_spec.lua -- what the fleet runs of milestone M2 showed about the guards in a child
 -- editor per file, with real children: the child's own sandbox is not "outside", a one-case child is
 -- thrown away with its case (the state guard says it does not measure, instead of naming what dies with
--- the process), a busted child keeps the state guard between its cases, and a `script` file says that no
--- guard ran in it.
+-- the process), a busted child keeps the state guard between its cases, and a `script` file runs under the
+-- guards too (one window for the whole file; a script that leaves the editor another way says nothing ran).
 
 return function(H)
   local ok = H.ok
@@ -119,18 +119,44 @@ end)
     ok(named, "busted in a child: the global that leaks into the next case is named")
   end
 
-  -- 4. a script runs in its own process: no guard, and the case says so (an empty list is not a result)
+  -- 4. a script runs in its own process, under the guards: a quiet one is measured (no "not installed"
+  -- note), a write outside the allowed roots is named, also when the script ends with os.exit
   do
     local root = S.new_root()
     local rep = run(root, {
       ["TESTS/s_spec.lua"] = 'print("hello from a script")\n',
-    }, { "TESTS/s_spec.lua" }, "script")
+      ["TESTS/w_spec.lua"] = ('local f = assert(io.open(%q, "w"))\nf:write("x")\nf:close()\nos.exit(0)\n'):format(
+        root .. "/leaked-by-script.txt"
+      ),
+    }, { "TESTS/s_spec.lua", "TESTS/w_spec.lua" }, "script")
     local c = S.case_of(rep, "TESTS/s_spec.lua")
     eq(c.status, "pass", "the script ran")
+    eq(ids(c), {}, "a quiet script has no finding: " .. vim.inspect(c.guards))
+    ok(
+      not table.concat(c.notes, "\n"):find("no record from this `script` file", 1, true),
+      "a measured script carries no 'not measured' note: " .. vim.inspect(c.notes)
+    )
+    local w = S.case_of(rep, "TESTS/w_spec.lua")
+    local named = false
+    for _, g in ipairs(w.guards or {}) do
+      if g.id == "fs.write_outside" and g.message:find("leaked-by-script.txt", 1, true) then
+        named = true
+      end
+    end
+    ok(named, "the write of a script that ends with os.exit is named: " .. vim.inspect(w.guards))
+  end
+
+  -- 4b. a script that ends the editor without returning or os.exit writes no record: the case says so
+  do
+    local root = S.new_root()
+    local rep = run(root, {
+      ["TESTS/q_spec.lua"] = 'print("bye")\nvim.cmd("qa!")\n',
+    }, { "TESTS/q_spec.lua" }, "script")
+    local c = S.case_of(rep, "TESTS/q_spec.lua")
     has(
       table.concat(c.notes, "\n"),
-      "guards: not installed in a `script` file",
-      "its case says that no guard was measuring it"
+      "no record from this `script` file",
+      "its case says that nothing was measured"
     )
   end
 

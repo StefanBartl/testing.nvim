@@ -212,6 +212,9 @@ local function matches(w, f)
   if w.rule and w.rule ~= f.rule then
     return false
   end
+  if w.level and w.level ~= f.level then
+    return false
+  end
   if w.file then
     local file = f.file or ""
     if w.file:sub(-1) == "/" then
@@ -231,16 +234,24 @@ end
 ---Apply the waivers to the findings of the check results (in place).
 ---@param results Testing.Conformance.CheckResult[]
 ---@param waivers Testing.Conformance.Waiver[]
----@return string[] stale Waivers that matched nothing.
-function M.apply_waivers(results, waivers)
-  local used = {}
+---@param now? integer Unix time (specs); the day of `expires` is compared with today's date.
+---@return string[] stale Waivers that matched nothing, expired ones, and unscoped ones that hide errors.
+function M.apply_waivers(results, waivers, now)
+  local used, hidden_errors, expired = {}, {}, {}
+  local today = os.date("%Y-%m-%d", now or os.time()) --[[@as string]]
+  for i, w in ipairs(waivers) do
+    expired[i] = w.expires ~= nil and w.expires < today
+  end
   for _, res in ipairs(results) do
     for _, f in ipairs(res.findings) do
       for i, w in ipairs(waivers) do
-        if matches(w, f) then
+        if not expired[i] and matches(w, f) then
           f.waived = true
           f.waiver_reason = w.reason
           used[i] = true
+          if f.level == "error" then
+            hidden_errors[i] = (hidden_errors[i] or 0) + 1
+          end
           break
         end
       end
@@ -248,7 +259,22 @@ function M.apply_waivers(results, waivers)
   end
   local stale = {}
   for i, w in ipairs(waivers) do
-    if not used[i] then
+    if expired[i] then
+      stale[#stale + 1] = ("waiver %d (check %s%s%s) expired on %s: its findings count again; renew or remove it"):format(
+        i,
+        w.check,
+        w.rule and (", rule " .. w.rule) or "",
+        w.file and (", file " .. w.file) or "",
+        w.expires
+      )
+    elseif hidden_errors[i] and not (w.rule or w.file or w.text or w.level) then
+      stale[#stale + 1] = ("waiver %d (check %s) has no rule, file, text or level and hides %d error finding(s): narrow it"):format(
+        i,
+        w.check,
+        hidden_errors[i]
+      )
+    end
+    if not used[i] and not expired[i] then
       stale[#stale + 1] = ("waiver %d (check %s%s%s) matched no finding: remove it"):format(
         i,
         w.check,

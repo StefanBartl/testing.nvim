@@ -24,6 +24,7 @@ local M = {}
 ---@class Testing.Deps.Opts
 ---@field getenv? fun(name: string): string|nil Environment lookup (default `vim.uv.os_getenv`).
 ---@field data_dir? string Replaces `stdpath('data')` (specs).
+---@field fallback? string|false Extra base searched (places 2 and 3 only) when the project's own base has none: `resolve_all` uses the runner's checkout by default (`false`: none), so a project checked out where its siblings are not (a worktree, a temp copy) still finds the checkouts beside the runner.
 ---@field marker? string Path below the checkout that must exist (default: `lua/lib/nvim` for lib.nvim, `lua/testing` for testing.nvim, else `lua`).
 
 ---@class Testing.Deps.Location
@@ -170,7 +171,10 @@ function M.resolve(name, base, opts)
   return nil, M.format_failure(name, locs)
 end
 
----Resolve several dependencies; never stops at the first failure so that one run reports all.
+---Resolve several dependencies; never stops at the first failure so that one run reports all. A name the
+---project's own base does not have is looked up beside the runner's checkout too (`opts.fallback`), so
+---`testing <other repo>` needs no `$<NAME>_DIR` for a sibling of the runner; the override and the
+---failure message stay those of the project's base.
 ---@param names string[]
 ---@param base string
 ---@param opts? Testing.Deps.Opts
@@ -178,8 +182,23 @@ end
 ---@return string[] failures One `format_failure` message per dependency that was not found.
 function M.resolve_all(names, base, opts)
   local resolved, failures = {}, {}
+  local fallback = opts and opts.fallback
+  if fallback == nil then
+    fallback = M.self_dir()
+  end
   for _, name in ipairs(names) do
     local r, msg = M.resolve(name, base, opts)
+    if not r and fallback and norm(fallback) ~= norm(base) then
+      -- only a plain "not found": an override that is set but invalid is never skipped
+      local locs = M.locations(name, base, opts)
+      if locs[1].status == "unset" then
+        local alt = M.resolve(name, fallback, opts)
+        if alt then
+          alt.source = alt.source .. " (beside the runner)"
+          r = alt
+        end
+      end
+    end
     if r then
       resolved[#resolved + 1] = r
     else
@@ -187,6 +206,53 @@ function M.resolve_all(names, base, opts)
     end
   end
   return resolved, failures
+end
+
+---What the runner needs from lib.nvim that older checkouts lack: the module (path below `lua/`, without
+---`.lua`), what it is for and the lib.nvim commit that added it.
+---@type { module: string, what: string, commit: string }[]
+M.LIB_REQUIRED = {
+  {
+    module = "lib/nvim/fs/write/atomic",
+    what = "fs.write.atomic (the JSON IR, the cache, the baselines)",
+    commit = "6304829",
+  },
+}
+
+---Is the lib.nvim checkout `dir` too old for this runner? A stale copy that comes first in the search
+---order (`.deps/lib.nvim` left over from an earlier CI run) would otherwise end in a raw "module not found"
+---deep inside a run; this names the checkout, what is missing and the commit that has it.
+---@param resolved Testing.Deps.Resolved The result of `resolve("lib.nvim", ...)`.
+---@return string|nil message nil when the checkout has everything.
+function M.lib_problem(resolved)
+  local missing = {}
+  for _, req in ipairs(M.LIB_REQUIRED) do
+    local base = resolved.dir .. "/lua/" .. req.module
+    if
+      vim.fn.filereadable(base .. ".lua") ~= 1 and vim.fn.filereadable(base .. "/init.lua") ~= 1
+    then
+      missing[#missing + 1] = ("%s (lib.nvim >= %s)"):format(req.what, req.commit)
+    end
+  end
+  if #missing == 0 then
+    return nil
+  end
+  local lines = {
+    ("testing: the lib.nvim at %s (found via %s) is too old: it lacks %s."):format(
+      resolved.dir,
+      resolved.source,
+      table.concat(missing, ", ")
+    ),
+    "Update that checkout (git pull), or remove it so that a newer one is found. Places, in order:",
+  }
+  for i, loc in ipairs(resolved.locations or {}) do
+    lines[#lines + 1] = ("  %d. %s%s"):format(
+      i,
+      loc.label,
+      loc.path and (" (" .. loc.path .. ")") or ""
+    )
+  end
+  return table.concat(lines, "\n")
 end
 
 ---Checkout of testing.nvim that this very file belongs to.

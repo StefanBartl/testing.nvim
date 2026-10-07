@@ -294,6 +294,22 @@ return function(H)
     "regular file",
     "a directory"
   )
+  -- ... and a put of that key replaces the directory instead of failing for good
+  eq(select(1, put(kdir)), true, "a directory in place of the entry does not block the key")
+  eq(
+    select(1, cache.get(kdir, vim.tbl_extend("force", o, { file = FILE }))) ~= nil,
+    true,
+    "and the entry is a hit afterwards"
+  )
+  -- `clear` removes such a directory too
+  local kdir2 = key(43)
+  vim.fn.mkdir(store.entry_path(sdir, kdir2) .. "/inner", "p")
+  store.clear(sdir)
+  eq(
+    vim.uv.fs_stat(store.entry_path(sdir, kdir2)),
+    nil,
+    "clear removes a directory named like an entry"
+  )
   -- a key that is no key never touches the file system
   eq(select(1, cache.get("../../etc/passwd", o)), nil, "a path as a key")
 
@@ -509,6 +525,31 @@ return function(H)
   local entries_tbl = hx5.entries
   hx5:clear()
   ok(entries_tbl == hx5.entries and next(entries_tbl) == nil, "hasher clear is in place")
+
+  -- a symlinked fixture directory is part of the tree digest (the walker lists a link but never enters it)
+  do
+    local tdir = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(tdir .. "/real/sub", "p")
+    vim.fn.mkdir(tdir .. "/tree", "p")
+    S.write(tdir .. "/real/sub/a.txt", "one", false)
+    S.write(tdir .. "/tree/plain.txt", "plain", false)
+    local linked =
+      vim.uv.fs_symlink(tdir .. "/real", tdir .. "/tree/link", { dir = true, junction = true })
+    if linked then
+      local d1 = hash.new(nil):tree(tdir .. "/tree")
+      S.write(tdir .. "/real/sub/a.txt", "two", false)
+      local d2 = hash.new(nil):tree(tdir .. "/tree")
+      ok(
+        d1 ~= nil and d2 ~= nil and d1 ~= d2,
+        "a file below a symlinked directory changes the digest"
+      )
+      -- a link that points back at an ancestor ends (each real directory is followed once)
+      vim.uv.fs_symlink(tdir .. "/tree", tdir .. "/tree/real/loop", { dir = true, junction = true })
+      local d3 = hash.new(nil):tree(tdir .. "/tree")
+      ok(type(d3) == "string", "a symlink loop does not hang the digest")
+    end
+    S.remove(tdir)
+  end
 
   cache.reset()
   S.remove(root)

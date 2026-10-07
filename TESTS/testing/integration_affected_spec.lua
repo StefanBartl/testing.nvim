@@ -235,6 +235,23 @@ return function(H)
     "but warns that the full run is the one to prefer in CI"
   )
 
+  -- ---------------------------------------------------------------- --no-cache: the analysis index stays off the disk
+  vim.fn.delete(tmp .. "/cache", "rf")
+  local plain = run(root, { "--changed", "--no-cache" })
+  eq(plain.code, 0, "--changed --no-cache: " .. plain.err)
+  eq(
+    #vim.fn.globpath(tmp .. "/cache", "**/index.json", false, true),
+    0,
+    "--no-cache writes no index.json (the selection reads every file it needs)"
+  )
+  local with_index = run(root, { "--changed" })
+  eq(with_index.code, 0, "--changed: " .. with_index.err)
+  eq(
+    #vim.fn.globpath(tmp .. "/cache", "**/index.json", false, true),
+    1,
+    "without --no-cache the index is written (the check above is not blind)"
+  )
+
   -- ---------------------------------------------------------------- the listing shows the selection
   local listed = run(root, { "--changed", "--list" })
   eq(listed.code, 0, "--changed --list\n" .. listed.err)

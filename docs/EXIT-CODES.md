@@ -15,6 +15,8 @@ Rules behind the numbers:
 * **Never a green exit after an aborted run.** A spec that calls `os.exit` is refused (that file
   becomes an `error` case and the run goes on); quitting the editor (`:qa!`, `:cquit`) ends with `3`
   and the message "run did not complete".
+* **`--watch` ends with the code of the last COMPLETED run**; Ctrl-C before any run completed is `3` (an aborted
+  run, never `0`).
 * **Never a silent ignore.** An option that is parsed but not implemented is refused with `2`, never
   accepted and dropped: a run that dropped `--filter` would be a green verdict about something else.
   (Every option of `--help` is implemented today; `init` on the command line is the exception, see

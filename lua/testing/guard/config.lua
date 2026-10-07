@@ -88,6 +88,9 @@ M.DEFAULTS = {
       ignore_env = {},
       ignore_globals = {},
       ignore_highlights = {},
+      -- User command names and keymap left-hand sides (prefix match) a plugin's `setup()` leaves on purpose.
+      ignore_usercmds = {},
+      ignore_keymaps = {},
       -- At most this many named findings per category and case; the rest is summarized.
       max_per_category = 20,
       max_buffers_scanned = 50,
@@ -174,7 +177,22 @@ function M.normalize(cfg)
       )
       sec.mode = M.DEFAULTS.guards[name].mode
     end
-    for _, key in ipairs({ "allow", "allow_patterns", "allow_exec", "allow_hosts", "ignore" }) do
+    for _, key in ipairs({
+      "allow",
+      "allow_patterns",
+      "allow_exec",
+      "allow_hosts",
+      "ignore",
+      "ignore_patterns",
+      "ignore_groups",
+      "ignore_vars",
+      "ignore_options",
+      "ignore_env",
+      "ignore_globals",
+      "ignore_highlights",
+      "ignore_usercmds",
+      "ignore_keymaps",
+    }) do
       if
         sec[key] ~= nil
         and not is_list(sec[key])

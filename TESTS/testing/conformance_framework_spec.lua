@@ -188,6 +188,69 @@ return function(H)
     end
     ok(waived_cdx, "a file ending with a slash waives everything below it")
 
+    -- a waiver limited to a level never hides a finding of another level
+    S.write(
+      f .. "/.testing.lua",
+      'return { plugin = "goodp", conformance = { waivers = { { check = "K15", level = "warn", reason = "only the warnings are accepted" } } } }'
+    )
+    report = conformance.run(f, { only = { "K15" }, probe = probe })
+    local k15w = S.check(report, "K15")
+    eq(k15w.status, "fail", "the error is still open when only warnings are waived")
+    for _, finding in ipairs(k15w.findings) do
+      eq(
+        finding.waived == true,
+        finding.level == "warn",
+        "only the warning is waived: " .. finding.message
+      )
+    end
+    ok(
+      not table.concat(report.problems, " | "):find("hides", 1, true),
+      "a waiver with a level is scoped: it is not named as too wide"
+    )
+
+    -- an unscoped waiver that hides an error is named
+    S.write(
+      f .. "/.testing.lua",
+      'return { plugin = "goodp", conformance = { waivers = { { check = "K15", reason = "everything of K15 is accepted" } } } }'
+    )
+    report = conformance.run(f, { only = { "K15" }, probe = probe })
+    has(
+      table.concat(report.problems, " | "),
+      "hides 1 error finding(s)",
+      "an unscoped waiver says it hides an error"
+    )
+
+    -- an expired waiver no longer applies and says so; a future one does; a bad date is refused
+    local function with_expiry(day)
+      S.write(
+        f .. "/.testing.lua",
+        ('return { plugin = "goodp", conformance = { waivers = { { check = "K15", rule = "NEW-06", expires = %q, reason = "the license lives in the parent" } } } }'):format(
+          day
+        )
+      )
+      return conformance.run(f, { only = { "K15" }, probe = probe })
+    end
+    report = with_expiry("2020-01-31")
+    eq(S.check(report, "K15").status, "fail", "an expired waiver hides nothing")
+    has(table.concat(report.problems, " | "), "expired on 2020-01-31", "and says that it expired")
+    report = with_expiry("2999-12-31")
+    local open_errors = 0
+    for _, finding in ipairs(S.check(report, "K15").findings) do
+      if finding.rule == "NEW-06" and not finding.waived then
+        open_errors = open_errors + 1
+      end
+    end
+    eq(open_errors, 0, "a waiver that has not expired applies")
+    report = with_expiry("2027-02-30")
+    has(
+      table.concat(report.problems, " | "),
+      "expires must be",
+      "a day that does not exist is refused"
+    )
+    eq(settings.valid_date("2028-02-29"), true, "a leap day is a day")
+    eq(settings.valid_date("2027-02-29"), false, "and not in a year that has none")
+    eq(settings.valid_date("27-1-1"), false, "the format is YYYY-MM-DD")
+
     -- ===================================================================
     -- 3. skipping
     report = conformance.run(
