@@ -74,6 +74,7 @@ M.OWN_ARGS = { migrate = true, conformance = true, surface = true }
 ---@field project Testing.ProjectConfig
 ---@field rtp_dirs string[] Absolute `--rtp` directories.
 ---@field argv string[] The effective arguments (stored in the IR header).
+---@field stamp? table The own flags of `testing stamp` (`--out`, `--note`): the run writes a stamp after a complete green verdict.
 
 ---Parse; kept as a delegate for callers of the M0 API.
 ---@param argv string[]
@@ -455,6 +456,16 @@ local function execute(argv, sv)
   if argv[1] == "explain" then
     argv, explain_own = require("testing.explain").split_argv(argv)
   end
+  -- `testing verify` and `testing stamp`: their own flags (--stamp, --out, --json, ...) are taken out as well
+  local stamp_own
+  if argv[1] == "verify" or argv[1] == "stamp" then
+    local bad
+    argv, stamp_own, bad = require("testing.stamp.cli").split_argv(argv)
+    if bad then
+      err("testing: " .. bad)
+      return M.EXIT_USAGE
+    end
+  end
 
   local args, problem = args_mod.parse(argv)
   if not args then
@@ -493,7 +504,25 @@ local function execute(argv, sv)
     err("testing: `init` is not implemented yet")
     return M.EXIT_USAGE
   end
-  if (args.command == "budget" or args.command == "explain") and not args.root then
+  if stamp_own and stamp_own.command == "stamp" then
+    local write = require("testing.stamp.write")
+    local refused = write.refuse(args)
+    if refused then
+      err("testing: " .. refused)
+      return M.EXIT_USAGE
+    end
+    local _, secret_problem = write.secret(
+      (sv --[[@as table]]).stamp and (sv --[[@as table]]).stamp.getenv or vim.uv.os_getenv
+    )
+    if secret_problem then
+      err("testing: stamp: " .. secret_problem)
+      return M.EXIT_USAGE
+    end
+  end
+  if
+    (args.command == "budget" or args.command == "explain" or args.command == "verify")
+    and not args.root
+  then
     args.root = "."
   end
   if args.command == "explain" and args.root ~= "." and vim.fn.isdirectory(abs(args.root)) ~= 1 then
@@ -548,6 +577,19 @@ local function execute(argv, sv)
     argv = clean_argv(argv),
   }
 
+  -- where the result cache lives: `--cache-dir`, else `TESTING_CACHE_HOME` (read by the entry script and handed
+  -- down in `env`), else `stdpath('cache')`; and the folder name, `cache.project_key` or the checkout path
+  if args.cache_dir then
+    sv.cache_dir = abs(args.cache_dir)
+  elseif not sv.cache_dir then
+    local home = sv.env and sv.env.TESTING_CACHE_HOME
+    if home and home ~= "" then
+      sv.cache_dir = abs(home)
+    end
+  end
+  require("testing.cache.store").project_key = plan.project.cache and plan.project.cache.project_key
+    or nil
+
   if args.cache_clear then
     local cache = require("testing.cache")
     local dir = cache.stats({ root = root, cache_dir = sv.cache_dir }).dir
@@ -594,6 +636,12 @@ local function execute(argv, sv)
 
   if args.command == "explain" then
     return require("testing.explain").main(plan, sv, explain_own)
+  end
+  if args.command == "verify" then
+    return require("testing.stamp.verify").main(plan, sv, stamp_own)
+  end
+  if stamp_own and stamp_own.command == "stamp" then
+    plan.stamp = stamp_own
   end
   if args.watch then
     return require("testing.run.watch").run_cli(plan, sv, (sv --[[@as table]]).watch)

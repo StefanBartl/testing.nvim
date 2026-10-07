@@ -2,6 +2,9 @@
 -- it, an unrelated edit does not, and a spec whose inputs cannot be known has no key at all
 -- (never trust a cached pass when the inputs are incomplete).
 
+-- @cache-allow env
+-- @cache-env TN_CI_PROBE
+-- (hands the real environment to the key code to look up one variable it sets itself: the variable joins the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)
@@ -59,6 +62,22 @@ return function(H)
   has(joined, "runner runner-1", "runner version is a part")
   has(joined, "nvim 0.12.0-test", "nvim version is a part")
   has(joined, "dep lua/proj/b.lua=", "the transitive dependency is a part")
+
+  -- the real Neovim part of the key (no `nvim` override) names the API level, never the string of a nil
+  do
+    local _, _, real_parts = key_of(A, { nvim = false })
+    local nvim_line
+    for _, l in ipairs(real_parts or {}) do
+      nvim_line = nvim_line or l:match("^nvim (.*)$")
+    end
+    ok(nvim_line ~= nil, "a real nvim line is part of the key")
+    local level = vim.fn.api_info().version.api_level
+    ok(
+      type(nvim_line) == "string" and not nvim_line:find("nil", 1, true),
+      "the nvim line holds no nil: " .. tostring(nvim_line)
+    )
+    has(nvim_line, "|api" .. tostring(level) .. "|", "the nvim line names the API level")
+  end
 
   -- ---------------------------------------------------------------- each input changes the key
   local function differs(label, k)

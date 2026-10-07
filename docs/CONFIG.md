@@ -79,6 +79,7 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `surface.kinds` | list of `binding`, `command`, `autocmd`, `api` | `{ "binding", "command", "autocmd" }` | The kinds counted in the ratio. |
 | `surface.ignore` | list of Lua patterns | `{}` | Entry ids that are not counted. |
 | `surface.setup_chunk` | string | absent | Lua code the surface is read after. |
+| `cache.project_key` | string | the absolute git root | Name of the cache folder (`<name>-<12 hex of sha256(name)>` below the cache base) instead of the path of the checkout: letters, digits, `_ . -`, at most 64. A name only, every entry still carries its full spec key. For a cache restored on a runner with another checkout path ([CI-CACHE.md](CI-CACHE.md)). |
 | `cache.enabled` | boolean | `false` | `true`: reuse the results of unchanged spec files without `--cached`. Ignored in CI: a default never decides there ([CACHE.md](CACHE.md)). `--no-cache` wins. |
 | `coverage.bindings`, `.commands`, `.autocmds` | number 0..1 | `0` | Gate thresholds of `testing surface` per kind; `0` = report only. |
 | `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | Reserved (snapshots). |

@@ -3,6 +3,9 @@
 -- violates exactly that rule. No child editor is started here (the runtime half has its own spec).
 
 ---@diagnostic disable: need-check-nil -- the case body is the guard: a nil raises and fails the case
+
+-- @cache-env PLUGIN_DIR
+-- (the variable of a fixture the spec writes: its outer value joins the key)
 return function(H)
   local ok = H.ok
   local dir = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

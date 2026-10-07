@@ -1,4 +1,5 @@
 ---@module 'testing.child'
+-- @cache-allow env
 ---@brief Driver of ONE child editor that runs ONE spec file: argv, sandbox, environment, start, hard kill.
 ---@description
 --- `testing.child` is the process half of per-file isolation (concept D.3 / D.9, `host = "c"|"l"`).

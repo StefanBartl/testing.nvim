@@ -6,6 +6,8 @@
 -- consumer, three not measured). To record again: call `affected_specs({ root = ..., changed = ...,
 -- consumers = ... })` and write the table with `vim.json.encode`.
 
+-- @cache-allow outside
+-- ("../" is the value of a `consumers` option checked against a temp tree the spec writes, nothing is read from the real parent directory)
 return function(H)
   local ok = H.ok
   local eq = H.eq

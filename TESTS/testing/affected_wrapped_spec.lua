@@ -3,6 +3,8 @@
 -- declares `-- @require-wrapper` and only for the uses the scanner can follow. Every other use of the
 -- wrapper stays a dependency on everything: the selection never gets smaller by a use it did not understand.
 
+-- @cache-env X
+-- (the variable the spec sets and reads itself: its outer value joins the key)
 return function(H)
   local ok = H.ok
   local eq = H.eq

@@ -56,13 +56,28 @@ jobs:
       - uses: rhysd/action-setup-vim@v1
         with:
           neovim: true
-          version: stable
+          # Pinned (it is part of every cache key); move it on purpose.
+          version: v0.12.2
+      # The result cache, as docs/CI-CACHE.md describes it: the key of the cache action is only the transport
+      # (each entry carries its full spec key), pull requests restore and never save, the main branch saves.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/testing-cache
+          key: testing-${{ runner.os }}-nvim0.12.2-${{ github.sha }}
+          restore-keys: testing-${{ runner.os }}-nvim0.12.2-
       # Dogfood: this repository's own specs run through its own runner (scripts/test.sh wraps
       # `nvim -l scripts/testing.lua .`), with the Result-IR and a JUnit report as artifacts.
       - name: Run the specs with testing.nvim
+        env:
+          TESTING_CACHE_HOME: ${{ runner.temp }}/testing-cache
         run: |
           exec > >(tee -a "$RUNNER_TEMP/test-output.log") 2>&1
-          scripts/test.sh --github --json "$RUNNER_TEMP/self-ir.json" --junit "$RUNNER_TEMP/self-junit.xml"
+          scripts/test.sh --cached --github --json "$RUNNER_TEMP/self-ir.json" --junit "$RUNNER_TEMP/self-junit.xml"
+      - uses: actions/cache/save@v4
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: ${{ runner.temp }}/testing-cache
+          key: testing-${{ runner.os }}-nvim0.12.2-${{ github.sha }}
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

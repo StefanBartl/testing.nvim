@@ -25,7 +25,8 @@
 local M = {}
 
 ---@type string[]
-M.SUBCOMMANDS = { "run", "init", "list", "doctor", "budget", "conformance", "surface", "explain" }
+M.SUBCOMMANDS =
+  { "run", "init", "list", "doctor", "budget", "conformance", "surface", "explain", "verify" }
 
 ---Subcommand names that are parsed but not dispatched yet. Empty since the integration step wired
 ---`conformance` and `surface` (`testing.cli` hands them to their own modules, with their own arguments,
@@ -100,6 +101,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field cache_refresh boolean `--cache-refresh`: run everything and store the results, never read
 ---@field cache_audit_text? string `--cache-audit <0..1|all>` as typed
 ---@field cache_audit? number `--cache-audit`: the share of the cache hits (0..1; `all` = 1) that run anyway and are compared with the stored result
+---@field cache_dir? string `--cache-dir <dir>`: replaces `stdpath('cache')` as the base of the result cache
 ---@field cache_clear boolean `--cache-clear`: delete the cache of this project and exit
 ---@field affected? boolean|string `--affected` / `--affected=<rev>`: the specs the changes since `<rev>` (default `HEAD~1`) can reach
 ---@field changed boolean `--changed`: the specs the working tree against `HEAD` can reach
@@ -146,6 +148,14 @@ local OPTIONS = {
     field = "config",
     arg = "<file>",
     help = "configuration file inside the root (default: <root>/.testing.lua)",
+  },
+  {
+    name = "cache_dir",
+    long = "cache-dir",
+    kind = "value",
+    field = "cache_dir",
+    arg = "<dir>",
+    help = "base directory of the result cache (default: stdpath('cache'); env TESTING_CACHE_HOME); the project folder is below it",
   },
   {
     name = "json",
@@ -864,6 +874,8 @@ function M.usage()
     "  conformance  run the conformance checks K1..K15 on <root> (own options: conformance --help)",
     "  surface  list the plugin's surface (keymaps, commands, ...) and how much the specs exercised (surface --help)",
     "  explain  why a spec was selected, cached or run, and what its cache key is made of: explain <root> <spec>... [--all] [--json] [--parts]",
+    "  stamp    run the suite and, after a COMPLETE green run, write the green stamp: stamp <root> [--out <file>] [--note] [run options]",
+    "  verify   is the tree still the one a green stamp proved? (no spec runs; exit 0 + sentinel only when every file is proven): verify <root> [--stamp <file>|--from-note] [--max-age 7d] [--allow-dirty] [--require-hmac] [--json]",
     "  init     scaffold .testing.lua, TESTS/minimal_init.lua, scripts/test.sh, a CI job",
     "  migrate  plan (or write) the move of a repository from plenary / busted / its own runner to testing.nvim",
     "",
@@ -1023,7 +1035,7 @@ function M.parse(argv)
     for _, list in ipairs({ M.SUBCOMMANDS, M.RESERVED_COMMANDS }) do
       for _, name in ipairs(list) do
         if argv[1] == name then
-          args.command = name --[[@as "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"]]
+          args.command = name --[[@as "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"|"explain"|"verify"]]
           i = 2
         end
       end

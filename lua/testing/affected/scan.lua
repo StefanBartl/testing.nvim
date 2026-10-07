@@ -12,8 +12,10 @@
 ---   * `dynamic`   a `require(<expression>)` nobody can resolve: a dependency on EVERY module,
 ---   * `markers`   hidden inputs that make a result depend on something that is not a file of the
 ---                 project: `time`, `random`, `spawn` (processes, shell), `net`, `io` (file reads and
----                 directory listings), `env` (the names read; `env_dynamic` when a name is computed
----                 or the whole environment is read).
+---                 directory listings), `env` (the names read; `env_computed` when a name is computed,
+---                 `env_whole` when the whole environment is read, `env_dynamic` for either),
+---   * `directives` what the author of the file states in its first lines (`-- @cache off`, `-- @cache-inputs`,
+---                 `-- @cache-allow`, `-- @cache-env`, `-- @require-wrapper`).
 ---
 --- Comments are ignored, string contents are not (a `require` inside `vim.cmd("lua require('x')")` is a
 --- dependency; a marker inside a string is not a marker). Pure Lua apart from `index`, which walks the
@@ -26,7 +28,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 7
+M.VERSION = 8
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -62,7 +64,9 @@ M.BUILTIN = {
 ---@field pathmod boolean The module search path or the runtime path is changed (`package.path`, `rtp`).
 ---@field outside boolean A string literal names a place outside the project (`../x`, `C:/x`, `~/x`, `/etc/x`).
 ---@field env string[] Names of environment variables read by a literal name (sorted, unique).
----@field env_dynamic boolean
+---@field env_dynamic boolean A name is computed or the whole environment is read (`env_computed or env_whole`).
+---@field env_computed boolean An environment variable is read by a computed name (`getenv(name)`).
+---@field env_whole boolean The whole environment is read (`vim.fn.environ()`, `vim.uv.os_environ()`, `vim.env` as a table).
 
 ---@class Testing.Scan.Info
 ---@field requires string[] Sorted, unique.
@@ -73,7 +77,7 @@ M.BUILTIN = {
 ---@field where table<string, integer> First line (1-based) of the hit of a hidden input that makes a spec uncacheable: keys `time`, `random`, `spawn`, `net` (`testing explain` names it). Absent key: the hit has no single line.
 ---@field outside_paths string[] The string literals (or words of a command string) that name a place outside the project: `../x`, `C:/x`, `~/x`, `/etc/x`.
 ---@field wrapped table<string, Testing.Scan.Wrapped> Modules the file uses ONLY as `X.member("literal", ...)` (an alias of `require("X")` or `require("X").member("literal")`): per module the members called and the literal names passed. A module with any other use (passed on, indexed, a computed first argument, `pcall(require, "X")`) is not listed. Read by the affected heuristic for modules that declare `-- @require-wrapper`; the cache key does not use it.
----@field directives { off: boolean, inputs: string[], allow: string[], wrapper: string[] } `-- @cache off`, `-- @cache-inputs a b`, `-- @cache-allow time random` (the author vouches that the clock, random numbers, processes or the network a file uses do not decide what a spec sees), `-- @require-wrapper require module fn` (the module computes `require(<argument>)`, and only for the first argument of the listed functions: see `testing.affected.heuristic`).
+---@field directives { off: boolean, inputs: string[], allow: string[], wrapper: string[], env: string[] } `-- @cache off`, `-- @cache-inputs a b`, `-- @cache-allow time random` (the author vouches that the clock, random numbers, processes or the network a file uses do not decide what a spec sees), `-- @cache-env NAME *_DIR PREFIX_* *` (the variables a computed read can reach, `*` for the whole environment: their hashed values join the key), `-- @require-wrapper require module fn` (the module computes `require(<argument>)`, and only for the first argument of the listed functions: see `testing.affected.heuristic`).
 
 ---@class Testing.Scan.Wrapped
 ---@field members string[] Sorted, unique.
@@ -214,12 +218,74 @@ local function outside_literal(s)
   if s == ".." or s:find("^%.%.[/\\]") or s:find("[/\\]%.%.[/\\]") or s:find("[/\\]%.%.$") then
     return true
   end
-  if s:find("^%a:[/\\]") or s:find("^\\\\") or s:find("^~[/\\]") then
+  if s:find("^%a:[/\\]") or s:find("^~[/\\]") then
+    return true
+  end
+  -- a UNC path: two backslashes and a host (`\\host\share`, `\\.\pipe`), written with doubled backslashes inside
+  -- a quoted Lua string. A literal that is only backslashes (`"\\"` is ONE backslash, the separator of a Windows
+  -- path) names nothing
+  if s:find("^\\\\[%w%.%?]") or s:find("^\\\\\\\\[%w%.%?]") then
     return true
   end
   -- an absolute path with at least two segments (`/etc/hosts`, `/tmp/x/y`); whether it names a real place
   -- outside the project is decided against the file system (`testing.cache`), not here
   return s:find("^/[^/%s]+/[^%s]") ~= nil
+end
+
+---Does the code call a function named `environ` that is no member of something (`environ()`, `local environ = ...`
+---then `environ()`)? A member (`ctx.environ`, `ctx:environ()`, a table field `environ = fake`) is what a spec injects
+---or a context carries, not the process environment; the process environment is reached as `vim.fn.environ`,
+---`os_environ` or `call("environ")`, which the other patterns catch.
+---@param code string
+---@return boolean
+local function calls_bare_environ(code)
+  for at in code:gmatch("()%f[%w_]environ%s*%(") do
+    local prev = code:sub(at - 1, at - 1)
+    if prev ~= "." and prev ~= ":" then
+      return true
+    end
+  end
+  return false
+end
+
+---Is `vim.env` used as a VALUE (assigned, passed on, iterated, returned)? `vim.env.NAME` and `vim.env[...]` are reads of
+---one variable (counted elsewhere); `if vim.env then`, `vim.env and ...`, `vim.env == nil` only test that the table
+---exists and read nothing.
+---@param code string
+---@return boolean
+local function reads_env_table(code)
+  for _, e in code:gmatch("()vim%.env%f[%W]()") do
+    local rest = code:sub(e, e + 12):gsub("^%s+", "")
+    local nxt = rest:sub(1, 1)
+    if nxt ~= "." and nxt ~= "[" and nxt ~= "" then
+      local test = rest:find("^then%f[%W]") or rest:find("^and%f[%W]") or rest:find("^[=~]=")
+      if not test then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+---Is the literal `".."` only compared with something or searched for as plain text (`seg == ".."`,
+---`".." ~= seg`, `ref:find("..", 1, true)`)? That is the test for a parent segment (a path VALIDATOR), no path the
+---file reads. Any other use of the literal (a path built or passed on) stays a place outside the project.
+---@param text string Text without comments.
+---@param str Testing.LuaText.String
+---@return boolean
+local function compared_not_read(text, str)
+  local before = text:sub(math.max(1, str.s - 40), str.s - 1)
+  local after = text:sub(str.e + 1, str.e + 40)
+  if before:find("[=~]=%s*$") or after:find("^%s*[=~]=") then
+    return true
+  end
+  -- `starts_with(rest, "~/")`, `vim.endswith(path, "..")`: the literal is the prefix or suffix asked for
+  if
+    before:find("[sS]tarts?_?[wW]ith%s*%(.*,%s*$") or before:find("[eE]nds?_?[wW]ith%s*%(.*,%s*$")
+  then
+    return true
+  end
+  return before:find("[:%.]find%s*%(%s*$") ~= nil and after:find("^%s*,%s*1%s*,%s*true%s*%)") ~= nil
 end
 
 ---@param code string Text without comments and string contents.
@@ -263,8 +329,10 @@ local function scan_markers(code, text)
       if not e then
         return false
       end
-      local nxt = code:match("^%s*(.)", e + 1)
-      if nxt ~= "." and nxt ~= ":" then
+      local nxt, after = code:match("^%s*(.)(.?)", e + 1)
+      -- `os = "x"` in a table constructor is a field NAMED os (no alias), `os == x` is a comparison
+      local is_key = nxt == "=" and after ~= "="
+      if nxt ~= "." and nxt ~= ":" and not is_key then
         return true
       end
       pos = e + 1
@@ -390,6 +458,8 @@ local function scan_markers(code, text)
     outside = false,
     env = {},
     env_dynamic = false,
+    env_computed = false,
+    env_whole = false,
   }
   m.selfscan = (m.dirscan or m.dynload)
     and any({
@@ -416,12 +486,18 @@ local function scan_markers(code, text)
       if c:find("dofile%s*%(") or c:find("loadfile%s*%(") then
         m.io = true
       end
+      if (c == ".." or c == "../" or c == "~/") and compared_not_read(text, str) then
+        -- `seg == ".."`, `ref:find("..", 1, true)`: a test for the word, no path that is read
+        c = ""
+      end
       if outside_literal(c) then
         m.outside = true
         outside_paths[#outside_paths + 1] = c
       elseif c:find("%s") then
         for piece in c:gmatch("[^%s;]+") do
-          if outside_literal(piece) then
+          -- a lone `..` word is the Lua concatenation operator or prose (`"lua x = a .. b"`), unless the string is
+          -- an ex command with a file argument (`edit ..`)
+          if (piece ~= ".." or (word and FILE_COMMANDS[word])) and outside_literal(piece) then
             m.outside = true
             outside_paths[#outside_paths + 1] = piece
           end
@@ -448,15 +524,20 @@ local function scan_markers(code, text)
     + count_plain(code, "vim.env.")
     + count_plain(code, "vim.env[")
   if env_calls > literal_calls then
-    m.env_dynamic = true
+    m.env_computed = true
   end
   if
-    code:find("environ%f[%W]")
+    code:find("fn%.environ%f[%W]")
     or code:find("os_environ")
-    or code:find("vim%.env%f[%W]%s*[^%.%[%s]")
+    or reads_env_table(code)
+    or text:find("fn%[%s*[\"']environ[\"']%s*%]")
+    or text:find("call%s*%(%s*[\"']environ[\"']")
+    or text:find("nvim_call_function%s*%(%s*[\"']environ[\"']")
+    or calls_bare_environ(code)
   then
-    m.env_dynamic = true
+    m.env_whole = true
   end
+  m.env_dynamic = m.env_computed or m.env_whole
   m.env = uniq_sorted(names)
   outside_paths = uniq_sorted(outside_paths)
   while #outside_paths > 50 do
@@ -468,6 +549,10 @@ end
 ---Largest number of path-like literals kept per file.
 ---@type integer
 M.MAX_PATHS = 200
+
+---Largest number of names or patterns a file may declare with `-- @cache-env`.
+---@type integer
+M.MAX_ENV_DECLARED = 64
 
 ---Lines of a file scanned for `-- @cache ...` directives.
 ---@type integer
@@ -512,13 +597,21 @@ end
 ---(`nondeterministic` lifts the mark that the key-flip detection puts on a file whose result changed under an
 ---unchanged key: see `testing.cache.keylog`.)
 ---@type table<string, true>
-local ALLOWABLE = { time = true, random = true, spawn = true, net = true, nondeterministic = true }
+local ALLOWABLE = {
+  time = true,
+  random = true,
+  spawn = true,
+  net = true,
+  outside = true,
+  env = true,
+  nondeterministic = true,
+}
 
 ---`-- @cache off`, `-- @cache-inputs a b c` and `-- @cache-allow time` in the first lines of a file.
 ---@param text string
 ---@return { off: boolean, inputs: string[], allow: string[] }
 local function scan_directives(text)
-  local d = { off = false, inputs = {}, allow = {}, wrapper = {} }
+  local d = { off = false, inputs = {}, allow = {}, wrapper = {}, env = {} }
   local allowed = {}
   local n = 0
   for line in text:gmatch("[^\r\n]*") do
@@ -540,6 +633,15 @@ local function scan_directives(text)
         if ALLOWABLE[word] and not allowed[word] then
           allowed[word] = true
           d.allow[#d.allow + 1] = word
+        end
+      end
+    end
+    local env = line:match("^%s*%-%-%s*@cache%-env%s+(.-)%s*$")
+    if env then
+      for word in env:gmatch("%S+") do
+        -- a name, or a pattern with `*` (`PREFIX_*`, `*_DIR`, `*` alone for the whole environment)
+        if #word <= 100 and word:find("^[%w_%*]+$") and #d.env < M.MAX_ENV_DECLARED then
+          d.env[#d.env + 1] = word
         end
       end
     end
@@ -610,7 +712,8 @@ function M.valid_info(raw)
       and string_list(raw.outside_paths, 50)
       and string_list(m.env, 500)
       and string_list(d.inputs, 50)
-      and string_list(d.allow, 5)
+      and string_list(d.allow, 8)
+      and string_list(d.env == nil and {} or d.env, M.MAX_ENV_DECLARED)
       and type(d.off) == "boolean"
     )
   then
@@ -622,7 +725,6 @@ function M.valid_info(raw)
     "spawn",
     "net",
     "io",
-    "env_dynamic",
     "dirscan",
     "dynload",
     "selfscan",
@@ -632,6 +734,22 @@ function M.valid_info(raw)
     if type(m[k]) ~= "boolean" then
       return nil
     end
+  end
+  -- an analysis stored before the split into `env_computed` and `env_whole`: a dynamic read counts as the worse
+  local env_dynamic = m.env_dynamic == true
+  if type(m.env_dynamic) ~= "boolean" then
+    return nil
+  end
+  local env_whole = m.env_whole
+  if env_whole == nil then
+    env_whole = env_dynamic
+  end
+  local env_computed = m.env_computed
+  if env_computed == nil then
+    env_computed = env_dynamic
+  end
+  if type(env_whole) ~= "boolean" or type(env_computed) ~= "boolean" then
+    return nil
   end
   local wrapper = d.wrapper == nil and {} or d.wrapper
   local wrapped = raw.wrapped == nil and {} or raw.wrapped
@@ -667,13 +785,16 @@ function M.valid_info(raw)
       pathmod = m.pathmod,
       outside = m.outside,
       env = vim.list_slice(m.env, 1),
-      env_dynamic = m.env_dynamic,
+      env_dynamic = env_dynamic,
+      env_computed = env_computed,
+      env_whole = env_whole,
     },
     directives = {
       off = d.off,
       inputs = vim.list_slice(d.inputs, 1),
       allow = vim.list_slice(d.allow, 1),
       wrapper = vim.list_slice(wrapper, 1),
+      env = vim.list_slice(d.env == nil and {} or d.env, 1),
     },
     wrapped = wrapped,
   }

@@ -3,6 +3,11 @@
 -- rules.nvim bridge. No child editor: the runtime sessions are replaced by a fake `probe`.
 
 ---@diagnostic disable: need-check-nil, missing-fields -- the case body is the guard: a nil raises and fails the case; hand-built reports are partial on purpose
+
+-- @cache-env GITHUB_STEP_SUMMARY
+-- (the variable the spec controls itself: its outer value joins the key)
+-- @cache-allow outside
+-- ("../x", "/etc/passwd", "C:/Windows" are the BAD values of a path validator, no path is read)
 return function(H)
   local ok = H.ok
   local dir = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

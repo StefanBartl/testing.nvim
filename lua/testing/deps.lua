@@ -1,4 +1,6 @@
 ---@module 'testing.deps'
+-- @cache-env *_DIR
+-- @cache-allow outside
 ---@brief Dependency resolution (NEW-40): four places, in a fixed order, and ALL four named on failure.
 ---@description
 --- A dependency `<name>` (e.g. `lib.nvim`, `testing.nvim`) is looked up in

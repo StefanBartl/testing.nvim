@@ -1,4 +1,5 @@
 ---@module 'testing.run.inproc'
+-- @cache-allow env
 ---@brief In-process driver: runs the discovered spec files in the current Neovim and builds the Result-IR.
 ---@description
 --- Walks the planned files in order. Every file runs in the dialect discovery found for it

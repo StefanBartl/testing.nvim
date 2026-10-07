@@ -219,6 +219,14 @@ function M.main(plan, sv, own)
   local function say(line)
     out(project.safe_line(line))
   end
+  -- the seed of a shuffled run is part of its key, and a run without `--seed` draws a new one each time: no key
+  -- computed here would be the key of any run
+  if args.shuffle and args.seed == nil then
+    err(
+      "testing: explain: --shuffle needs --seed <n>: the seed is part of a shuffled run's cache key, and a run without --seed draws a new one each time"
+    )
+    return project.EXIT_USAGE
+  end
 
   local run_opts = require("testing.run.options").of(plan)
   local discover = sv.discover or require("testing.discover")

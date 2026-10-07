@@ -2,6 +2,8 @@
 -- alone, and a failure message that names all four.
 ---@diagnostic disable: need-check-nil
 
+-- @cache-allow outside
+-- (".." is a bad dependency name of a validator; the checkouts are looked up in temp trees the spec writes)
 return function(H)
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)

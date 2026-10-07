@@ -2,6 +2,8 @@
 -- (`<state>/testing-traces/<run-id>/`): another run's artifacts are never pruned while they are young, only
 -- whole old run folders go, and two artifacts of the same pid never overwrite each other.
 
+-- @cache-allow time
+-- (ages are built relative to now (a run folder N seconds old): the result does not depend on the time of day)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

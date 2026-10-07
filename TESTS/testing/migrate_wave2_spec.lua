@@ -9,6 +9,8 @@
 
 ---@diagnostic disable: missing-fields, param-type-mismatch, need-check-nil
 
+-- @cache-allow spawn
+-- (`vim.system` is replaced by a stub: no process starts)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

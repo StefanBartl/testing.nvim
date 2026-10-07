@@ -6,6 +6,9 @@
 -- input, and takes the key again. The key must be nil (the spec cannot be cached) or different.
 
 ---@diagnostic disable: need-check-nil, missing-fields
+
+-- @cache-env MODENV UNLISTED
+-- (the variables of the fixtures this spec writes: their outer values join the key)
 return function(H)
   local ok = H.ok
   local dir = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

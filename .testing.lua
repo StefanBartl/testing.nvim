@@ -16,6 +16,10 @@ return {
   minit = "TESTS/minimal_init.lua",
   -- lib.nvim is resolved by the runner itself (it cannot run without it), so `deps` stays empty.
   deps = {},
+  -- The cache folder is named after this key, not after the absolute path of the checkout, so a cache restored
+  -- on a CI runner with another checkout path is found (docs/CI-CACHE.md). It is a name only: every entry still
+  -- carries its full spec key.
+  cache = { project_key = "testing-nvim" },
   -- pool_run_spec runs real warm-pool children for about a minute on a loaded machine (59.5 s of the default 60 s
   -- file deadline measured on Windows): the deadline is a safety net against a hang, not a performance gate.
   timeouts = { file_ms = 180000 },

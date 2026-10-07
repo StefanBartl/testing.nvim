@@ -6,6 +6,8 @@
 
 ---@diagnostic disable: missing-fields, param-type-mismatch, need-check-nil
 
+-- @cache-env LIB_NVIM_PATH MY_SPEC_VAR REFS_RUN_VAR
+-- (variables of the fixtures this spec writes: their outer values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

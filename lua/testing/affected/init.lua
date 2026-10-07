@@ -1,4 +1,5 @@
 ---@module 'testing.affected'
+-- @cache-env CI GITHUB_ACTIONS GITLAB_CI BUILDKITE TF_BUILD JENKINS_URL CIRCLECI TRAVIS APPVEYOR TEAMCITY_VERSION DRONE
 ---@brief Affected selection (F2): which spec files can a change reach? Never fewer than needed.
 ---@description
 --- `select(opts)` takes the changed files (`git diff --name-only <base>` plus untracked files, argv

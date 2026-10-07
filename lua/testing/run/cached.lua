@@ -1,4 +1,5 @@
 ---@module 'testing.run.cached'
+-- @cache-allow env
 ---@brief The result cache (`--cached`) and the affected selection (`--changed`, `--since`, `--affected`) of a run.
 ---@description
 --- `testing.cache` and `testing.affected` know how to decide; this module is where a run asks them, so that
@@ -44,6 +45,7 @@ local CONFIG_NOT_IN_KEY = {
 
 ---@class Testing.Run.CachePrep
 ---@field mode "use"|"refresh"|"off"
+---@field project_key? string `cache.project_key` of the run when the cache was prepared (names the cache folder, see `M.finish`).
 ---@field why_off? string Why a requested cache is not used.
 ---@field ctx? Testing.Cache.Ctx
 ---@field run_files Testing.Discover.File[] What the driver gets (the files that did not hit).
@@ -157,12 +159,40 @@ end
 ---@field ctx Testing.Cache.Ctx
 ---@field info_of fun(f: Testing.Discover.File): Testing.Cache.FileInfo
 
+---The part of the environment a CHILD editor sees from this process, as key lines `NAME=sha256(value)` (sorted).
+---It is what `testing.child.environment` builds, minus what the driver sets itself: the allowlist of
+---`testing.child.env` over the parent's environment (the project's `env_allow` included), and, while the run is
+---deterministic (the default), without `LANG`, `LANGUAGE`, `LC_*` and `TZ`: the child gets fixed values instead of the
+---parent's (`apply_determinism`), so no value of the parent can reach it and a machine with another locale keeps its
+---hits. Every other variable a child receives stays: it can read it, and its value is part of the key. The sandbox
+---variables (`XDG_*`, `TEMP`, ...) are the driver's own and not the parent's.
+---@param environ table<string, string> The environment of this process (`vim.fn.environ()`).
+---@param run_opts { env_allow?: string[], determinism?: boolean }
+---@return string[] lines
+function M.child_env_lines(environ, run_opts)
+  local env_mod = require("testing.child.env")
+  local sane = env_mod.sanitize(environ, { allow = run_opts.env_allow }).env
+  local deterministic = run_opts.determinism ~= false
+  if deterministic then
+    env_mod.apply_determinism(sane)
+  end
+  local names = vim.tbl_keys(sane)
+  table.sort(names)
+  local lines = {}
+  for _, name in ipairs(names) do
+    lines[#lines + 1] = name .. "=" .. vim.fn.sha256(tostring(sane[name]))
+  end
+  -- the mode is part of the lines: a run with and one without determinism never share a key
+  lines[#lines + 1] = "#determinism=" .. tostring(deterministic)
+  return lines
+end
+
 ---What a key is computed from, for a run: the context (configuration, environment names, spec roots, ...) and the
 ---function that turns a discovered file into the `file_info` of `testing.cache.key`. ONE place, used by the run
 ---(`M.prepare`) and by `testing explain`, so that the explanation can never be about another key than the run's.
 ---@param plan Testing.Cli.RunPlan
 ---@param run_opts Testing.Run.Options
----@param o { mode: "use"|"refresh"|"off", cache_dir?: string, seed?: integer }
+---@param o { mode: "use"|"refresh"|"off", cache_dir?: string, seed?: integer, environ?: table<string, string> }
 ---@return Testing.Run.KeyInputs
 function M.key_inputs(plan, run_opts, o)
   local args = plan.args
@@ -185,20 +215,9 @@ function M.key_inputs(plan, run_opts, o)
   if type(plan.project.minit) == "string" then
     minit = plan.project.minit
   end
-  -- the environment a CHILD editor sees is the allowlist of `testing.child.env` over this process's environment:
-  -- a file that runs in a child is keyed by all of it, so no variable it reads is a hidden input
-  local child_env
-  do
-    local env_mod = require("testing.child.env")
-    local sane = env_mod.sanitize(vim.fn.environ(), { allow = run_opts.env_allow }).env
-    local names = vim.tbl_keys(sane)
-    table.sort(names)
-    local lines = {}
-    for _, name in ipairs(names) do
-      lines[#lines + 1] = name .. "=" .. tostring(sane[name])
-    end
-    child_env = vim.fn.sha256(table.concat(lines, "\n"))
-  end
+  -- the environment a CHILD editor sees (`M.child_env_lines`): a file that runs in a child is keyed by all of it,
+  -- so no variable it reads is a hidden input
+  local child_env = M.child_env_lines(o.environ or vim.fn.environ(), run_opts)
   local project_cfg = require("testing.config.project")
   -- what `isolated_for` reads of the configuration: how the files run
   local isolation = { isolated = run_opts.isolated }
@@ -277,6 +296,10 @@ function M.prepare(o)
     stored = 0,
     not_stored = {},
     files = o.files,
+    -- the folder of the cache is named by `cache.project_key` of THIS run (the CLI set it before the run started): a
+    -- spec that calls `cli.main` for another project changes the global while the files run, and the results must
+    -- still be stored where the next run looks
+    project_key = require("testing.cache.store").project_key,
   }
   local restricted = restriction(plan, o.selector, o.lf, o.findings)
   local mode, why_off = M.mode_of(plan, restricted, o.getenv)
@@ -386,6 +409,22 @@ end
 ---@param opts? { cache?: table, cache_dir?: string, root: string, state_dir?: string }
 ---@return Testing.Inproc.Report report
 function M.finish(prep, report, opts)
+  local store = require("testing.cache.store")
+  local saved = store.project_key
+  store.project_key = prep.project_key
+  local ok, res = pcall(M.finish_inner, prep, report, opts)
+  store.project_key = saved
+  if not ok then
+    error(res, 0)
+  end
+  return res
+end
+
+---@param prep Testing.Run.CachePrep
+---@param report Testing.Inproc.Report
+---@param opts? { cache?: table, cache_dir?: string, root: string, state_dir?: string }
+---@return Testing.Inproc.Report report
+function M.finish_inner(prep, report, opts)
   opts = opts or { root = "" }
   if prep.mode == "off" then
     return report

@@ -85,6 +85,11 @@ run remembers about its own history (`stdpath('state')/testing/<project>/`: `key
 every run with an empty key-flip memory: a flip is then found only inside one run, and the "last green run" of a red
 verdict is "none recorded". Restore the state directory as well when those matter.
 
+The folder is named by `cache.project_key` of `.testing.lua` when it is set, else by the checkout path. A run keeps the
+folder it started with: a spec of the run that calls `cli.main` for another project (as many specs of this suite do)
+changes the process-wide key while the files run, and the results of the hosting run are still stored where its next run
+looks.
+
 Bounds (`cache.prune`, run once per process after the first write): entries older than 30 days go, then the oldest
 until the store is within 64 MB and 5000 entries; a hit renews the age. An entry larger than 4 MB is not stored.
 
@@ -95,7 +100,9 @@ until the store is within 64 MB and 5000 entries; a hit renews the age. An entry
 - the spec path and the content hash of the spec file,
 - the content hash of every file it depends on (below),
 - the runner version: a content digest of `lua/testing` (a dirty checkout differs from a clean one),
-- the Neovim version, API level, OS and CPU architecture,
+- the Neovim version, API level (`api_info().version.api_level`), OS and CPU architecture (the key line used to read a
+  field that does not exist and carried the word `apinil`: it names the level now, which changed every key once, on top of
+  the runner digest, which changes with every edit of the runner),
 - name and hashed value of every environment variable the configuration lists (`env_allow`, `PREFIX*` expands over
   the names that are set; a new variable below a listed prefix changes the key). Where the system treats names
   case-insensitively (Windows) a listed `MyVar` finds `MYVAR` and the name is written in upper case; elsewhere
@@ -122,7 +129,7 @@ and nothing else: it is tested in its own repository):
 - a project module that reads files makes the spec a file reader (next paragraph), and the data files that lie next to
   that module (its directory, without the `.lua` files, which the closure already hashes) join the key,
 - a project module that reads a literal environment variable adds that variable's hashed value to the key; one that
-  computes a name has no key,
+  computes a name has no key, unless it names the variables the read can reach (`-- @cache-env`, below),
 - code that loads files by an ex command or a runtime-path lookup (`:runtime`, `:source`, `:luafile`, `packadd`,
   `nvim_get_runtime_file`), or a spec that changes `package.path`/`rtp` and then `require`s a module that nothing
   resolves, takes the **whole project** (everything below the root except `.git`, `.deps`, `.cache`,
@@ -132,8 +139,15 @@ and nothing else: it is tested in its own repository):
   file or directory that EXISTS there: the key cannot see it. A literal that names nothing (the string of a test of a
   path function) is no read: it is in the key as absent, and the file that appears there changes the key,
 - a spec that runs in a CHILD editor (every `--isolated file|case` file, every busted file by default) is keyed by the
-  whole environment that child sees (`testing.child.env`: the allowlist over this process's environment): no variable
-  it reads is judged by name any more, and a computed name needs no exception. A file that runs in this editor
+  whole environment that child sees (`testing.child.env`: the allowlist over this process's environment), one key line
+  per variable (`child-env NAME=<sha256 of the value>`, so `testing explain` names the variable that changed): no
+  variable it reads is judged by name any more, and a computed name needs no exception. What the child does NOT see of
+  the parent is not in the key: while the run is deterministic (the default, `--no-determinism` or
+  `determinism = false` turn it off) the child gets a fixed `LANG`, `LC_ALL` and `TZ` and no `LANGUAGE` or other `LC_*`
+  (`apply_determinism`), so the parent's locale and time zone cannot reach it and two machines with another locale share
+  their hits. Every other variable the child receives (`PATH`, `TERM`, `COLORTERM`, `DISPLAY`, `HOME`, ... and what
+  `env_allow` adds) stays in the key: a child can read it, and no analysis of the spec proves that it does not. The mode
+  (`#determinism=true|false`) is a key line too, A file that runs in this editor
   keeps the rules below (a literal name must be listed, a computed one means no key),
 
 **Files the spec reads.** A spec (or a project module it loads) that reads files (`io.open`, `readfile`, `vim.fs.dir`,
@@ -146,10 +160,35 @@ command string such as `runtime plugin/x.lua` counts), and what it declares in i
 -- @cache-inputs README.md docs/
 -- @cache off
 -- @cache-allow time random
+-- @cache-env CI GITHUB_* *_DIR
 ```
 
 `-- @cache-allow time random spawn net` is the author's statement that the clock, random numbers, a process or the
 network that this file uses do not decide what a spec sees; the file is then not judged for them.
+`-- @cache-allow outside` says that the places outside the project this file names (`".."` in path arithmetic, the
+sibling-checkout lookup of `testing.deps`, the bad values a path validator is tested with) are not read for what a spec
+sees; the file is then not judged for them.
+
+`-- @cache-allow env` says that what a spec sees does not depend on the outer values of the variables this file reads by a
+computed name or as a whole (a snapshot that is compared with itself, a redaction of the user name, a function that
+takes the environment as an argument and is tested with a fake one). The file is then not judged for those reads; a
+name it declares with `-- @cache-env` still joins the key. The runner's own modules that read the whole environment
+carry it (`testing.cache`, `testing.child`, `testing.guard.state`, `testing.isolation.snapshot`, `testing.rpc.trace`,
+`testing.run.cached`, `testing.run.inproc`): `*` there would put every variable of the process into the key, and a
+runner script that exports a per-run directory (`XDG_STATE_HOME` of `scripts/test.sh`) would give every invocation
+another key.
+
+`-- @cache-env <name|pattern>...` is for a file that reads the environment by a COMPUTED name (`getenv(name)` over a
+list, `vim.env[name]`) or reads it as a whole. It names the variables the read can reach (a plain name, `PREFIX_*`,
+`*_DIR`; `*` alone for the whole environment): their hashed values (a pattern: every variable it matches, and the
+pattern itself) join the key, so the read is not a hidden input any more, and a changed value, or a new variable that a
+pattern matches, is another key. Names do not cover a read of the whole environment (`vim.fn.environ()`, `os_environ`,
+`vim.env` handed on): that needs `*`, and then every variable of the process is in the key (a second shell with another
+`PATH` is another key: the price of the statement). The declaration is the author's, like `@cache-allow`: a name the
+file can read and the declaration leaves out is a stale pass. Where a list lives in the code (`testing.affected.CI_ENV`)
+a spec compares the two. In a spec, `-- @cache-env A B` also lets the spec itself read `A` and `B` by their literal
+names without `env_allow`.
+
 `-- @cache-allow nondeterministic` lifts the mark that the [key-flip detection](#the-cache-proves-itself-audit-and-key-flip)
 puts on a spec whose result changed under an unchanged key.
 
@@ -162,8 +201,8 @@ seen. That is the one stale pass this key cannot rule out: declare the path, or 
 
 - a spec that reads the clock (`os.time`, `hrtime`, `os.date`, `.now()`, an aliased `os`, ...) or random numbers,
 - a spec that starts a process or touches the network (`vim.system`, `jobstart`, `io.popen`, `curl`, ...),
-- a spec that reads an environment variable that is not part of the key, or computes the name; a project module that
-  computes a name,
+- a spec that reads an environment variable that is not part of the key (and does not declare it with `-- @cache-env`) or
+  computes the name; a project module that computes a name or reads the whole environment without declaring it,
 - a spec or project module that reads files and names an EXISTING place outside the project,
 - a spec with a `require` that no checkout resolves (`ctx.unresolved = "absent"` makes the absence part of the key:
   right for optional plugins checked with `pcall(require, ...)`, valid while the runtime path is the one the run
@@ -316,6 +355,99 @@ deterministic: either it is flaky, or an input the key cannot see changed betwee
 `-- @cache-allow nondeterministic` in its header. A changed input is a new key and a new record, and
 `--cache-clear` forgets the memory as well. `testing explain` names
 the mark and the results the key gave; the run line counts them.
+
+### Stamp
+
+`--cached` answers "may this file be skipped" with entries that live in a path-dependent directory of one machine. A
+**stamp** turns the same keys into a small statement that can be carried: "at this commit and this tree, a complete run
+was green, and these were the keys". `testing verify` recomputes the keys (no spec runs) and tells whether anything a
+key can see has changed since ([CLI.md](CLI.md#stamp-and-verify) has the commands and the answers).
+
+```
+testing stamp .              # a full run; after the verdict `green` the stamp is written
+testing verify .             # verified | partial | changed | rejected | expired | dirty | untrusted | invalid | no-stamp
+```
+
+**What is in it** (`schema = "testing-stamp/1"`, JSON, sorted, no secrets): the commit and the tree of the project
+directory (and whether the tree was dirty), the run id and time, the origin (`local`, or `ci` with event and ref and
+whether that ref is trusted), runner digest, Neovim version with API level, OS and architecture, the configuration
+digest, and per spec file either its cache key or `uncacheable: <reason>` (no absolute path: the root is `<root>`; no
+environment value). A `digest` is the sha256 of the canonical text of all that, and an optional `hmac`. Environment
+variables are never written, only their names appear in a reason.
+
+**When it is written**: only for the verdict `green` of a run that selected every file and every case (`stamp` refuses
+`--changed`, `--filter`, a path, `--maxfail`, ... up front), never for `green-partial` or `red`, never after a
+`cache.stale_pass`. A skip, an accepted flaky case or a stop are `green-partial`: no stamp.
+
+**What `verify` proves, and what not.** It proves that every file has the same cache key as in the green run:
+the spec, everything it `require`s, the files it reads, runner, Neovim, configuration, environment names, dialect
+and seed. It proves exactly as much as the key does, so every limit above ("Known limit", "Limits and decisions")
+applies: a file read by a computed path or a clock inside a module is not seen. A file without a key (clock, process,
+network, an unresolvable `require`, `-- @cache off`, a discovery finding, a key that gave different results) is
+**never proven**: `partial`, with the reasons ranked, the files named and the command that runs them. A suite that has
+such files can therefore never be `verified`; that is the point (markdown.nvim: 27 of 47 files came from the cache, so a
+stamp there says `partial` and names the files that must run). The verdict equivalence rule: exit `0` and the
+sentinel only when **all** files are proven.
+
+**Rules that bound the claim.**
+
+- *Age*: a stamp older than `--max-age` (default 7 days) is `expired`: the suite must run. A stamp from the future
+  (clock skew over 5 minutes) is `invalid`.
+- *Dirty tree*: `git status --porcelain` below the project directory must be empty (untracked files count),
+  otherwise `dirty`: the keys would describe the working tree, which is not what is committed or pushed. `--allow-dirty`
+  overrules, and the answer says it is about the working tree. A stamp that was written on a dirty tree says so
+  (`head.dirty`); the keys still decide.
+- *Conditions*: runner digest, Neovim version, OS/architecture or configuration digest differ: `rejected`, with the
+  cause (`Neovim: v0.12.2|api14 -> v0.12.3|api14`). Every key would differ anyway; the cause is the useful part.
+- *Key flip*: a file whose key gave different results (`testing.cache.keylog`) has no key now, so it is not proven.
+  A `cache.stale_pass` finding of an audit that found the same result class is not remembered by the stamp: age and the
+  nightly audit bound it (the stale-pass rate is measured, see below).
+- *Trust*: a **local** stamp counts only on a developer machine, a **CI** stamp only in CI, and in CI only a stamp
+  that CI itself wrote on a trusted ref: the event must not be a pull request (`push`, `schedule`, `workflow_dispatch`)
+  and the ref must be one of `refs/heads/main`, `refs/heads/master` (or the comma list in
+  `TESTING_STAMP_TRUSTED_REFS`). The origin is what the writer said of itself, so on its own it is an honest-writer
+  rule, not authentication.
+- *HMAC*: with `TESTING_STAMP_SECRET` (at least 16 characters) set when writing, the stamp carries an HMAC-SHA-256 of its
+  canonical text; with the secret set when verifying, a stamp without or with a wrong HMAC is `untrusted`. This is what
+  makes a forged stamp (digest recomputed by someone with a text editor) fail. Without a secret the digest only shows
+  damage and clumsy edits; the answer says that the HMAC was not checked. `--require-hmac` refuses a stamp unless the
+  secret is set. The secret is read from the environment only and appears in no file, output or message. Give it to
+  CI as a repository secret that pull requests from forks cannot read, and never let a pull request job write stamps.
+
+**The file is untrusted input** (like cache entries, SEC-33): a size cap (8 MiB) before decoding, a decode under `pcall`,
+a closed schema and version, every field type-checked, plain text without control characters, bounded lengths and file
+count, relative paths without `..`, files strictly sorted and unique, a digest that must match, time values within
+bounds. Nothing in a stamp becomes a path, a command or an argument of git. git is called with argv lists only, and
+the tree id it returns is checked to be 40 or 64 hex digits before it is used.
+
+**Transports.**
+
+- *File*: the default location is `stamp.json` in the state directory of the project (not in the checkout: it would
+  make the tree dirty). `--out <file>` writes anywhere, `verify --stamp <file>` reads from anywhere. This is the form
+  for `actions/cache` or an artifact between CI jobs ([CI-CACHE.md](CI-CACHE.md)).
+- *git note* (built): `testing stamp --note` attaches the stamp to the **tree** object under `refs/notes/testing`, and
+  `testing verify --from-note` reads the note of the tree of `HEAD`. Checked on 2026-10-07 with git 2.53 for Windows:
+  `git notes add <tree-id>` works for a tree object (git notes accept any object name), `git notes show <tree-id>`
+  reads it back, and a rebase, a squash or a revert that leads to the same tree finds the same note; another tree has
+  none. Notes are not fetched or pushed by default (`git push origin refs/notes/testing`, `git fetch origin
+  refs/notes/testing:refs/notes/testing`), writing one needs a git identity, and a note is exactly as trustworthy as
+  whoever can push `refs/notes/testing`: protect the ref, or use the HMAC.
+- *Commit status* (not built): GitHub accepts a short description with a status; put only the `digest` there
+  (`testing-stamp:<digest>`), never the stamp, and compare it with the digest of the file that came by another way.
+  It needs a token with write access to statuses, which a command line tool of this project does not hold, so a
+  workflow step does it (`gh api`).
+
+**Red run: since when.** After a red run the report already names the last full green run and the files that differ
+from its commit (`last_green.json`, [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md)); the stamp's commit and the `changed` list of
+`verify` say the same thing for a stamp that came from elsewhere.
+
+**Measured** (Windows 11, Neovim 0.12.2, 2026-10-07, a copy of lib.nvim with 87 spec files, three runs in a row):
+`testing verify` took 1.59 s, 1.28 s and 1.21 s from process start to the answer (editor start, discovery, the keys of
+all 87 files, three git calls, the runner digest). That answer was `rejected` for the runner digest (the checkout of
+this runner changed while the measurement was going), which is decided only after all keys were computed, so the time
+covers the whole check. The stamp of that suite says 17 files with a key and 70 without (30 read the environment by a
+computed name, 28 the clock, 9 start a process): `verify` there is `partial` by construction, and the stamp is worth
+little for lib.nvim today; for a suite of pure specs it is the whole suite. The earlier estimate of 0.2 to 0.5 s is not reached on this machine: the key phase dominates, not the editor start.
 
 ### API
 
@@ -481,6 +613,15 @@ that only touches CI files.
   must not be satisfied by earlier results passes `--no-cache`; CI does not use the cache by default.
 - The graph of `documentation.nvim` does not see a `require(variable)` (documentation.nvim task); this consumer does
   not depend on that, because the heuristic sees it and the selection is the union.
+- What the scanner does NOT count as a hidden input (each has a spec that turns red when the rule is dropped, and the
+  contrary cases that still count): a table field or injected function named `environ` (`ctx.environ`, `environ = fake`:
+  only `vim.fn.environ`, `os_environ`, `call("environ")` and a bare `environ()` are reads of the whole environment);
+  `vim.env` that is only tested (`if vim.env then`, `vim.env and`, `vim.env == nil`); a table field named `os`
+  (`{ os = "x" }`: no alias of the `os` table); the literals `".."`, `"../"` and `"~/"` that are only compared with or
+  asked for as a prefix, suffix or plain needle (`seg == ".."`, `starts_with(p, "~/")`, `find("..", 1, true)`: a path
+  validator, no path read) and a lone `..` word of a command string (the Lua operator); a literal that is only
+  backslashes (`"\\"` is one backslash, no UNC path). A literal that is built into a path (`joinpath(root, "..")`,
+  `"~/" .. rest`) or an ex command with a file argument (`edit ..`) still names a place outside the project.
 - Conservative defaults over hit rate: a file that reads the clock is not cached even when it only measures a
   duration. Mark a spec's dependencies with `-- @cache-inputs`, or restructure the spec, to get it into the cache.
 - The cache key does not include the machine's file system or locale beyond what the configuration lists; a spec that

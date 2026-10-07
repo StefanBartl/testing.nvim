@@ -1,0 +1,40 @@
+name: Nightly
+
+# The two checks that keep the result cache honest (docs/CI-CACHE.md): a full run WITHOUT the cache, and a run that
+# re-executes every cache hit and compares it with the stored result (`--cache-audit all`: a difference is
+# `cache.stale_pass`, exit 1). Neither writes a cache: only the main-branch run of ci.yml does.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  full-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: StefanBartl/lib.nvim
+          path: .deps/lib.nvim
+          ref: ci-verified
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.12.2
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/testing-cache
+          key: testing-${{ runner.os }}-nvim0.12.2-nightly-${{ github.run_id }}
+          restore-keys: testing-${{ runner.os }}-nvim0.12.2-
+      - name: Full run without the cache
+        run: scripts/test.sh --no-cache --github
+      - name: Audit every cache hit
+        env:
+          TESTING_CACHE_HOME: ${{ runner.temp }}/testing-cache
+        run: scripts/test.sh --cached --cache-audit all --github

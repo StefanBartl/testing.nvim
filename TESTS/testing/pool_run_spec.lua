@@ -4,6 +4,8 @@
 -- restored and VERIFIED clean between them, the verdict is the one a child per file gives, a crash or a
 -- timeout kills only its member, a member that cannot prove it is clean is thrown away and says why.
 
+-- @cache-env LC_ALL NVIM TZ
+-- (the variables the child environment of the pool run is built from: their values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

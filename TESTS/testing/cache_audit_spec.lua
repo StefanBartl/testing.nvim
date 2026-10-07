@@ -4,6 +4,8 @@
 
 ---@diagnostic disable: need-check-nil, inject-field, undefined-field, param-type-mismatch, missing-fields, cast-local-type
 
+-- @cache-allow time
+-- (ages are built relative to now (a stray temp file older than an hour): the result does not depend on the time of day)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

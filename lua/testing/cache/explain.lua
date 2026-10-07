@@ -34,7 +34,8 @@ end
 
 ---Kinds of key lines that name something with `<id>=<value>`.
 ---@type table<string, true>
-local NAMED = { dep = true, input = true, data = true, extra = true, env = true }
+local NAMED =
+  { dep = true, input = true, data = true, extra = true, env = true, ["child-env"] = true }
 
 ---One key line as `kind`, `name` (what it is about) and `value` (what changes).
 ---@param line string
@@ -139,7 +140,7 @@ function M.way_out(detail)
       tostring(detail.name)
     )
   elseif k == "env_dynamic" then
-    return "read the variables by a literal name (`os.getenv('X')`) and list them in `env_allow` of .testing.lua, or `-- @cache off`"
+    return "read the variables by a literal name (`os.getenv('X')`) and list them in `env_allow` of .testing.lua; or name the variables a computed read can reach in the first 30 lines of the file that reads them: `-- @cache-env NAME PREFIX_* *_DIR` (`*` alone: the whole environment); or `-- @cache off`"
   elseif k == "off" then
     return "remove `-- @cache off` from the header: it is the author's decision that this file is never cached"
   elseif k == "unresolved" then

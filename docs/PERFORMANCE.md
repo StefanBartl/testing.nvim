@@ -260,6 +260,52 @@ exist; LuaJIT's `jit.p` per case does not.
    (4 and 8 ms), well inside `budget.factor`. A baseline for a quiet machine or a CI runner has to be written on
    that machine (`--update`).
 
+### The keys of the suite's own specs, and the child environment (2026-10)
+
+Measured with `testing explain . --all` on this repository (`--cached` twice, then `--cache-audit all`, Windows 11,
+one run takes about 5.5 minutes):
+
+| | before | after |
+| --- | ---: | ---: |
+| spec files with a cache key | 33 of 139 (24 %) | 119 of 146 (82 %) |
+| most frequent reason for no key | 50 files: a module the spec loads reads the environment by a computed name | 15 files: the clock (timing assertions) |
+| stored by a full `--cached` run | not measured (the folder defect below applied) | 80 of 144 |
+| from the cache in the second run | 0 | 79 of 144 |
+| `--cache-audit all` | | 79 of 79 hits run again, 0 differ |
+
+(Specs of other work on the same tree are in "after": 146 files against 139.) Why a key is not a hit: 37 files have a
+key and are never stored, because the effects ledger sees a process they start (a child editor, `git`); the clock
+takes 15 (they assert that something is fast: a cached pass would say nothing); 9 start a process the scanner sees.
+What changed, in the order of the files it freed:
+
+* The runner's own modules that read the whole environment, or a variable by a computed name, now say so (`-- @cache-env`
+  for `testing.deps` and `testing.affected`, whose names are known; `-- @cache-allow env` for the snapshots, the
+  redaction and the key code itself). That alone was 45 of the 50 files.
+* The scanner no longer takes a table field named `environ` / `os`, a `vim.env` that is only tested, a `".."` or `"~/"`
+  that is only compared, or a lone backslash for a read of the environment, of the clock or of a place outside the
+  project (see "What the scanner does NOT count" in CACHE.md); 11 files.
+* 25 specs carry `-- @cache-env`, `-- @cache-allow time|random|spawn|net|outside` with the reason next to it (a stubbed
+  `vim.system`, relative ages of fixtures, the bad values of a path validator).
+* A suite that calls `cli.main` from a spec (this one does, in 24 files) left the cache folder of the other project in a
+  global, and the hosting run stored its results where its next run did not look: **0 hits in 144 files** even with every
+  key stable. A run keeps the folder it started with now.
+
+The child environment (`isolated = "file"`, every busted file): the key held one digest of the whole sanitized parent
+environment, including the `LANG`, `LANGUAGE`, `LC_*` and `TZ` that the child never sees (it gets fixed values). Measured
+with `testing explain --all --json` on copies of two suites that run every file in a child, once as it is and once with
+`LANG=xx_XX.UTF-8 LANGUAGE=de TZ=Pacific/Fiji LC_TIME=de_AT.UTF-8`:
+
+| | keys that survive another locale, before | after | keys that survive another `TERM`/`COLORTERM`/`DISPLAY` |
+| --- | ---: | ---: | ---: |
+| markdown.nvim (30 keyed files) | 0 | 30 | 0 before and after |
+| ui.nvim (31 keyed files) | 0 | 31 | 0 before and after |
+
+`PATH`, `HOME`, `TERM`, `COLORTERM`, `DISPLAY`, `WAYLAND_DISPLAY`, `NO_COLOR`, ... stay in the key: a child can read each
+of them (a headless editor still derives `&term` from `TERM`, `has("clipboard")` from `DISPLAY`, tools it starts from
+`PATH`) and no analysis of a spec proves it does not. Dropping them would be a guess; the price is a miss between two
+terminals with another `TERM`. The lines are one per variable now (`child-env NAME=<hash>`), so `testing explain` names
+the variable that changed instead of saying that "the child environment" did.
+
 ## Rules checked
 
 * **PERF-11 (memoization)**: nothing measured here repeats pure work per call; the stable hash of a path is

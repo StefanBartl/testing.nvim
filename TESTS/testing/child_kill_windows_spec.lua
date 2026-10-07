@@ -3,6 +3,8 @@
 -- anything is killed, a failing `taskkill /T` falls back to killing the root at once, and the
 -- descendants that `/T` left behind are ended one by one.
 
+-- @cache-allow spawn
+-- (`vim.system` is replaced by a stub: no process starts)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

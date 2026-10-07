@@ -32,6 +32,13 @@ Rules behind the numbers:
 * **The runner never raises.** Anything unexpected is exit `3` with a message on stderr
   (`TESTING_DEBUG=1` adds the traceback).
 
+`testing stamp` and `testing verify` use the same four codes with their own reading. `verify`: `0` only for `verified`
+(every file proven; the sentinel follows), `1` for every other answer (`partial`, `changed`, `rejected`, `expired`, `dirty`,
+`untrusted`, `invalid`, `no-stamp`: a partial proof is never `0`), `2` a usage error (a bad flag or duration, a secret
+shorter than 16 characters), `3` an internal failure. `stamp` is a run: it exits as the run does, except that a run that
+did not earn a stamp (not `green`: a skip, an accepted flaky case, a stop) exits `1` instead of `0`, because the caller
+asked for a stamp and did not get one; a selection option is `2` before anything runs ([CLI.md](CLI.md#stamp-and-verify)).
+
 `scripts/test.sh` adds one case of its own: `nvim` not on `PATH` is exit `3`.
 
 ## A file that dies or hangs

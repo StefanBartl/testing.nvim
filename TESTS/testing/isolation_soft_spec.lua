@@ -3,6 +3,8 @@
 -- autocmd group, a global, a loaded module, a variable, the cwd, ...), the verification really looks again,
 -- and a restore that lies is caught.
 
+-- @cache-env ISO_LEAK_ENV
+-- (the variable the spec leaks on purpose: its outer value joins the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

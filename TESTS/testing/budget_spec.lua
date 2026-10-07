@@ -3,6 +3,8 @@
 -- `testing.cli` with a FAKE SLOW FUNCTION (a clock the case advances), and the real cases at toy size so that none
 -- of them rots.
 
+-- @cache-env USER USERNAME
+-- (read for the redaction of the user name: the values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

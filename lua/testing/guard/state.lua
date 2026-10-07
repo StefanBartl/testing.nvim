@@ -1,4 +1,5 @@
 ---@module 'testing.guard.state'
+-- @cache-allow env
 ---@brief State-leak guard: snapshot before / after a case or file, named findings, soft isolation.
 ---@description
 --- Shared state between spec files hid real bugs in the fleet for years (a spec that works only

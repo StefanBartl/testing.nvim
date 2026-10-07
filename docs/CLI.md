@@ -1,7 +1,7 @@
 # Command line
 
 ```sh
-nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|init] [<root>] [options]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|stamp|verify|init] [<root>] [options]
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [options]
 ```
 
@@ -29,6 +29,8 @@ scripts/test.sh --file config      # only spec files whose name contains "config
 | `conformance` | The conformance checks K1 .. K15 on `<root>`, reported as data and terminal lines; report only unless `--gate` or `conformance.gate`. It has **its own arguments and exit codes**, so everything after the word goes to it, not to the run options: `testing conformance [<root>] [--only K3,K7] [--skip K10] [--gate] [--json\|--markdown] ...`, see [CONFORMANCE.md](CONFORMANCE.md). |
 | `surface` | The plugin's surface (keymaps, commands, autocmds, ...) and how much of it the specs exercised. Own arguments and exit codes too: `testing surface [<root>] [--from ir.json] [--threshold 0.8] [--baseline b.json] [--json\|--markdown]`, see [SURFACE.md](SURFACE.md). A run is tracked with `surface = { track = true }` in `.testing.lua`: every case of the `--json` IR then carries `surface.hit`. |
 | `explain` | Why a spec file is selected, taken from the cache, run or left out, and what its cache key is made of: `testing explain [<root>] <spec>... [--all] [--json] [--parts]`. Display only (changes nothing). Accepts the options of a run (`--config`, `--env-allow`, `--changed`, ...), because the key depends on them. See [Explain and audit](#explain-and-audit). |
+| `stamp` | A run that writes the green stamp after a **complete** green run (verdict `green`: nothing selected away, nothing skipped, nothing stopped): `testing stamp [<root>] [--out <file>] [--note] [options of a run]`. Options that select part of the suite are refused (exit `2`); a run that is not green writes no stamp and exits `1`. See [Stamp and verify](#stamp-and-verify). |
+| `verify` | Is the tree still the one a green stamp proved? Answers from the cache keys, runs no spec: `testing verify [<root>] [--stamp <file> \| --from-note] [--max-age 7d] [--allow-dirty] [--require-hmac] [--json]`. Exit `0` and the sentinel only for `verified` (every file proven). See [Stamp and verify](#stamp-and-verify). |
 | `init` | Scaffold `.testing.lua`, `TESTS/minimal_init.lua`, `scripts/test.sh` and a CI job in a project. Today only as the editor command `:Testing init` ([BINDINGS.md](BINDINGS.md)); on the command line it is refused with exit code `2`. |
 
 The subcommand is the first argument, when it is exactly one of those words. Any other first
@@ -56,6 +58,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--lf`, `--ff` | Only what failed last time; what failed last time first. The history lives in `stdpath("state")/testing/<project>/runs.jsonl`, is bounded, and is a convenience: it is never part of the verdict. |
 | `--list`, `--dry-run` | List what would run, run nothing. |
 | `--shard <i>/<n>` | Run only shard `i` (1-based) of `n`: a deterministic partition of the spec files for CI matrices, see [Sharding](#sharding). Works with `--list`. |
+| `--cache-dir <dir>` | Base directory of the result cache (default `stdpath("cache")`; the environment variable `TESTING_CACHE_HOME` does the same, the flag wins). The project folder is below it; `cache = { project_key = ... }` in `.testing.lua` names that folder after a key instead of the checkout path. For a cache that travels between CI runners: [CI-CACHE.md](CI-CACHE.md). |
 | `--cached`, `--no-cache`, `--cache-refresh`, `--cache-clear` | The result cache: a spec file whose inputs are byte-identical to an earlier green run does not run, and its cases are reported as cached. Off unless asked for; `--no-cache` always wins. See [Result cache](#result-cache). |
 | `--cache-audit <0..1\|all>` | Run that share of the cache hits anyway and compare with the stored result: a difference is the finding `cache.stale_pass` and exit `1`; the measured stale-pass rate is on the cache line and in `run.cache` of the IR. Implies `--cached`; excludes `--cache-refresh`. See [Explain and audit](#explain-and-audit). |
 | `--changed`, `--since <rev>`, `--affected[=<rev>]` | Only the specs the changes can reach (working tree against `HEAD`, against `<rev>`, or the last commit). A partial run: never a sentinel. See [Affected selection](#affected-selection). `--affected` takes its revision only as `--affected=<rev>`: a bare `--affected` never swallows the next argument. |
@@ -219,12 +222,47 @@ testing . --cached --cache-audit all    # re-run every cache hit and compare: th
 
 `testing explain` takes the spec as a path, a directory or a part of a file name, plus the options of a run, because
 the key depends on them (`--changed` / `--since` / `--affected` add the selection: "left out by --changed"). It runs
-nothing and writes nothing; exit `0`, `2` for a spec that matches nothing. `--cache-audit` re-runs the given share of
+nothing and writes nothing; exit `0`, `2` for a spec that matches nothing and for `--shuffle` without `--seed` (the seed of a shuffled run is part of its key, and a run without `--seed` draws a new one each time, so there is no key to explain: `testing explain . x_spec --shuffle --seed 7` explains the key of that run). `--cache-audit` re-runs the given share of
 the hits (`0` to `1`, or `all`; a nightly CI job on the main branch is the intended use) and compares the cases and
 statuses with the stored entry; a difference is `cache.stale_pass` (with the file, the first key lines and both
 possible causes: an input the key cannot see, or a flaky spec), the entry is dropped, and the run exits `1`.
 A spec whose key gave two different results is marked `nondeterministic` and not cached any more (explained by
 `testing explain`). [CACHE.md](CACHE.md) has the rules.
+
+### Stamp and verify
+
+```sh
+testing stamp .                          # run everything; after a COMPLETE green run write the stamp (state directory)
+testing stamp . --out ci/stamp.json --note   # a chosen file, and a git note on the tree (refs/notes/testing)
+testing verify .                         # no spec runs: is the tree still the stamped one?
+testing verify . --json                  # one document (testing-verify/1)
+testing verify . --stamp ci/stamp.json --max-age 3d
+```
+
+`stamp` is a run (every option of a run applies, because the cache keys depend on them). When its verdict is `green` it
+writes, for every spec file, the cache key or the reason there is none, plus runner digest, Neovim version, OS and
+configuration digest, the commit and the tree. Any other verdict writes nothing and exits `1`: you asked for a stamp
+and did not get one. `--changed`, `--since`, `--affected`, `--filter`, `--file`, `--tags`, `--exclude-tags`, `--lf`,
+`--shard`, `--maxfail`, `--list`, `--watch`, `--shuffle` and path arguments are refused with exit `2`.
+
+`verify` recomputes the keys (roughly editor start plus the keys: a few tenths of a second, not milliseconds) and says
+exactly one of
+
+| Answer | Meaning | Exit |
+| --- | --- | --- |
+| `verified` | every file of the stamp has the same key now, the stamp is young enough, the tree is clean, the stamp is trusted | `0`, and the sentinel as last line |
+| `partial` | nothing a key can see changed, but some files have no key (clock, process, ...): they are not proven. The command to run them is printed | `1`, never the sentinel |
+| `changed` | a file has another key, is gone, or is new; for a changed file the explanation of `testing explain` (which dependency, which environment name) when the cache still holds the entry of the stamped key | `1` |
+| `rejected` | runner, Neovim, OS/architecture or configuration differ from the stamp (the cause is named) | `1` |
+| `expired` | older than `--max-age` (default `7d`; `s`, `m`, `h`, `d`) | `1` |
+| `dirty` | `git status` is not empty: what is checked is not the committed tree (`--allow-dirty` overrules, explicitly) | `1` |
+| `untrusted` | a local stamp in CI, a CI stamp that was not written on a trusted ref, a missing or wrong HMAC | `1` |
+| `invalid`, `no-stamp` | the file is not a usable stamp (size, JSON, schema, digest, time), or there is none | `1` |
+
+A partial proof is never green. `2` is a usage error (an unknown flag, a bad duration, a secret under 16 characters), `3`
+an internal failure. `--json` prints the document instead of lines (no sentinel in it). The default stamp file is
+`stamp.json` beside `runs.jsonl` in the state directory of the project, not in the checkout (a file in the tree would
+make it dirty). The rules and what the stamp can and cannot prove: [CACHE.md](CACHE.md#stamp).
 
 ### Affected selection
 

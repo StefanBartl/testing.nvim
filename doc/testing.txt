@@ -161,7 +161,7 @@ finding lib.nvim while the editor works), an info is something not checked.
 8. Command-line runner                                                *testing-cli*
 
 >sh
-    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain] [{root}] [options]
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|stamp|verify] [{root}] [options]
     nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [{path}] [options]
 <
 Run it from {root}: specs that look at "this repository" read the working
@@ -176,7 +176,10 @@ paths of a run against a baseline), `conformance` (the checks K1..K15) and
 those two have their own arguments and exit codes (docs/CONFORMANCE.md,
 docs/SURFACE.md). `explain` says why a spec file is selected, taken from the
 cache, run or left out, and what its cache key is made of (see "Explain and
-audit" below). `init` is available as |:Testing| init only.
+audit" below). `stamp` runs the suite and, after a complete green run, writes
+the green stamp; `verify` answers from the cache keys, without running a spec,
+whether the tree is still the stamped one (see "Stamp and verify" below).
+`init` is available as |:Testing| init only.
 
 Selection ~
   --file {text}      Only spec files whose file name contains {text}
@@ -210,6 +213,11 @@ Selection ~
                      the change reaches (documentation.nvim). A hint, it never
                      changes what runs here. Also `affected.consumers` in
                      `.testing.lua`.
+  --cache-dir {dir}  Base directory of the result cache (default stdpath('cache');
+                     env TESTING_CACHE_HOME; the flag wins). `cache = {
+                     project_key = ... }` in .testing.lua names the project
+                     folder after a key instead of the checkout path
+                     (docs/CI-CACHE.md).
   --cached, --no-cache, --cache-refresh, --cache-clear
                      The result cache: a spec file whose inputs are
                      byte-identical to an earlier green run does not run and is
@@ -282,7 +290,8 @@ Explain and audit ~
                      variable by name, the Neovim version or the configuration
                      changed since the stored entry) or `uncacheable` (the
                      file and line of what makes it so, and the way out:
-                     `-- @cache-allow`, `-- @cache-inputs`, `env_allow`,
+                     `-- @cache-allow`, `-- @cache-inputs`, `-- @cache-env`,
+                     `env_allow`,
                      `-- @cache off`). {spec} is a path, a directory or a part
                      of a file name; the options of a run are accepted (the
                      key depends on them). It changes nothing.
@@ -290,6 +299,32 @@ Explain and audit ~
                      files without a key, most frequent first.
     --json           One JSON document (testing-explain/1).
     --parts          The lines the key is the hash of.
+Stamp and verify ~
+  stamp              A run that writes the green stamp after the verdict
+                     `green` only (never for a partial or red run: exit 1;
+                     options that select part of the suite are refused, exit
+                     2). The stamp holds, per spec file, the cache key or the
+                     reason there is none, plus runner, Neovim, OS and
+                     configuration digests, commit and tree. No secrets.
+    --out {file}     Where to write it (default: `stamp.json` in the state
+                     directory of the project, not in the checkout).
+    --note           Also attach it to the tree object as a git note under
+                     refs/notes/testing.
+  verify             Recompute the keys and answer: `verified` (exit 0 and the
+                     sentinel, only when EVERY file is proven), `partial`
+                     (files without a key are not proven; never green),
+                     `changed`, `rejected` (other runner, Neovim, OS or
+                     configuration), `expired`, `dirty`, `untrusted`,
+                     `invalid`, `no-stamp` (all exit 1).
+    --stamp {file}   Read this stamp instead of the default one.
+    --from-note      Read the git note of the tree of HEAD.
+    --max-age {dur}  Oldest accepted stamp (7d; s, m, h, d).
+    --allow-dirty    Check a dirty working tree anyway (said in the answer).
+    --require-hmac   Refuse a stamp unless TESTING_STAMP_SECRET is set.
+    --json           One JSON document (testing-verify/1).
+                     TESTING_STAMP_SECRET (16 characters or more) adds an
+                     HMAC when writing and checks it when verifying.
+                     docs/CACHE.md, "Stamp".
   --cache-audit {0..1|all}
                      see Selection: a share of the hits runs anyway; a
                      difference is `cache.stale_pass`. A spec whose key gave

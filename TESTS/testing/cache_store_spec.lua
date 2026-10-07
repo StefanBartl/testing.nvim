@@ -2,6 +2,8 @@
 -- entry that is untrusted input when read back (corrupted, foreign, forged, oversized), the size / age /
 -- count bounds, `clear` in place, `wrap_file` with `--no-cache` and `--cache-refresh`, and the hash index.
 
+-- @cache-allow time
+-- (ages are built relative to now (entries N days old): the result does not depend on the time of day)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

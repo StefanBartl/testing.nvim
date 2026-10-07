@@ -49,13 +49,21 @@ local function is_key(s)
 end
 M.is_key = is_key
 
+---The project key of the directory name when `.testing.lua` sets `cache.project_key` (set by the CLI for the run,
+---nil otherwise): the folder then does not depend on the absolute path of the checkout, so a cache restored on a
+---runner with another checkout path is found. It is a NAME only; every entry still carries its full key.
+---@type string|nil
+M.project_key = nil
+
 ---Directory of the cache of a project.
 ---@param root string
----@param opts? { cache_dir?: string }
+---@param opts? { cache_dir?: string, project_key?: string }
 ---@return string
 function M.dir(root, opts)
   local base = (opts and opts.cache_dir) or vim.fn.stdpath("cache")
-  local key = require("lib.nvim.fs.project_key")(root)
+  local key = (opts and opts.project_key)
+    or M.project_key
+    or require("lib.nvim.fs.project_key")(root)
   local name = (key:match("([^/\\]+)[/\\]*$") or "project"):gsub("[^%w_.%-]", "_")
   return ("%s/testing/%s-%s"):format(base, name, vim.fn.sha256(key):sub(1, 12))
 end

@@ -97,7 +97,11 @@ return function(H)
     "--shard",
     "--since",
   }, "list offers its flags")
-  eq(sorted(complete("Testing init --")), { "--force", "--plugin" }, "init offers its flags")
+  eq(
+    sorted(complete("Testing init --")),
+    { "--force", "--hooks", "--plugin" },
+    "init offers its flags"
+  )
   eq(complete("Testing file --"), { "--rtp" }, "file offers its flag")
   eq(complete("Testing migrate --"), { "--fleet-root" }, "migrate offers its flag")
   local modes = complete("Testing migrate ")

@@ -2,6 +2,8 @@
 -- red or incomplete run green, or a green run red, or let hostile text reach a log. Each block
 -- states the failure it guards against.
 
+-- @cache-env USER USERNAME
+-- (read for the redaction of the user name: the values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

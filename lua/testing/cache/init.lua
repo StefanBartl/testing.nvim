@@ -1,4 +1,5 @@
 ---@module 'testing.cache'
+-- @cache-allow env
 ---@brief Content-addressed result cache (F1): a spec file whose inputs did not change does not run.
 ---@description
 --- GRANULARITY: one entry per spec FILE (the Result-IR case list of that file). Only a file whose
@@ -15,8 +16,10 @@
 ---     contains it), found in the project, `ctx.dep_roots` or the runtime path,
 ---   * the files it reads (see "Hidden inputs"),
 ---   * the runner version (a content digest of `lua/testing`, so a dirty checkout differs from a clean one),
----   * the Neovim version, the OS and the CPU architecture,
----   * the names AND values (hashed) of the environment variables the configuration lists,
+---   * the Neovim version, its API level, the OS and the CPU architecture,
+---   * the names AND values (hashed) of the environment variables the configuration lists, and of those a file of the
+---     closure declares with `-- @cache-env` (`NAME`, `PREFIX_*`, `*_DIR`, `*`),
+---   * for a file that runs in a child editor: the environment that child sees, one line per variable,
 ---   * a digest of the configuration (`ctx.config`) and the content of `.testing.lua`,
 ---   * the dialect, and the seed when the run is shuffled.
 ---
@@ -29,7 +32,8 @@
 --- that
 ---   * reads the clock or a random number (`os.time`, `hrtime`, `math.random`, ...),
 ---   * starts a process or touches the network (`vim.system`, `jobstart`, `io.popen`, `curl`, ...),
----   * reads an environment variable that the configuration does not list, or computes a name,
+---   * reads an environment variable that the configuration does not list, or computes a name or reads the whole
+---     environment without declaring the variables with `-- @cache-env`,
 ---   * has a `require` nobody can resolve (unknown module),
 ---   * has `-- @cache off` in its header, or has dependencies that are too many to hash,
 --- is never cached. A spec that reads files gets those files into the key: the non-spec files of its
@@ -120,7 +124,7 @@ local memo = {}
 ---@field dialect? string
 ---@field deps? string[] Dependencies known from a graph (project-relative); with `deps_complete` they replace the scan.
 ---@field deps_complete? boolean
----@field child_env? string Digest of the environment a child editor of this file sees (`testing.child.env.sanitize` of the parent's environment): the file runs in a child, so EVERY variable it can read is part of the key and none is judged by name.
+---@field child_env? string|string[] The environment a child editor of this file sees from the parent (lines `NAME=<sha256 of the value>`, or one digest; see `testing.run.cached.child_env_lines`): the file runs in a child, so EVERY variable it can read is part of the key and none is judged by name.
 ---@field extra? string[] Files that decide what the spec does without being required by it (the project's `minit`, the harness of a dialect-h spec): relative to the root or absolute, hashed into the key.
 
 ---@class Testing.Cache.Flags
@@ -225,12 +229,12 @@ local function nvim_version(ctx)
   local v = vim.version()
   local jit_os = (jit and jit.os) or "?"
   local jit_arch = (jit and jit.arch) or "?"
-  return ("%s|api%s|%s|%s"):format(
-    tostring(v),
-    tostring(vim.fn.api_info().api_level),
-    jit_os,
-    jit_arch
-  )
+  -- `api_info().version.api_level` is the API level; `api_info().api_level` does not exist (it was nil, and
+  -- the key carried the word "apinil")
+  local info = vim.fn.api_info()
+  local level = type(info) == "table" and type(info.version) == "table" and info.version.api_level
+    or nil
+  return ("%s|api%s|%s|%s"):format(tostring(v), level and tostring(level) or "?", jit_os, jit_arch)
 end
 
 ---Are environment variable names case-insensitive here? On Windows they are (the system reports them in upper
@@ -259,22 +263,39 @@ local function env_lines(ctx, extra)
     return ci and n:upper() or n
   end
   local names = {}
+  ---One listed name or pattern: a plain name, `PREFIX*`, or a pattern with `*` anywhere (`*_DIR`, `A*B`; `*`
+  ---alone is the whole environment). The pattern itself is part of the key (`*<pattern>`): a new variable that
+  ---it matches changes the key.
+  ---@param entry string
+  local function list(entry)
+    if not entry:find("*", 1, true) then
+      names[norm(entry)] = true
+      return
+    end
+    local pat = norm(entry)
+    local head = pat:sub(1, -2)
+    local lua_pat
+    if pat:sub(-1) == "*" and not head:find("*", 1, true) then
+      lua_pat = "^" .. vim.pesc(head)
+      names["*" .. head] = true
+    else
+      lua_pat = "^" .. vim.pesc(pat):gsub("%%%*", ".*") .. "$"
+      names["*" .. pat] = true
+    end
+    for name in pairs(environ) do
+      -- `=C:` and friends: Windows keeps the per-drive working directory in hidden variables that no `getenv`
+      -- returns and that move with every `chdir` of the run (the key would never survive its own run)
+      if name:sub(1, 1) ~= "=" and norm(name):find(lua_pat) then
+        names[norm(name)] = true
+      end
+    end
+  end
   for name in pairs(extra or {}) do
-    names[norm(name)] = true
+    list(name)
   end
   for _, entry in ipairs(ctx.env_names or {}) do
     if type(entry) == "string" then
-      if entry:sub(-1) == "*" then
-        local prefix = norm(entry:sub(1, -2))
-        for name in pairs(environ) do
-          if norm(name):sub(1, #prefix) == prefix then
-            names[norm(name)] = true
-          end
-        end
-        names["*" .. prefix] = true -- the prefix itself is part of the key: a new variable changes it
-      else
-        names[norm(entry)] = true
-      end
+      list(entry)
     end
   end
   local sorted = {}
@@ -320,6 +341,29 @@ local function env_listed(ctx, name)
       if entry:sub(-1) == "*" and name:sub(1, #entry - 1) == entry:sub(1, -2) then
         return true
       end
+    end
+  end
+  return false
+end
+
+---Does a `-- @cache-env` declaration of the file name the variable? (an exact name, `PREFIX_*`, `*_DIR`, `*`)
+---@param declared string[]
+---@param name string
+---@param ci boolean Names are case-insensitive here.
+---@return boolean
+local function env_declared(declared, name, ci)
+  if ci then
+    name = name:upper()
+  end
+  for _, d in ipairs(declared) do
+    if ci then
+      d = d:upper()
+    end
+    if
+      d == name
+      or (d:find("*", 1, true) and name:find("^" .. vim.pesc(d):gsub("%%%*", ".*") .. "$"))
+    then
+      return true
     end
   end
   return false
@@ -794,11 +838,27 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
         return no("network", "may use the network", "net")
       end
       if not env_covered then
-        if m.env_dynamic then
+        -- `-- @cache-env <names|patterns|*>`: the author names the variables a computed read can reach (`*`: the
+        -- whole environment): their values join the key, so the read is no hidden input any more
+        local declared = info.directives.env or {}
+        local whole_declared = false
+        for _, d in ipairs(declared) do
+          agg.env[d] = true
+          whole_declared = whole_declared or d == "*"
+        end
+        -- `-- @cache-allow env`: the author vouches that what a spec sees does not depend on the outer values of the
+        -- variables this file reads by a computed name or as a whole (a snapshot that is compared with itself, a
+        -- redaction of the user name): declared names still join the key
+        if allow.env then
+          whole_declared = true
+        elseif m.env_computed and #declared == 0 then
           return no("env_dynamic", "reads the environment by a computed name")
         end
+        if m.env_whole and not whole_declared then
+          return no("env_dynamic", "reads the whole environment")
+        end
         for _, name in ipairs(m.env) do
-          if not env_listed(ctx, name) then
+          if not env_listed(ctx, name) and not env_declared(declared, name, env_ci(ctx)) then
             if who then
               agg.env[name] = true -- a module of the project: the value joins the key
             else
@@ -823,9 +883,13 @@ local function aggregate(spec_info, spec_abs, members, ctx, env_covered)
       agg.dirscan = agg.dirscan or m.dirscan
       agg.dynload = agg.dynload or m.dynload
       agg.pathmod = agg.pathmod or m.pathmod
-      agg.outside = agg.outside or m.outside
-      for _, lit in ipairs(info.outside_paths or {}) do
-        agg.outside_literals[#agg.outside_literals + 1] = { lit = lit, dir = dir }
+      -- `-- @cache-allow outside`: the author vouches that the places outside the project this file names
+      -- (`".."` in path arithmetic, a sibling-checkout lookup) are not read for what a spec sees
+      if not allow.outside then
+        agg.outside = agg.outside or m.outside
+        for _, lit in ipairs(info.outside_paths or {}) do
+          agg.outside_literals[#agg.outside_literals + 1] = { lit = lit, dir = dir }
+        end
       end
     end
     return nil
@@ -1092,7 +1156,12 @@ function M.key(file_info, ctx)
     "seed " .. (ctx.shuffled and tostring(ctx.seed) or "-"),
   }
   vim.list_extend(parts, env)
-  if file_info.child_env then
+  if type(file_info.child_env) == "table" then
+    -- one line per variable (`NAME=<sha256 of the value>`): `testing explain` names the one that changed
+    for _, line in ipairs(file_info.child_env) do
+      parts[#parts + 1] = "child-env " .. line
+    end
+  elseif file_info.child_env then
     parts[#parts + 1] = "child-env " .. file_info.child_env
   end
   vim.list_extend(parts, dep_lines)

@@ -3,6 +3,8 @@
 -- a computed require is followed, a file nobody can place selects ALL, a stale or incomplete graph selects
 -- ALL, CI never defaults to a partial run, and the documentation.nvim contract is consumed defensively.
 
+-- @cache-env A B
+-- (the two variables the spec sets and reads itself: their outer values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

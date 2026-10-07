@@ -1,4 +1,5 @@
 ---@module 'testing.rpc.trace'
+-- @cache-allow env
 ---@brief The trace of an RPC child: a bounded ring of the last calls and events, written on timeout or crash.
 ---@description
 --- When a child hangs or dies the question is always "what was it doing?". The driver keeps, in the

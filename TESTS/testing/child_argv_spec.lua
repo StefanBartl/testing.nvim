@@ -2,6 +2,8 @@
 -- one: an argv LIST (never a shell string), the project root as the working directory, a constant
 -- command line (no user text in it), the allowlisted environment plus the sandbox, the job file.
 
+-- @cache-allow outside
+-- ("C:\real" is a fake TEMP value of a sanitizer test, no path is read)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

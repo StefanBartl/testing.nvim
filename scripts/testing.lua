@@ -48,7 +48,13 @@ end
 -- and handed down: the library itself never looks at it, so a spec that calls `cli.main` is not switched by the
 -- environment it runs in (testing.report.agent.choose).
 local env = {}
-for _, name in ipairs({ "TESTING_REPORTER", "TESTING_AGENT", "AI_AGENT", "CLAUDECODE" }) do
+for _, name in ipairs({
+  "TESTING_REPORTER",
+  "TESTING_AGENT",
+  "AI_AGENT",
+  "CLAUDECODE",
+  "TESTING_CACHE_HOME",
+}) do
   env[name] = os.getenv(name)
 end
 local ok_run, code = pcall(cli.main, arg or {}, { env = env, script = this })

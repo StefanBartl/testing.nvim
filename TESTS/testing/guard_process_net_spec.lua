@@ -3,6 +3,8 @@
 -- dynamic allow lets a call through (still logged), the runner's own calls outside the case window and
 -- inside `suspended` are never touched.
 
+-- @cache-allow net
+-- (the calls are made against the guard, which blocks them: nothing leaves the process)
 return function(H)
   local ok, eq = H.ok, H.eq
   local dir = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

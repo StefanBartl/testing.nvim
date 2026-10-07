@@ -1,6 +1,8 @@
 -- TESTS/testing/rpc_trace_spec.lua -- the trace of an RPC child: bounded rings, the file (size cap,
 -- redaction through the IR kernel, atomic write), the artifact record (`<RUN>/...` or the absolute path).
 
+-- @cache-env USER USERNAME
+-- (read for the redaction of the user name: the values join the key)
 return function(H)
   local ok = H.ok
   local function eq(actual, expected, msg)

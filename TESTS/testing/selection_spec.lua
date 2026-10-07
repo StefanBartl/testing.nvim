@@ -1,6 +1,8 @@
 -- TESTS/testing/selection_spec.lua -- selection and order of a run (testing.run.select): literal
 -- filters, the tag syntax, --lf/--ff grouping, the deterministic shuffle with its seed.
 
+-- @cache-allow random
+-- (`math.random` only checks that the private shuffle PRNG does not touch it)
 return function(H)
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)

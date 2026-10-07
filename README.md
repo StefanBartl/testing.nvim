@@ -180,7 +180,10 @@ code and the measurements of this repository show, and to what the documentation
   anywhere is invisible to it. Two procedures measure and catch that instead of asserting it away: `--cache-audit`
   re-runs a share of the hits and reports the **measured stale-pass rate**, and a spec whose key gave two different
   results is marked nondeterministic. `testing explain <spec>` says why a file was selected, taken from the cache or
-  run, and what changed since its stored entry.
+  run, and what changed since its stored entry. `testing stamp` writes, after a complete green run, a small stamp of every
+  file's key, and `testing verify` answers from the keys, without running a spec, whether anything a key can see
+  changed since: `verified` (exit 0, sentinel) only when every file is proven, otherwise `partial`, `changed`,
+  `expired`, `dirty` or `untrusted`, never green.
 - **Guards and an effects ledger** that measure whether a spec is pure (processes, network, writes outside the
   temp directory, leftover state, deprecations, a clock). The cache refuses a file the ledger saw an effect in.
 - **A result format with deterministic bytes** (the Result-IR: sorted keys, redacted, validated after writing) that
@@ -294,6 +297,8 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua . --cached           # skip spec files whose inputs did not change
 ... -l scripts/testing.lua . --changed          # only the specs the working tree can reach
 ... -l scripts/testing.lua explain . TESTS/x_spec.lua   # why it was selected, cached or run, and what changed
+... -l scripts/testing.lua stamp .              # after a complete green run: write the green stamp
+... -l scripts/testing.lua verify .             # no spec runs: is the tree still the stamped one?
 ... -l scripts/testing.lua . --cached --cache-audit all # re-run every cache hit: the measured stale-pass rate
 ... -l scripts/testing.lua conformance .        # the conformance checks K1 to K15
 ... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
@@ -349,7 +354,9 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
-- [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format.
+- [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format, the green stamp.
+- [docs/CI-CACHE.md](docs/CI-CACHE.md): the result cache and the stamp in CI with `actions/cache`.
+- [docs/HOOKS.md](docs/HOOKS.md): pre-push, pre-commit and Claude Code `Stop` hook recipes.
 - [docs/CONFORMANCE.md](docs/CONFORMANCE.md): the checks K1 to K15 and how a repository adopts them.
 - [docs/SURFACE.md](docs/SURFACE.md): the surface of a plugin and the binding coverage.
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): `--profile`, `testing budget`, the worker pool, measured numbers.

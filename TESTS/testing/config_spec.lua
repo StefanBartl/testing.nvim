@@ -1,5 +1,7 @@
 -- TESTS/testing/config_spec.lua -- testing.config: validation, merge over the defaults, reset.
 
+-- @cache-allow outside
+-- (".." and "../x" are the BAD values of a path validator, no path is read)
 return function(H)
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)

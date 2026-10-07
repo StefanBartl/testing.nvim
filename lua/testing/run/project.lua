@@ -1136,6 +1136,26 @@ function M.execute_run(plan, sv, run_opts, err)
     return M.EXIT_INFRA
   end
 
+  -- `testing stamp`: a stamp only for the verdict `green`; a run that earned none exits 1 (asked for, not given)
+  if plan.stamp then
+    local sok, stamped = pcall(require("testing.stamp.write").after_run, {
+      plan = plan,
+      sv = sv,
+      run_opts = run_opts,
+      ordered = ordered,
+      disc = disc,
+      res = res,
+      verdict = verdict,
+      err = err,
+    })
+    if not sok then
+      err("testing: stamp: not written: " .. tostring(stamped))
+    end
+    if not (sok and stamped) and code == M.EXIT_OK then
+      code = M.EXIT_FAILED
+    end
+  end
+
   -- the sentinel: last line, only for the verdict `green` (a complete run, nothing skipped, stopped or accepted as
   -- flaky). The agent reporter says the same in its first line (`GREEN` only where this prints the sentinel), and
   -- prints neither. The text of a partial run comes from the verdict itself (`verdict.reasons`).

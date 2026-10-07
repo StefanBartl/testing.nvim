@@ -7,7 +7,7 @@
 ---   :Testing file [<spec>]       run the spec of the current buffer (mapping a source file to its spec is M3)
 ---   :Testing last                repeat the last run
 ---   :Testing list [<root>] ...   list what would run
----   :Testing init [<root>] [--force] [--plugin=<name>]   generate the test setup of a plugin repo
+---   :Testing init [<root>] [--force] [--plugin=<name>] [--hooks]   generate the test setup of a plugin repo (--hooks: the git and agent hook recipes instead, never over an existing file)
 ---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
 ---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
 ---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
@@ -299,12 +299,13 @@ function M.routes()
       flags = {
         { name = "force", bool = true },
         { name = "plugin", type = "STRING" },
+        { name = "hooks", bool = true },
       },
       run = function(ctx)
         local root = ctx.args.root and abs(ctx.args.root) or abs(vim.fn.getcwd())
         local result = require("testing.scaffold").init(
           root,
-          { force = ctx.flags.force, plugin = ctx.flags.plugin }
+          { force = ctx.flags.force, plugin = ctx.flags.plugin, hooks = ctx.flags.hooks }
         )
         local lines = {}
         if #result.created > 0 then

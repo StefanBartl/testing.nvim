@@ -358,6 +358,20 @@ return function(H)
   local missing = run({ "explain", root, "no_such_spec" })
   eq(missing.code, 2, "a spec that matches nothing is a usage error")
   has(missing.err, "no spec file matches", "and says so")
+  -- a shuffled run's key holds its seed, and a run without --seed draws one each time: no seed, no key to explain
+  local noseed = run({ "explain", root, "a_spec", "--shuffle" })
+  eq(noseed.code, 2, "--shuffle without --seed is a usage error")
+  has(noseed.err, "--shuffle needs --seed", "and says what is missing")
+  eq(noseed.out, "", "no key is printed for it")
+  eq(run({ "explain", root, "--all", "--shuffle", "--json" }).code, 2, "also for --all and --json")
+  local seeded = json({ "explain", root, "a_spec", "--shuffle", "--seed", "7", "--json" })
+  local plain = json({ "explain", root, "a_spec", "--json" })
+  local other = json({ "explain", root, "a_spec", "--shuffle", "--seed", "8", "--json" })
+  ok(seeded.specs[1].key ~= nil, "with a seed the key is explained")
+  ok(
+    seeded.specs[1].key ~= plain.specs[1].key and seeded.specs[1].key ~= other.specs[1].key,
+    "the seed is part of the key it explains"
+  )
   local bare = run({ "explain", "--all", "--json" })
   ok(bare.code == 0 or bare.code == 2 or bare.code == 3, "a missing root does not raise")
 

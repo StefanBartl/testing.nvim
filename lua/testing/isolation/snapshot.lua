@@ -1,4 +1,5 @@
 ---@module 'testing.isolation.snapshot'
+-- @cache-allow env
 ---@brief The internal state backend of the soft isolation: capture, diff, restore.
 ---@description
 --- A backend is three functions with the shapes below; `testing.isolation` uses this one unless the

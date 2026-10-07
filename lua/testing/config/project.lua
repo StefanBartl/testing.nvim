@@ -538,6 +538,12 @@ local SCHEMA = {
       check = is_bool,
       expect = "true or false (true: reuse results without --cached; ignored in CI)",
     },
+    project_key = {
+      check = function(v)
+        return type(v) == "string" and v:match("^[%w][%w_.%-]*$") ~= nil and #v <= 64
+      end,
+      expect = "a name of letters, digits, '_', '.', '-' (at most 64): the cache folder is named after it, not after the checkout path",
+    },
   },
   coverage = {
     bindings = { check = is_unit, expect = "a number between 0 and 1" },

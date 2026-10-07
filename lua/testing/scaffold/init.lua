@@ -67,6 +67,17 @@ M.FILES = {
   { path = ".gitattributes", template = "gitattributes.tpl" },
 }
 
+---The hook recipes (`opts.hooks`, `:Testing init --hooks`): written beside the setup, never over an existing file
+---(`force` does not apply to them: a hook file of yours is not ours to replace). Installing them is a command of
+---yours (`git config core.hooksPath scripts/hooks`), see docs/HOOKS.md.
+---@type Testing.Scaffold.FileSpec[]
+M.HOOK_FILES = {
+  { path = "scripts/hooks/_testing.sh", template = "hook_testing.sh.tpl" },
+  { path = "scripts/hooks/pre-push", template = "hook_pre_push.tpl", exec = true },
+  { path = "scripts/hooks/pre-commit", template = "hook_pre_commit.tpl", exec = true },
+  { path = "scripts/hooks/claude-stop", template = "hook_claude_stop.tpl", exec = true },
+}
+
 ---Longest accepted plugin name.
 local MAX_NAME = 64
 
@@ -455,7 +466,7 @@ function M.init(root, opts)
     -- Render everything first: a problem must not leave half a setup behind.
     ---@type { path: string, rel: string, text: string, spec: Testing.Scaffold.FileSpec }[]
     local planned = {}
-    for _, spec in ipairs(M.FILES) do
+    for _, spec in ipairs(opts.hooks and M.HOOK_FILES or M.FILES) do
       local rel, rerr = render.render(spec.path, vars)
       local tpl, terr = read_template(dir, spec.template)
       local text, xerr
@@ -473,7 +484,8 @@ function M.init(root, opts)
     end
 
     for _, item in ipairs(planned) do
-      local outcome, werr = write_file(item.path, item.text, item.spec, opts.force == true)
+      local outcome, werr =
+        write_file(item.path, item.text, item.spec, opts.force == true and not opts.hooks)
       if outcome == "created" then
         result.created[#result.created + 1] = show(item.path, abs)
       elseif outcome == "replaced" then
