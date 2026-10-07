@@ -234,11 +234,12 @@ end
 ---Apply the waivers to the findings of the check results (in place).
 ---@param results Testing.Conformance.CheckResult[]
 ---@param waivers Testing.Conformance.Waiver[]
----@param now? integer Unix time (specs); the day of `expires` is compared with today's date.
+---@param now? integer Unix time (specs); the day of `expires` is compared with today's UTC date, so a waiver
+---  expires at the same instant on every machine whatever its time zone.
 ---@return string[] stale Waivers that matched nothing, expired ones, and unscoped ones that hide errors.
 function M.apply_waivers(results, waivers, now)
   local used, hidden_errors, expired = {}, {}, {}
-  local today = os.date("%Y-%m-%d", now or os.time()) --[[@as string]]
+  local today = os.date("!%Y-%m-%d", now or os.time()) --[[@as string]]
   for i, w in ipairs(waivers) do
     expired[i] = w.expires ~= nil and w.expires < today
   end

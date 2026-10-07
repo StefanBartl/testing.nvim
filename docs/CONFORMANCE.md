@@ -184,7 +184,7 @@ message must contain, and **must carry a reason** of at least 8 characters; one 
 in `problems`. A waived finding stays in the report (`waived = true` with its reason) and does not count; a
 waiver that matches nothing is reported as stale. Two optional keys narrow a waiver: `level = "warn"` (only
 findings of that level: a waiver for the warnings never hides an error) and `expires = "2027-01-31"` (a real
-day; after it the waiver no longer applies and `problems` says that it expired). A waiver with none of `rule`,
+day in UTC; after that day ends in UTC the waiver no longer applies and `problems` says that it expired, on every machine at the same instant whatever its time zone). A waiver with none of `rule`,
 `file`, `text` or `level` that hides an error finding is named in `problems` ("narrow it"). A key that is invalid or an unknown check id in `skip`
 is a problem that names it, and the default stays (a typo must not silently switch a check off).
 

@@ -60,8 +60,14 @@ function M.valid_date(s)
   if not y then
     return false
   end
-  local t = os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
-  return t ~= nil and os.date("%Y-%m-%d", t) == s
+  -- pure calendar arithmetic: no time zone, no daylight saving, no platform limit on the year
+  local year, month, day = tonumber(y), tonumber(m), tonumber(d)
+  if month < 1 or month > 12 or day < 1 then
+    return false
+  end
+  local leap = (year % 4 == 0 and year % 100 ~= 0) or year % 400 == 0
+  local days = { 31, leap and 29 or 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+  return day <= days[month]
 end
 
 ---Keys of `conformance` this module owns (the project loader's "unknown key" warnings for them are dropped).
