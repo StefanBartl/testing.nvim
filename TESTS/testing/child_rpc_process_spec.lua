@@ -218,6 +218,10 @@ return function(H)
       end),
       "an editor whose client went away quits by itself"
     )
+    -- the pid is gone before the exit callback of the handle ran: wait for the state to follow
+    S.wait(2000, function()
+      return sc.status().state ~= "running"
+    end)
     eq(sc.status().state, "exited", "which is 'exited', not 'crashed'")
     ok(not pcall(sc.lua, "return 1"), "and calls to it raise")
 
