@@ -163,6 +163,33 @@ function G:refresh_roots()
   self.cache = {}
 end
 
+---The `ignore_patterns` the tree walk may use: the well formed ones. A pattern that raises on a file name (`a[`,
+---`%.log%`) would end the whole snapshot (`Handle:snapshot` keeps only a note), and a child process that wrote a file
+---would not be seen at all, in `mode = "error"` too. So a broken entry is dropped once, with a note: the walk then sees
+---MORE files, never fewer. Computed once per guard.
+---@return string[]
+function G:ignore_patterns()
+  if self.scan_patterns then
+    return self.scan_patterns
+  end
+  local pattern = require("testing.config.pattern")
+  local out = {}
+  for _, pat in ipairs(as_list(self.cfg.ignore_patterns)) do
+    local ok, why = pattern.check(pat)
+    if ok then
+      out[#out + 1] = pat
+    else
+      local shown = vim.inspect(type(pat) == "string" and pat:sub(1, 60) or tostring(pat))
+      self.h.notes[#self.h.notes + 1] = ("fs guard: ignore_patterns entry %s is not a valid Lua pattern (%s): it is not applied, so the snapshot sees the files it would have hidden"):format(
+        shown,
+        why
+      )
+    end
+  end
+  self.scan_patterns = out
+  return out
+end
+
 ---@param k string resolved key
 ---@return boolean
 function G:is_allowed(k)
@@ -498,7 +525,7 @@ function G:snapshot(opts)
   local trees = {}
   for _, root in ipairs(self:watch_roots()) do
     local files, truncated =
-      scan(root, ignore, self.cfg.ignore_patterns, self.cfg.max_files, self.cfg.max_depth)
+      scan(root, ignore, self:ignore_patterns(), self.cfg.max_files, self.cfg.max_depth)
     trees[root] = { files = files, truncated = truncated }
     if truncated then
       self.h.notes[#self.h.notes + 1] = ("fs guard: snapshot of %s is truncated (max_files/max_depth): changes below the cut are not seen"):format(
@@ -519,7 +546,7 @@ function G:check(snap, ctx)
   local label = h:label(ctx)
   for root, before in pairs(snap.trees) do
     local after =
-      scan(root, snap.ignore, self.cfg.ignore_patterns, self.cfg.max_files, self.cfg.max_depth)
+      scan(root, snap.ignore, self:ignore_patterns(), self.cfg.max_files, self.cfg.max_depth)
     local changes = {}
     for rel, sig in pairs(after) do
       if before.files[rel] == nil then

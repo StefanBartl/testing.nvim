@@ -305,12 +305,17 @@ Stamp and verify ~
                      options that select part of the suite are refused, exit
                      2). The stamp holds, per spec file, the cache key or the
                      reason there is none, plus runner, Neovim, OS and
-                     configuration digests, commit and tree. No secrets.
+                     configuration digests, commit and tree, all taken before
+                     the first spec runs (an input that changed while the
+                     specs ran: no stamp, exit 1). The report says so in its
+                     first line (`RED ... exit 1`, `verdict: red`), never
+                     green. No secrets.
     --out {file}     Where to write it (default: `stamp.json` in the state
                      directory of the project, not in the checkout).
     --note           Also attach it to the tree object as a git note under
                      refs/notes/testing.
-  verify             Recompute the keys and answer: `verified` (exit 0 and the
+  verify             Recompute the keys (after the `minit` of the project, as a
+                     run does) and answer: `verified` (exit 0 and the
                      sentinel, only when EVERY file is proven), `partial`
                      (files without a key are not proven; never green),
                      `changed`, `rejected` (other runner, Neovim, OS or
@@ -350,7 +355,8 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
   plugin       string       Module root of the project.
   roots        string[]     Spec roots, relative. Default { "TESTS" }.
   spec_pattern string[]     Lua patterns that make a file a spec. Default
-                            { "_spec%.lua$" }.
+                            { "_spec%.lua$" }. A malformed pattern is a
+                            warning (the default stays).
   dialect      string|table "auto" (default), "testing", "a", "b", "c", "d",
                             "h", "busted", "script"; or { [path or glob] =
                             name, ["*"] = name }.
@@ -463,8 +469,10 @@ the files changed since). It counts spec files: n from cache, m ran, k skipped
 on purpose. The exit codes do not change.
 
 Reporters read the IR only and treat everything from the code under test as
-hostile input: `term` (default), `github` (annotations escaped so a test name
-cannot start a workflow command, step summary appended), `junit` (well-formed
+hostile input: `term` (default; a line that would start with `::` is written
+`\x3A:`, so a failure message cannot forge a workflow command), `github`
+(annotations escaped so a test name cannot start a workflow command, step
+summary appended), `junit` (well-formed
 XML for any input), `agent` (compact, for coding agents: the verdict as the
 first line, then only the failures with file:line, expected/actual and a repeat
 command; equal failures are one entry with a counter; a character budget counts

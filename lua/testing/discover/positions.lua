@@ -202,9 +202,11 @@ local function by_regex(text, reason)
           end
         end
         if src:sub(close, close) == quote then
-          local rest = src:sub(close + 1):match("^%s*(.-)%s*$") or ""
+          -- only the first character after the literal matters (`(.-)%s*$` would be quadratic in the blanks of
+          -- a hostile line)
+          local rest = src:sub(close + 1):match("^%s*(%S)") or ""
           -- `"name", function` / `"name")` end a plain literal; `.. x` makes the name dynamic
-          if rest:sub(1, 1) == "," or rest:sub(1, 1) == ")" then
+          if rest == "," or rest == ")" then
             name, dynamic = unquote(src:sub(open, close)), false
           end
         end

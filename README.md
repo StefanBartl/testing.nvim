@@ -152,7 +152,9 @@ Known limits, not hidden:
 - The state guard has nothing to protect in a child that runs one case (it dies with its case) and is off
   there; the cases say so. A `script` file runs under the other guards (one window for the whole file); one that leaves the editor with `:cquit` / `:qa!` writes no record, and its case says so.
 - The result cache does not know what a spec reads from a path it builds at run time with no literal anywhere
-  (declare it with `-- @cache-inputs` or opt out with `-- @cache off`), does not treat the clock or a process
+  (declare it with `-- @cache-inputs` or opt out with `-- @cache off`), does not see the runtime directories of a
+  dependency checkout or `stdpath('data')/site` (those of the project, `ftplugin/`, `queries/`, `after/`, ..., are
+  part of every key), does not treat the clock or a process
   of a MODULE as a hidden input (the effects ledger refuses a file that really started one; a clock is not seen:
   `docs/CACHE.md`, "Known limit"), and a case selection (`--filter`, `--lf`, ...) turns it off for that run. The
   affected selection follows `require`s, path literals and directory listings: a spec that starts a process is

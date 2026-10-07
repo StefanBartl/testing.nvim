@@ -238,10 +238,12 @@ function M.scan(nocomment, raw_requires)
 end
 
 ---The members a module declares with `-- @require-wrapper a b c` (first lines of the file).
+---(The body is the rest of the line, never `(.-)%s*$`: that form is quadratic in the blanks of a hostile line, and
+---the word scan below ignores blanks at the end.)
 ---@param line string One line of the header.
 ---@return string[]|nil members
 function M.directive(line)
-  local body = line:match("^%s*%-%-%s*@require%-wrapper%s+(.-)%s*$")
+  local body = line:match("^%s*%-%-%s*@require%-wrapper%s+(.*)")
   if not body then
     return nil
   end

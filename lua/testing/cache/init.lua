@@ -15,6 +15,9 @@
 ---     below `a.`, a name nobody can resolve pulls in the whole `lua/` tree of the checkout that
 ---     contains it), found in the project, `ctx.dep_roots` or the runtime path,
 ---   * the files it reads (see "Hidden inputs"),
+---   * the runtime directories of the project root (`M.RUNTIME_DIRS`: `ftplugin/`, `queries/`, `after/`, ...): an
+---     editor loads them without a `require`, so a digest of each one that exists is part of EVERY key, and the
+---     `require`s of their Lua files are edges of every closure,
 ---   * the runner version (a content digest of `lua/testing`, so a dirty checkout differs from a clean one),
 ---   * the Neovim version, its API level, the OS and the CPU architecture,
 ---   * the names AND values (hashed) of the environment variables the configuration lists, and of those a file of the
@@ -60,8 +63,34 @@ local store = require("testing.cache.store")
 local M = {}
 
 ---Bumped when the layout of the key or of an entry changes: every old entry becomes a miss.
+---(2: the `runtime <dir>/=<digest>` lines, the runtime directories of the project root.)
 ---@type integer
-M.KEY_VERSION = 1
+M.KEY_VERSION = 2
+
+---Directories of the project root that an editor loads WITHOUT a `require`: filetype plugins, indent and syntax files,
+---Tree-sitter queries, `after/`, colour schemes, compilers, autoload functions, LSP configurations, parsers,
+---spell and keymap files. A child editor has the root on its runtime path and runs `filetype plugin indent on`, so a
+---spec that sets a filetype or opens a buffer loads them, and nothing the spec requires leads there. A digest of each
+---one that exists is part of EVERY key (a `runtime <dir>/=<digest>` line), whether the scanner sees a file read or not.
+---(`doc/` and `lua/` are not: `lua/` is the closure of the `require`s.)
+---@type string[]
+M.RUNTIME_DIRS = {
+  "after",
+  "autoload",
+  "colors",
+  "compiler",
+  "ftdetect",
+  "ftplugin",
+  "indent",
+  "keymap",
+  "lang",
+  "lsp",
+  "parser",
+  "plugin",
+  "queries",
+  "spell",
+  "syntax",
+}
 
 ---Most files hashed into the closure of one spec.
 ---@type integer
@@ -91,7 +120,9 @@ local defaults = {}
 local hashers = {}
 ---@type table<string, boolean>
 local pruned = {}
----@type { runner?: string }
+---What is constant for the process: the digest of the runner, the Neovim version line (`vim.version()` and
+---`vim.fn.api_info()` cost about a millisecond each, and a key is made per spec file).
+---@type { runner?: string, runner_why?: string, nvim?: string, version?: string }
 local memo = {}
 
 ---@class Testing.Cache.Ctx
@@ -162,6 +193,9 @@ function M.reset()
     pruned[k] = nil
   end
   memo.runner = nil
+  memo.runner_why = nil
+  memo.nvim = nil
+  memo.version = nil
   for k in pairs(defaults) do
     defaults[k] = nil
   end
@@ -215,26 +249,49 @@ function M.runner_version(ctx)
   end
   local here = vim.fs.normalize(debug.getinfo(1, "S").source:sub(2))
   local runner_dir = vim.fs.dirname(vim.fs.dirname(here)) -- .../lua/testing
-  local digest = hasher_of(ctx):tree(runner_dir)
+  local digest, why = hasher_of(ctx):tree(runner_dir)
   memo.runner = digest or ("unhashable:" .. runner_dir)
+  memo.runner_why = why
   return memo.runner
 end
 
+---`tostring(vim.version())`, once per process.
+---@return string
+local function version_string()
+  if not memo.version then
+    memo.version = tostring(vim.version())
+  end
+  return memo.version
+end
+
+---The Neovim part of the key: version, API level, OS and CPU architecture. Constant for the process, so it is made
+---once (`ctx.nvim` replaces it and is never remembered: specs).
 ---@param ctx Testing.Cache.Ctx
 ---@return string
 local function nvim_version(ctx)
   if ctx.nvim then
     return ctx.nvim
   end
-  local v = vim.version()
+  if memo.nvim then
+    return memo.nvim
+  end
   local jit_os = (jit and jit.os) or "?"
   local jit_arch = (jit and jit.arch) or "?"
-  -- `api_info().version.api_level` is the API level; `api_info().api_level` does not exist (it was nil, and
-  -- the key carried the word "apinil")
-  local info = vim.fn.api_info()
-  local level = type(info) == "table" and type(info.version) == "table" and info.version.api_level
-    or nil
-  return ("%s|api%s|%s|%s"):format(tostring(v), level and tostring(level) or "?", jit_os, jit_arch)
+  -- the API level is a field of `vim.version()`; `api_info().version.api_level` says the same (and
+  -- `api_info().api_level` does not exist: it was nil, and the key carried the word "apinil")
+  local level = vim.version().api_level
+  if level == nil then
+    local info = vim.fn.api_info()
+    level = type(info) == "table" and type(info.version) == "table" and info.version.api_level
+      or nil
+  end
+  memo.nvim = ("%s|api%s|%s|%s"):format(
+    version_string(),
+    level and tostring(level) or "?",
+    jit_os,
+    jit_arch
+  )
+  return memo.nvim
 end
 
 ---Are environment variable names case-insensitive here? On Windows they are (the system reports them in upper
@@ -374,16 +431,22 @@ end
 ---@param base string
 ---@param dir string `a/b` ('' = all)
 ---@param stem string
----@return string[]
+---@return string[] files
+---@return string|nil unreadable A directory the walk could not list (never read as an empty one: the files below it would be missing from the closure).
 local function list_lua(listings, base, dir, stem)
   local ck = base .. "|" .. dir .. "|" .. stem
-  if listings[ck] then
-    return listings[ck]
+  local hit = listings[ck]
+  if hit then
+    return hit[1], hit[2]
   end
-  local out = {}
+  local out, unreadable = {}, nil
   local top = base .. "/lua" .. (dir ~= "" and ("/" .. dir) or "")
   if vim.fn.isdirectory(top) == 1 then
-    for _, p in ipairs(require("lib.nvim.fs.collect_recursive").files(top)) do
+    local paths, errors = require("lib.nvim.fs.collect_recursive").files(top)
+    if errors then
+      unreadable = ("unreadable directory: %s"):format(tostring(errors[1]))
+    end
+    for _, p in ipairs(paths) do
       p = vim.fs.normalize(p)
       if p:sub(-4) == ".lua" then
         local name = p:match("([^/]+)$")
@@ -394,8 +457,8 @@ local function list_lua(listings, base, dir, stem)
     end
   end
   table.sort(out)
-  listings[ck] = out
-  return out
+  listings[ck] = { out, unreadable }
+  return out, unreadable
 end
 
 ---Bases (project root, then the dependency roots) in resolution order.
@@ -542,6 +605,44 @@ local function tree_of(ctx, hasher, dir, variant, opts)
   return dig, why
 end
 
+---The Lua files below the runtime directories of the project root (`M.RUNTIME_DIRS`) that an editor loads by itself
+---(`ftplugin/`, `indent/`, `after/ftplugin/`, `colors/`, ...), absolute and sorted, once per run. Not `plugin/` and
+---`after/plugin/`: a child editor does not source them (`-u NONE`; a spec that does it by an ex command is a
+---`dynload`, which takes the whole project into the key). Their `require`s are edges of EVERY closure: the spec that
+---sets a filetype loads the file, and so the modules it requires.
+---@param ctx Testing.Cache.Ctx
+---@param root string
+---@return string[] files
+---@return string|nil unreadable A runtime directory the walk could not list (the files below it are unknown: no key).
+local function runtime_lua(ctx, root)
+  local listings = memo_table(ctx, "#listings")
+  local ck = "runtime-lua|" .. root
+  local hit = listings[ck]
+  if hit then
+    return hit[1], hit[2]
+  end
+  local out, unreadable = {}, nil
+  for _, name in ipairs(M.RUNTIME_DIRS) do
+    local dir = root .. "/" .. name
+    if name ~= "plugin" and vim.fn.isdirectory(dir) == 1 then
+      local paths, errors = require("lib.nvim.fs.collect_recursive").files(dir)
+      if errors then
+        unreadable = unreadable or ("unreadable directory: %s"):format(tostring(errors[1]))
+      end
+      for _, p in ipairs(paths) do
+        p = vim.fs.normalize(p)
+        local rel = p:sub(#root + 2)
+        if p:sub(-4) == ".lua" and not rel:find("^after/plugin/") then
+          out[#out + 1] = p
+        end
+      end
+    end
+  end
+  table.sort(out)
+  listings[ck] = { out, unreadable }
+  return out, unreadable
+end
+
 ---Closure of the files a spec depends on. Returns a sorted list of absolute paths and the digest
 ---lines, or nil and why (incomplete).
 ---@param file_info Testing.Cache.FileInfo
@@ -603,13 +704,23 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
       local dir, stem = pfx:match("^(.*)%.([^.]*)$")
       dir, stem = dir or "", stem or pfx
       for _, b in ipairs(bases) do
-        for _, abs in ipairs(list_lua(listings, b, (dir:gsub("%.", "/")), stem)) do
+        local listed, unreadable = list_lua(listings, b, (dir:gsub("%.", "/")), stem)
+        if unreadable then
+          fail_detail = { kind = "dependency", name = pfx }
+          return unreadable
+        end
+        for _, abs in ipairs(listed) do
           visit(abs, b)
         end
       end
     end
     if info.dynamic then
-      for _, abs in ipairs(list_lua(listings, base, "", "")) do
+      local listed, unreadable = list_lua(listings, base, "", "")
+      if unreadable then
+        fail_detail = { kind = "dependency", name = base:match("([^/]+)$") }
+        return unreadable
+      end
+      for _, abs in ipairs(listed) do
         visit(abs, base)
       end
     end
@@ -618,6 +729,38 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
   local why = expand(spec_info, root)
   if why then
     return nil, why, nil, nil, fail_detail
+  end
+  -- what the editor loads on its own (`ftplugin/`, `indent/`, `after/`, ...) requires modules the spec never names:
+  -- they are edges of every closure (the files themselves are in the key as `runtime` lines). They are MEMBERS of it
+  -- as well: what a module of the closure reads (an environment variable, a file next to it, a `:runtime` of
+  -- something the scanner cannot follow) or declares (`-- @cache off`, `-- @cache-env`, `-- @cache-allow`) counts for a
+  -- file the editor loads by itself exactly as it does for a module the spec requires.
+  local member_seen = {}
+  local runtime_files, runtime_unreadable = runtime_lua(ctx, root)
+  if runtime_unreadable then
+    return nil, runtime_unreadable, nil, nil, { kind = "dependency", name = "runtime" }
+  end
+  for _, abs in ipairs(runtime_files) do
+    local name = abs:match("([^/]+)$")
+    local sha, info = analyzed(ctx, hasher, abs)
+    if not sha then
+      return nil,
+        ("runtime file %s: %s"):format(abs:sub(#root + 2), tostring(info)),
+        nil,
+        nil,
+        { kind = "dependency", name = name }
+    end
+    ---@cast info Testing.Scan.Info
+    member_seen[abs] = true
+    members[#members + 1] = { abs = abs, info = info, inside = is_project_file(root, abs) }
+    local w = expand(info, root)
+    if w then
+      return nil,
+        w .. " (required by " .. abs:sub(#root + 2) .. ")",
+        nil,
+        nil,
+        fail_detail and vim.tbl_extend("force", fail_detail, { file = name })
+    end
   end
   local i = 1
   while i <= #queue do
@@ -639,7 +782,9 @@ local function closure_lines(file_info, spec_info, ctx, hasher)
         { kind = "dependency", name = abs:match("([^/]+)$") }
     end
     ---@cast info Testing.Scan.Info
-    members[#members + 1] = { abs = abs, info = info, inside = is_project_file(root, abs) }
+    if not member_seen[abs] then -- a runtime file that a module also requires is one member
+      members[#members + 1] = { abs = abs, info = info, inside = is_project_file(root, abs) }
+    end
     local w = expand(info, files[abs])
     if w then
       -- a module of a dependency that the runtime path cannot resolve: the dependency is incomplete
@@ -719,6 +864,37 @@ local PROJECT_IGNORE = {
   [".cache"] = true,
   ["node_modules"] = true,
 }
+
+---The runtime directories of the project root as key lines `runtime <dir>/=<digest>` (only the ones that exist), once
+---per run. They are inputs of every spec that runs in an editor with the root on its runtime path, and nothing in
+---the file of a spec says so, so they are never made depend on what the scanner saw. (The runtime directories of
+---a dependency checkout and `stdpath('data')/site` are not covered: see `docs/CACHE.md`.)
+---@param ctx Testing.Cache.Ctx
+---@param hasher Testing.Cache.Hasher
+---@param root string
+---@return string[]|nil lines
+---@return string|nil why
+local function runtime_lines(ctx, hasher, root)
+  local t = memo_table(ctx, "#runtime")
+  local hit = t[root]
+  if hit then
+    return hit[1], hit[2]
+  end
+  local lines, why = {}, nil
+  for _, name in ipairs(M.RUNTIME_DIRS) do
+    local dir = root .. "/" .. name
+    if vim.fn.isdirectory(dir) == 1 then
+      local dig, err = tree_of(ctx, hasher, dir, "runtime", { ignore_dirs = PROJECT_IGNORE })
+      if not dig then
+        lines, why = nil, ("runtime directory %s/: %s"):format(name, tostring(err))
+        break
+      end
+      lines[#lines + 1] = ("runtime %s/=%s"):format(name, dig)
+    end
+  end
+  t[root] = { lines, why }
+  return lines, why
+end
 
 ---Does a literal that names a place outside the project name a file that EXISTS there? A string like `"../x"` is
 ---often a test of a path function and no read at all; one that resolves to a real file outside the root, read from the
@@ -1150,6 +1326,12 @@ function M.key(file_info, ctx)
   if not in_lines then
     return nil, why2, nil, { kind = "inputs" }
   end
+  -- what an editor loads from the project root without a `require` (`ftplugin/`, `queries/`, `after/`, ...)
+  local rt_lines, why_rt = runtime_lines(ctx, hasher, root)
+  if not rt_lines then
+    return nil, why_rt, nil, { kind = "inputs" }
+  end
+  vim.list_extend(in_lines, rt_lines)
   -- files that decide what the spec does without being required by it: the harness a dialect-h spec runs on,
   -- the project's `minit`
   for _, extra in ipairs(file_info.extra or {}) do
@@ -1169,12 +1351,21 @@ function M.key(file_info, ctx)
   end
   local project_cfg = sha_of(ctx, hasher, root .. "/.testing.lua") or "<absent>"
   local env, _ = env_lines(ctx, agg.env)
+  -- a runner that cannot be hashed (a directory below it cannot be listed, a file cannot be read) would put a
+  -- constant into every key: an edit of the runner would not change them. No key then.
+  local runner = ctx.runner_version or M.runner_version(ctx)
+  if runner:sub(1, 11) == "unhashable:" then
+    return nil,
+      ("the runner cannot be hashed (%s)"):format(tostring(memo.runner_why or runner:sub(12))),
+      nil,
+      { kind = "inputs" }
+  end
 
   local parts = {
     ("key-version %d"):format(M.KEY_VERSION),
     "file " .. rel,
     "spec " .. sha,
-    "runner " .. (ctx.runner_version or M.runner_version(ctx)),
+    "runner " .. runner,
     "nvim " .. nvim_version(ctx),
     "dialect " .. tostring(file_info.dialect or ctx.dialect or "?"),
     "config " .. cfg_digest,
@@ -1312,7 +1503,7 @@ function M.put(key, fragment, meta, opts)
     file = file,
     run = meta.run or "unknown",
     ts = meta.ts or os.time(),
-    nvim = tostring(vim.version()),
+    nvim = version_string(),
     cases = fragment,
     parts = store.clean_parts(meta.parts),
   })
@@ -1439,6 +1630,9 @@ function M.clear(opts)
     h:clear()
   end
   memo.runner = nil
+  memo.runner_why = nil
+  memo.nvim = nil
+  memo.version = nil
   return n
 end
 

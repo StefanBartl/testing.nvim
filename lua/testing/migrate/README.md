@@ -24,7 +24,7 @@ User documentation: [docs/MIGRATING.md](../../../docs/MIGRATING.md). Command: `:
 | [`ci`](ci.lua) | A GitHub Actions workflow parsed and edited as TEXT (line by line, no YAML library, no reformatting). |
 | [`fleet`](fleet.lua) | `require` scan (comments and strings left out) and the module -> repository mapping. |
 | [`apply`](apply.lua) | The only writer: clean git tree, every op validated first (path stays below the root, no symlink, create targets absent, modify / delete targets unchanged), atomic writes, deletions. |
-| [`render`](render.lua) | The plan as Markdown / terminal text / JSON. Everything from the repository is escaped on the way out. |
+| [`render`](render.lua) | The plan as Markdown / terminal text / JSON. Everything from the repository is escaped on the way out (controls, C1, bidi overrides). |
 | [`text`](text.lua) | Line splitting that round-trips CRLF and a missing final newline, unified diffs, `show` (escaping), path checks. |
 
 ## Rules

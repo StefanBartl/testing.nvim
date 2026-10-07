@@ -115,11 +115,12 @@ return function(H)
 
   ---@param name string
   ---@param specs table<string, string>
+  ---@param cfg? string The text of `.testing.lua`.
   ---@return string root
-  local function project(name, specs)
+  local function project(name, specs, cfg)
     local root = tmp .. "/" .. name
     write(root .. "/lua/proj/mod.lua", "return { value = 1 }\n")
-    write(root .. "/.testing.lua", CFG)
+    write(root .. "/.testing.lua", cfg or CFG)
     for rel, text in pairs(specs) do
       write(root .. "/TESTS/" .. rel, text)
     end
@@ -495,6 +496,16 @@ return function(H)
   end)
   eq(doc.status, "rejected", "another Neovim: rejected")
   has(table.concat(doc.causes, "\n"), "Neovim: v0.1.0|api1 ->", "with the versions")
+  -- two builds of a nightly differ at the END of the text: the cause shows it whole, not cut to the first twelve characters
+  local nvim_now = require("testing.stamp.collect").environment({ config_digest = "x" }).nvim
+  doc = resigned(function(r)
+    r.env.nvim = "0.13.0-dev+g1a2b3c4d5e6f|api15"
+  end)
+  has(
+    table.concat(doc.causes, "\n"),
+    "Neovim: 0.13.0-dev+g1a2b3c4d5e6f|api15 -> " .. nvim_now,
+    "a long Neovim text is shown whole, on both sides"
+  )
   doc = resigned(function(r)
     r.env.config = ("9"):rep(64)
   end)
@@ -591,6 +602,28 @@ return function(H)
     "verified",
     "(the file is not needed any more)"
   )
+  -- the git facts (three git processes) are asked once, not once for the note and once for the tree comparison
+  do
+    local real_git = require("testing.affected.git").default_run
+    local head_calls = 0
+    clock.git = function(argv, cwd)
+      if argv[2] == "rev-parse" and argv[3] == "HEAD" then
+        head_calls = head_calls + 1
+      end
+      return real_git(argv, cwd)
+    end
+    eq(
+      verify_json({ "verify", root, "--json", "--from-note" }).status,
+      "verified",
+      "verify --from-note with a counting git"
+    )
+    clock.git = nil
+    eq(
+      head_calls,
+      1,
+      "the facts of the tree are asked once (the note lookup and the comparison share them)"
+    )
+  end
   write(root .. "/lua/proj/mod.lua", "return { value = 3 }\n")
   commit_all(root, "another tree")
   doc = verify_json({ "verify", root, "--json", "--from-note" })
@@ -666,6 +699,197 @@ return function(H)
     keep_before,
     "the earlier stamp is untouched"
   )
+
+  -- ================================================================ an input that changes while the run goes
+  -- the spec passes against the old content of a module and rewrites it: the run was green for content that is gone,
+  -- and a stamp of the NEW content would let `verify` call a tree proven that never ran
+  do
+    local toctou_root = tmp .. "/toctou"
+    local rewriter = (
+      "return function(H)\n"
+      .. "  H.ok(require('proj.mod').value == 1, 'the module as it was')\n"
+      .. "  local f = assert(io.open(%q, 'wb'))\n"
+      .. "  f:write('return { value = 999 }\\n')\n"
+      .. "  f:close()\n"
+      .. "end\n"
+    ):format(toctou_root .. "/lua/proj/mod.lua")
+    local troot = project("toctou", { ["a_spec.lua"] = PURE, ["c_spec.lua"] = rewriter })
+    eq(troot, toctou_root, "(the path the spec rewrites)")
+    local moved = run({ "stamp", troot })
+    eq(moved.code, 1, "an input changed while the run was going: no stamp, exit 1\n" .. moved.err)
+    has(moved.err, "stamp: not written: an input changed while the run was going", "says why")
+    has(moved.err, "TESTS/c_spec.lua", "and names the file")
+    ok(moved.last ~= SENTINEL, "no sentinel")
+    ok(not vim.uv.fs_stat(stamp.path(troot, { state_dir = state_dir })), "and writes none")
+    eq(
+      read(troot .. "/lua/proj/mod.lua"),
+      "return { value = 999 }\n",
+      "(the module is the new one now)"
+    )
+    -- the change is committed: nothing can be called verified, there is no stamp for any content
+    commit_all(troot, "the rewritten module")
+    local after = verify_json({ "verify", troot, "--json" })
+    eq(after.status, "no-stamp", "verify has nothing to prove the rewritten tree with")
+    eq(after.verified, false, "and says not verified")
+    -- with --out the same: no file
+    local out_file = tmp .. "/toctou-out.json"
+    write(troot .. "/lua/proj/mod.lua", "return { value = 1 }\n")
+    commit_all(troot, "back")
+    eq(run({ "stamp", troot, "--out", out_file }).code, 1, "--out: the same refusal")
+    ok(not vim.uv.fs_stat(out_file), "--out: no file either")
+  end
+
+  -- ================================================================ keys are computed after the minit of the project
+  -- a minit puts a directory on the runtime path that no `deps` entry names; the keys of a run look at that path, so
+  -- `verify` and `explain` have to run the minit too, or they compute other keys than the run (always `changed`)
+  do
+    local ext = tmp .. "/extdep"
+    write(ext .. "/lua/extmod.lua", "return { value = 7 }\n")
+    local minit_cfg =
+      "return { plugin = 'proj', minit = 'TESTS/minit.lua', guards = { fs = 'off' } }\n"
+    local mroot = project("minit", {
+      ["minit.lua"] = ("vim.opt.runtimepath:append(%q)\n"):format(ext),
+      ["a_spec.lua"] = "return function(H)\n  H.ok(require('extmod').value == 7, 'a module of the minit')\nend\n",
+    }, minit_cfg)
+    ---A fresh process does not have what the minit of an earlier command put on the runtime path.
+    local function fresh_process()
+      vim.opt.runtimepath:remove(ext)
+      package.loaded.extmod = nil
+    end
+    local made = run({ "stamp", mroot })
+    eq(made.code, 0, "a spec that needs a module of the minit's runtime path: green\n" .. made.err)
+    fresh_process()
+    local mv = verify_json({ "verify", mroot, "--json" })
+    eq(
+      mv.status,
+      "verified",
+      "verify in a fresh process gets the same keys: " .. vim.inspect(mv.changed)
+    )
+    eq(mv.exit_code, 0, "exit 0")
+    fresh_process()
+    local mx = run({ "explain", mroot, "a_spec", "--json" })
+    local mdoc = vim.json.decode(mx.out)
+    eq(mx.code, 0, "explain works\n" .. mx.err)
+    eq(
+      mdoc.specs[1].key,
+      stamp_of(mroot).files[1].key,
+      "and explains the key of the run, not another one"
+    )
+    fresh_process()
+    local mtext = run({ "explain", mroot, "a_spec", "--parts" })
+    lacks(mtext.out, "absent extmod", "the module of the minit is found, not 'absent'")
+    -- a minit that fails: the keys cannot be computed the way a run computes them
+    write(mroot .. "/TESTS/minit.lua", "error('boom of the minit')\n")
+    commit_all(mroot, "a broken minit")
+    fresh_process()
+    local broken = verify_json({ "verify", mroot, "--json" })
+    eq(broken.status, "rejected", "a minit that fails: rejected, never green")
+    has(broken.reason, "boom of the minit", "with its message")
+    eq(broken.verified, false, "not verified")
+    local broken_explain = run({ "explain", mroot, "a_spec" })
+    eq(broken_explain.code, 3, "explain: an internal failure, as a run with a broken minit")
+    has(broken_explain.err, "boom of the minit", "with its message")
+    fresh_process()
+  end
+
+  -- ================================================================ a spec that changes the runtime path of the editor
+  -- an in-process spec shares the editor with the runner: what it adds to the runtime path is no input that moved, so
+  -- the keys of after the run are computed with the runtime path of before it (else no such project gets a stamp)
+  do
+    local ext = tmp .. "/extdep2"
+    write(ext .. "/lua/extmod2.lua", "return { value = 1 }\n")
+    local leaker = (
+      "return function(H)\n"
+      .. "  vim.opt.runtimepath:append(%q)\n"
+      .. "  H.ok(pcall(require, 'extmod2'), 'the module of the path the spec added')\n"
+      .. "end\n"
+    ):format(ext)
+    local lroot = project("leak", { ["a_spec.lua"] = leaker })
+    local lres = run({ "stamp", lroot })
+    vim.opt.runtimepath:remove(ext)
+    package.loaded.extmod2 = nil
+    eq(lres.code, 0, "a spec that appends to the runtime path still earns a stamp\n" .. lres.err)
+    eq(
+      verify_json({ "verify", lroot, "--json" }).status,
+      "verified",
+      "and a fresh process verifies it (the keys are the keys of before the run)"
+    )
+  end
+
+  -- ================================================================ many changed key lines of one file stay short
+  do
+    local big_files = {}
+    local requires = {}
+    for i = 1, 60 do
+      big_files["lua/proj/big/m" .. i .. ".lua"] = "return { n = " .. i .. " }\n"
+      requires[#requires + 1] = "require('proj.big.m" .. i .. "')"
+    end
+    local big_root = project("big", {
+      ["a_spec.lua"] = "return function(H)\n  "
+        .. table.concat(requires, "\n  ")
+        .. "\n  H.ok(true, 'loaded')\nend\n",
+    })
+    for rel, body in pairs(big_files) do
+      write(big_root .. "/" .. rel, body)
+    end
+    commit_all(big_root, "the closure")
+    eq(
+      run({ "stamp", big_root, "--cached" }).code,
+      0,
+      "(a cached stamp of a spec with a big closure)"
+    )
+    -- the spec no longer loads any of them: 60 key lines are gone
+    write(big_root .. "/TESTS/a_spec.lua", PURE)
+    commit_all(big_root, "no closure")
+    local no_closure = verify_json({ "verify", big_root, "--json" })
+    eq(no_closure.status, "changed", "the closure is gone: changed")
+    local json_details = no_closure.changed[1].details or {}
+    ok(#json_details >= 60, "the JSON lists every key line: " .. #json_details)
+    local text_out = run({ "verify", big_root })
+    local lines = vim.split(text_out.out, "\n", { plain = true })
+    local detail_lines = 0
+    for _, l in ipairs(lines) do
+      if l:find("^      %S") then
+        detail_lines = detail_lines + 1
+      end
+    end
+    ok(
+      detail_lines <= 10,
+      "at most a handful of key lines for one file, plus the line that counts the rest: "
+        .. detail_lines
+    )
+    ok(#lines < 20, "the whole answer is short: " .. #lines .. " lines")
+    has(text_out.out, "more key line(s)", "the rest is counted")
+    has(text_out.out, "testing explain TESTS/a_spec.lua --parts", "and where to find them")
+  end
+
+  -- ================================================================ .deps/ is no change of the project
+  do
+    local deps_root = project("depsdirty", { ["a_spec.lua"] = PURE })
+    eq(run({ "stamp", deps_root }).code, 0, "(a stamp)")
+    -- the checkout of a dependency, as CI makes it below the project directory, not ignored
+    local dep = deps_root .. "/.deps/lib.nvim"
+    write(dep .. "/lua/lib.lua", "return {}\n")
+    git(dep, "init", "-q", "-b", "main")
+    git(dep, "add", "-A")
+    git(dep, "commit", "-q", "-m", "dep")
+    eq(
+      vim.trim(git(deps_root, "status", "--porcelain")),
+      "?? .deps/",
+      "(git does see it as untracked)"
+    )
+    eq(
+      verify_json({ "verify", deps_root, "--json" }).status,
+      "verified",
+      ".deps/ does not make the tree dirty"
+    )
+    write(deps_root .. "/notes.txt", "x\n")
+    eq(
+      verify_json({ "verify", deps_root, "--json" }).status,
+      "dirty",
+      "any other untracked file still does"
+    )
+  end
 
   vim.fn.delete(tmp, "rf")
 end

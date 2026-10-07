@@ -34,13 +34,24 @@ TESTING_DRIVER="$(testing_driver)" || {
 }
 
 # testing_run <subcommand> <args...>: runs the runner on this repository with a throwaway app name.
+# git hands a hook the variables of the operation in progress (GIT_INDEX_FILE names the index of THIS commit for
+# `git commit -a` and `git commit <path>`, and GIT_AUTHOR_* the author). A spec that runs git in a temporary
+# repository would inherit them and write into the index of the commit that is being made: the commit breaks. The
+# runner starts from a git environment of its own, in a subshell so that the hook itself keeps its variables.
 testing_run() {
-  NVIM_APPNAME="${NVIM_APPNAME:-@@PLUGIN@@-hooks}" nvim -n -i NONE --headless -u NONE -l "$TESTING_DRIVER" "$@"
+  (
+    unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE
+    unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+    NVIM_APPNAME="${NVIM_APPNAME:-@@PLUGIN@@-hooks}" exec nvim -n -i NONE --headless -u NONE -l "$TESTING_DRIVER" "$@"
+  )
 }
 
 # The tree must be the committed one: a run looks at the working tree, and a dirty tree is not what is pushed.
+# `.deps/` (the checkouts of the dependencies) is left out: it is no change of this project, and its content is part of
+# the keys, so a changed dependency shows up in `verify` as a changed file.
 testing_require_clean_tree() {
-  if [ -n "$(git status --porcelain)" ]; then
+  if [ -n "$(git status --porcelain -- . ':(exclude).deps')" ]; then
     echo "hook: the working tree has uncommitted changes (git status): what would be tested is not what is pushed." >&2
     echo "hook: commit or stash them (git stash -u), then push again." >&2
     return 1

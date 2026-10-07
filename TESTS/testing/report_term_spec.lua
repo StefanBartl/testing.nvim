@@ -37,6 +37,27 @@ return function(H)
     return nil
   end
 
+  -- the rule of the runner of GitHub Actions, written out on its own (not through `util.space_len`): it trims
+  -- the line with .NET `TrimStart()` (ASCII and Unicode whitespace) and then looks for `::`
+  local runner_space = { [0xA0] = true, [0x1680] = true, [0x2028] = true, [0x2029] = true }
+  runner_space[0x202F], runner_space[0x205F], runner_space[0x3000] = true, true, true
+  for cp = 0x2000, 0x200A do
+    runner_space[cp] = true
+  end
+  local function runner_reads_command(l)
+    local chars = vim.fn.split(l, "\\zs")
+    local i = 1
+    while chars[i] and (chars[i] == " " or runner_space[vim.fn.char2nr(chars[i])]) do
+      i = i + 1
+    end
+    return chars[i] == ":" and chars[i + 1] == ":"
+  end
+  local function none_is_command(lines, msg)
+    for _, l in ipairs(lines) do
+      ok(not runner_reads_command(l), ("%s: the runner would run %s"):format(msg, vim.inspect(l)))
+    end
+  end
+
   local dir = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
   local F = dofile(dir .. "/report_fixture.lua")
   local term = require("testing.report.term")
@@ -184,7 +205,8 @@ return function(H)
     ok(not l:find("[%z\1-\8\11-\31\127]"), "no control character in a line: " .. vim.inspect(l))
     ok(not l:find("\226\128\174", 1, true), "bidi override is escaped")
     ok(not l:find("\n", 1, true), "no line holds a newline")
-    ok(not l:find("^::"), "no line starts like a workflow command")
+    -- (every detail line is indented, so `^::` would never match: the runner trims before it looks)
+    ok(not runner_reads_command(l), "no line is read as a workflow command: " .. vim.inspect(l))
   end
   has_line(hostile, "\\x1B", "ESC is made visible")
   has_line(hostile, "\\x00", "NUL is made visible")
@@ -192,13 +214,149 @@ return function(H)
   has_line(hostile, "\239\191\189", "invalid UTF-8 became U+FFFD")
   has_line(
     hostile,
-    "::error title=owned::pwned",
-    "a workflow command in a message stays inert text"
+    "\\x3A:error title=owned::pwned",
+    "a workflow command in a message stays inert text, its leading :: written \\x3A:"
   )
   ok(
     vim.fn.strdisplaywidth(table.concat(hostile, "\n")) >= 0,
     "output is valid UTF-8 for the editor"
   )
+
+  -- workflow commands: this reporter indents every detail line, and the runner of GitHub Actions trims a line before it
+  -- looks for `::`, so every text that can start a line is defused: a message, an error, a traceback, a diff context
+  -- line, a plain expected value, a skip reason, a process command line, a guard message ---------------------------
+  ok(
+    runner_reads_command("        ::warning::second"),
+    "(the check itself sees an indented command)"
+  )
+  ok(runner_reads_command("\u{3000}::stop-commands::tok"), "(and one behind an ideographic space)")
+  ok(not runner_reads_command("        \\x3A:warning::second"), "(and not the defused form)")
+  ok(not runner_reads_command("a ::x"), "(and not a `::` in the middle)")
+  do
+    local r = result.new({ id = "2026-10-07T10:00:00Z-0010", nvim = "0.12.0", os = "linux" })
+    F.add(r, {
+      file = "TESTS/m_spec.lua",
+      name = "message",
+      assertions = {
+        {
+          ok = false,
+          kind = "ok",
+          msg = "head\n::warning::second\n\u{3000}::stop-commands::tok",
+          diff = "-x\n::error::in-diff-field",
+        },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/n_spec.lua",
+      name = "error text",
+      status = "error",
+      error = {
+        message = "boom\r\n::error::from-error",
+        traceback = "stack traceback:\n::error::in-trace\n\u{00A0}::notice::deeper",
+      },
+    })
+    F.add(r, {
+      file = "TESTS/o_spec.lua",
+      name = "diff",
+      assertions = {
+        {
+          ok = false,
+          kind = "eq",
+          msg = "differs",
+          expected = "a\n::error::same-line-in-diff\nb\nc",
+          actual = "a\n::error::same-line-in-diff\nb\nX",
+        },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/p_spec.lua",
+      name = "plain value",
+      assertions = {
+        { ok = false, kind = "eq", msg = "plain", expected = "x\n::error::expected-line" },
+      },
+    })
+    F.add(r, {
+      file = "TESTS/q_spec.lua",
+      name = "skipped",
+      status = "skip",
+      reason = "why\n::notice::skip-reason",
+    })
+    F.add(r, {
+      file = "TESTS/s_spec.lua",
+      name = "hangs",
+      status = "timeout",
+      error = { message = "t\n::error::in-timeout", traceback = "" },
+    })
+    local spawner = F.add(r, { file = "TESTS/t_spec.lua", name = "spawns" })
+    spawner.effects.spawned = { "::stop-commands::tok -x (x2)" }
+    spawner.guards = {
+      { guard = "state", severity = "warn", message = "leaks\n::warning::guard-line" },
+    }
+    for _, color in ipairs({ false, true }) do
+      local out = term.render(r, { color = color })
+      local what = color and "colour on" or "colour off"
+      none_is_command(out, what)
+      for _, needle in ipairs({
+        "\\x3A:warning::second",
+        "\\x3A:stop-commands::tok",
+        "\\x3A:error::in-diff-field",
+        "\\x3A:error::from-error",
+        "\\x3A:error::in-trace",
+        "\\x3A:notice::deeper",
+        "\\x3A:error::same-line-in-diff",
+        "\\x3A:error::expected-line",
+        "\\x3A:notice::skip-reason",
+        "\\x3A:error::in-timeout",
+        "\\x3A:stop-commands::tok -x",
+      }) do
+        has_line(out, needle, what .. ": the text is kept, its leading :: written \\x3A:")
+      end
+    end
+    -- the pass keeps the indentation and touches nothing else
+    local plain = term.render(r)
+    eq(
+      plain[index_of(plain, "from-error")],
+      "      \\x3A:error::from-error",
+      "the indentation of the line stays"
+    )
+    has_no_line(term.render(r), "x3A:x3A", "a line is defused once")
+  end
+  -- the same behind every whitespace character the runner trims (a no-break space, U+2000 to U+200A, U+3000, ...)
+  do
+    local spaces = { 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }
+    for cp = 0x2000, 0x200A do
+      spaces[#spaces + 1] = cp
+    end
+    for _, cp in ipairs(spaces) do
+      local ch = vim.fn.nr2char(cp)
+      local r = result.new({ id = "2026-10-07T10:00:00Z-0011", nvim = "0.12.0", os = "linux" })
+      F.add(r, {
+        file = "TESTS/u_spec.lua",
+        name = "u",
+        assertions = {
+          {
+            ok = false,
+            kind = "eq",
+            msg = ch .. "::stop-commands::tok",
+            expected = ch .. "::error::x",
+            actual = "y",
+          },
+        },
+      })
+      F.add(r, {
+        file = "TESTS/v_spec.lua",
+        name = "v",
+        status = "error",
+        error = { message = ch .. "::stop-commands::tok", traceback = "" },
+      })
+      for _, l in ipairs(term.render(r)) do
+        ok(
+          not runner_reads_command(l),
+          ("U+%04X: the runner would run %s"):format(cp, vim.inspect(l))
+        )
+      end
+    end
+  end
 
   -- colour ----------------------------------------------------------------------------------------------
   for _, l in ipairs(lines) do

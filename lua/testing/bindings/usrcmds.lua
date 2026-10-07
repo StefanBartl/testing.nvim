@@ -315,11 +315,17 @@ function M.routes()
           lines[#lines + 1] = "replaced (--force): " .. table.concat(result.replaced, ", ")
         end
         if #result.skipped > 0 then
-          lines[#lines + 1] = "kept (exists; --force replaces): "
-            .. table.concat(result.skipped, ", ")
+          -- `--force` never reaches a hook file (a hook of yours is not ours to replace): do not promise it
+          lines[#lines + 1] = (
+            ctx.flags.hooks and "kept (exists; --force does not apply to hooks): "
+            or "kept (exists; --force replaces): "
+          ) .. table.concat(result.skipped, ", ")
         end
         for _, e in ipairs(result.errors) do
           lines[#lines + 1] = "error: " .. e
+        end
+        if ctx.flags.hooks and #result.created > 0 and #result.errors == 0 then
+          vim.list_extend(lines, require("testing.scaffold").hook_next_steps())
         end
         if #lines == 0 then
           lines[1] = "nothing to do"

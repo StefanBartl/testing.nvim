@@ -143,10 +143,17 @@ local DIALECTS = {
   script = true,
 }
 
+---A well formed Lua pattern. The syntax is walked by `testing.config.pattern`: probing with an empty subject
+---(`pcall(string.find, "", v)`) reads only the first pattern item, so `a[` or `%.log%` passed and raised on the
+---first file name that reached the broken item (an fs guard that stops seeing the tree).
 ---@param v any
 ---@return boolean
 local function is_lua_pattern(v)
-  return type(v) == "string" and v ~= "" and #v <= 200 and pcall(string.find, "", v)
+  return type(v) == "string"
+    and v ~= ""
+    and #v <= 200
+    and require("testing.config.pattern").check(v)
+    and pcall(string.find, "", v)
 end
 
 ---@param v any

@@ -6,7 +6,7 @@
 # It runs the suite on the cache (`--cached --order priority`) with the compact `agent` reporter. It never decides
 # anything itself: when testing.nvim exits non-zero it hands testing.nvim's own text to Claude on stderr and exits 2.
 #
-# PRUEFPUNKTE (checked against code.claude.com/docs/en/hooks on 2026-10-07, see docs/HOOKS.md; do not rely on what
+# CHECKPOINTS (checked against code.claude.com/docs/en/hooks on 2026-10-07, see docs/HOOKS.md; do not rely on what
 # is not marked as checked there):
 #   1. exit code 2 of a Stop hook blocks the stop and stderr goes to Claude (documented);
 #   2. `stop_hook_active` in the JSON on stdin: its meaning is NOT documented in the fetched text. The guard below

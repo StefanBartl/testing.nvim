@@ -151,6 +151,11 @@ Rules specific to the stamp:
   required: without it `verify` answers `untrusted` and is never green, unless you pass `--allow-unsigned` explicitly
   and accept that authenticity then rests only on where the stamp file came from.
 - The stamp is bound to OS, architecture, Neovim version, runner and configuration: one stamp per matrix entry.
+- The dependency checkouts below the project directory (`.deps/`) are not counted as uncommitted changes of the tree
+  (their content is part of the keys), so a `.deps/` that is not in the `.gitignore` does not make `verify` answer
+  `dirty`. Any other untracked file the job creates before `verify` still does: keep the checkout clean.
+- `stamp` records the keys before the run and refuses to write when an input changed while the specs ran (a formatter
+  or a spec that rewrites a source): `testing: stamp: not written: an input changed while the run was going`, exit `1`.
 - A skipped job is not a failed job, but what a required status check does with a skipped job is **not established**
   here: the workflow-syntax page fetched on 2026-10-07 says only that a workflow skipped by `paths` filtering leaves its
   checks "Pending". Do not use `paths-ignore` on the workflow; try the job-level `if` on a throwaway branch with the

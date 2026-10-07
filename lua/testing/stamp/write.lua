@@ -90,12 +90,90 @@ function M.secret(getenv)
   return s, nil
 end
 
+---@class Testing.Stamp.BeforeRun
+---@field plan Testing.Cli.RunPlan
+---@field sv Testing.Run.Services
+---@field run_opts Testing.Run.Options
+---@field ordered Testing.Discover.File[]
+---@field disc table
+
+---What a stamp is about, taken BEFORE a spec runs.
+---@class Testing.Stamp.Before
+---@field records? Testing.Stamp.Current[]
+---@field env? Testing.Stamp.Env
+---@field facts? Testing.Stamp.GitFacts
+---@field frozen? Testing.Stamp.Frozen The process state the keys read (runtime path, environment, `package.path`).
+---@field error? string Why nothing could be taken.
+
+---Take the inputs of the run: the keys of every spec file, the environment and the git facts. A stamp describes the
+---inputs the specs were GIVEN. Keys computed after the run would describe whatever the files are by then: an editor
+---that saves, a formatter or a spec that rewrites a source during the run would make a stamp for content that never
+---ran, and `verify` would call that tree proven. Never raises (the stamp is refused later, with the reason).
+---@param o Testing.Stamp.BeforeRun
+---@return Testing.Stamp.Before
+function M.before_run(o)
+  local collect = require("testing.stamp.collect")
+  local seam = (o.sv --[[@as table]]).stamp or {}
+  local frozen = collect.freeze()
+  local ok, records, env = pcall(collect.records, o.plan, o.sv, o.run_opts, o.ordered, o.disc)
+  if not ok then
+    return { error = tostring(records) }
+  end
+  local gok, facts = pcall(collect.git_facts, o.plan.root, seam.run)
+  if not gok then
+    return { error = tostring(facts) }
+  end
+  -- the key lines are for the details of a changed file in `verify`; they would only sit in memory during the run
+  for _, r in ipairs(records) do
+    r.parts = nil
+  end
+  return { records = records, env = env, facts = facts, frozen = frozen }
+end
+
+---What the stamp lists, given the keys of before and after the run. A file whose key differs is a file whose inputs
+---changed while it ran (`moved`). The one difference that is no change of an input: the run itself made the key
+---`nondeterministic` (it gave a result another run did not; `testing.cache.keylog`); that file is listed as not
+---provable, as it always was.
+---@param before Testing.Stamp.Current[]
+---@param after Testing.Stamp.Current[]
+---@return Testing.Stamp.Current[] records
+---@return string[] moved Files whose inputs differ after the run, in byte order.
+function M.reconcile(before, after)
+  local now = {}
+  for _, r in ipairs(after) do
+    now[r.file] = r
+  end
+  local records, moved, seen = {}, {}, {}
+  for _, r in ipairs(before) do
+    seen[r.file] = true
+    local n = now[r.file]
+    if n and n.key == r.key and n.uncacheable == r.uncacheable then
+      records[#records + 1] = r
+    elseif n and r.key and n.uncacheable and n.kind == "nondeterministic" then
+      records[#records + 1] = n
+    else
+      moved[#moved + 1] = r.file
+      records[#records + 1] = r
+    end
+  end
+  for _, r in ipairs(after) do
+    if not seen[r.file] then
+      moved[#moved + 1] = r.file
+    end
+  end
+  table.sort(moved, function(a, b)
+    return stamp.bytecmp(a, b) < 0
+  end)
+  return records, moved
+end
+
 ---@class Testing.Stamp.AfterRun
 ---@field plan Testing.Cli.RunPlan
 ---@field sv Testing.Run.Services
 ---@field run_opts Testing.Run.Options
 ---@field ordered Testing.Discover.File[]
 ---@field disc table
+---@field pre? Testing.Stamp.Before What `M.before_run` took before the run.
 ---@field res Testing.Result
 ---@field verdict Testing.Verdict
 ---@field err fun(s: string)
@@ -128,12 +206,65 @@ function M.after_run(o)
   end
 
   local collect = require("testing.stamp.collect")
-  local records, env = collect.records(plan, sv, o.run_opts, o.ordered, o.disc)
-  if #records == 0 then
+  local pre = o.pre
+  if not (pre and pre.records and pre.env and pre.facts) then
+    err(
+      project.safe_line(
+        "testing: stamp: not written: the inputs of the run could not be recorded before it: "
+          .. tostring(pre and pre.error or "not taken")
+      )
+    )
+    return false
+  end
+  if #pre.records == 0 then
     err("testing: stamp: not written: the project has no spec file")
     return false
   end
-  local facts = collect.git_facts(plan.root, seam.run)
+  -- the keys of AFTER the run, to see whether an input moved under the specs: the stamp keeps the keys of before
+  -- with the runtime path, the environment and `package.path` of before the run: a spec of an in-process run may change
+  -- those (they are no input that moved), and only a file can make the keys differ
+  local after_records, after_env =
+    collect.records(plan, sv, o.run_opts, o.ordered, o.disc, pre.frozen)
+  local records, moved = M.reconcile(pre.records, after_records)
+  if #moved > 0 then
+    local names = {}
+    for i, f in ipairs(moved) do
+      if i > 5 then
+        names[#names + 1] = ("... and %d more"):format(#moved - 5)
+        break
+      end
+      names[#names + 1] = f
+    end
+    err(
+      project.safe_line(
+        ("testing: stamp: not written: an input changed while the run was going (%s). The suite ran against the earlier content: run it again"):format(
+          table.concat(names, ", ")
+        )
+      )
+    )
+    return false
+  end
+  local env = pre.env
+  if not vim.deep_equal(env, after_env) then
+    err(
+      "testing: stamp: not written: the runner, Neovim or the configuration changed while the run was going"
+    )
+    return false
+  end
+  local facts = pre.facts
+  local after_facts = collect.git_facts(plan.root, seam.run)
+  if
+    after_facts.git ~= facts.git
+    or after_facts.commit ~= facts.commit
+    or after_facts.tree ~= facts.tree
+  then
+    err(
+      "testing: stamp: not written: the checkout (commit or tree) changed while the run was going: the stamp would describe another state than the one the keys are about"
+    )
+    return false
+  end
+  -- what the specs left in the tree (or the editor changed) counts: the stamp does not claim a clean tree then
+  local dirty = (facts.git and (facts.dirty or after_facts.dirty)) or nil
   local keyed = 0
   for _, r in ipairs(records) do
     keyed = keyed + (r.key and 1 or 0)
@@ -142,7 +273,7 @@ function M.after_run(o)
     head = {
       commit = facts.commit,
       tree = facts.tree,
-      dirty = facts.git and facts.dirty or nil,
+      dirty = dirty,
       run = o.res.run.id,
       ts = seam.now or os.time(),
       summary = {

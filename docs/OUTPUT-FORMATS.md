@@ -63,7 +63,9 @@ a reporter handed an IR without it derives a smaller one from the cases):
 | `red` | A case failed, errored, timed out or crashed. | `1` | never |
 
 The kind never changes an exit code (`0` green and partial, `1` red, `2` and `3` as before), and `green` is
-exactly the run that prints the sentinel. The counts are in spec files: `n from cache, m ran, k skipped on
+exactly the run that prints the sentinel. One run exits `1` without a failed case: `testing stamp` for a run that was
+not given its stamp. The stdout reporters (`term`, `agent`) show it as `red` with the reason `stamp not written` (and
+`no case failed`), so the kind they print is the exit code the process has; the report files keep the verdict of the cases. The counts are in spec files: `n from cache, m ran, k skipped on
 purpose` (`k` = files that were not selected). A skipped case is never green: it makes the run `green-partial`.
 
 ```
@@ -107,6 +109,12 @@ FAIL  TESTS/b_spec.lua
 * Multi-line `expected` / `actual` get a line diff, with equal head and tail trimmed first and the
   work bounded, so a huge value cannot stall the report.
 * Lines are truncated by display width (CJK and emoji count as two columns).
+* **Hostile input**: text from the code under test (messages, errors, tracebacks, expected/actual values, diff
+  lines, skip reasons, process command lines) is cleaned like in every reporter (control characters, escape
+  sequences, C1, bidi overrides, invalid UTF-8). Every line that would start with `::` (a workflow command, which
+  the runner of GitHub Actions also reads behind indentation, ASCII or Unicode) is written with `\x3A:`, so a
+  failure message cannot forge an annotation or switch the real ones off with `::stop-commands::`. A line that
+  begins that way is two columns wider than the width.
 * Colour is off unless asked for. The convention: an explicit option, then `NO_COLOR`, then
   `FORCE_COLOR` / `CLICOLOR_FORCE`, then whether stdout is a terminal.
 
@@ -143,7 +151,16 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   each; in `--format jsonl` an object of the kind `flaky`, `unasserted` or `no_case` after the verdict).
 * **A report file that cannot be written** (`--json`, `--junit`): the first line is printed only after the files are
   written. When one cannot be, the exit code is `3` and the line says so (`INFRA | cannot write ... | exit 3`, in
-  jsonl an object of the kind `infra`), never a verdict with another exit code.
+  jsonl an object of the kind `infra`), never a verdict with another exit code. The line is ONE line whatever the
+  reason holds (an IR that failed validation names the offending ids on several lines: the first line and ` ...`
+  are on stdout, all of it is on stderr).
+* **A stamp that was asked for and not written** (`testing stamp`, [CLI.md](CLI.md#stamp-and-verify)): the process
+  exits `1` although no case failed (an `--out` that cannot be written, a run that is not complete). The first line
+  then says `RED ... exit 1` and the second line `no case failed; stamp not written ...` (in jsonl the verdict
+  object has `"verdict":"red"`, `"exit_code":1` and the reason in `reasons`; the terminal reporter prints
+  `verdict: red`), never `GREEN` or `exit 0`. The reason itself is on stderr (`testing: stamp: not written: ...`).
+  The report files (`--json`, `--junit`, `--github`) are written before the stamp step and describe the cases:
+  they keep the verdict of the cases.
 * **One entry per cause**: failures with the same status, message (first line) and top frame (the assertion site, or
   the first frame of the traceback) are one entry with a counter (`ERROR x40`), the first case, and the hint that the
   rest is in the `--json` file. Several failed assertions of one case: the first, plus a count.
@@ -151,10 +168,16 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   context before it.
 * **`rerun:`** the entry script as it was called, the arguments of the run without what selects or shows (`--file`,
   `--filter`, `--tags`, `--lf`, `--cached`, `--changed`, `--shard`, the reporter and report options, `-x`, `--shuffle`,
-  `--order`, the path positionals), then `--file <file>` and `--filter '<case>'`. Every word is quoted for bash and PowerShell alike: bare when it only
+  `--order`, the path positionals), then `--file <file>` and `--filter '<case>'`. Every word is quoted for bash and
+  PowerShell (7 and Windows PowerShell 5.1) alike: bare when it only
   holds `[A-Za-z0-9_./:=+-]`, else in single quotes (nothing inside them is interpreted: `$(...)`, backticks, `$var`
-  and `%` stay literal, spaces are kept as they are). A word with a single quote or a control character has no safe
-  spelling: a `--filter` is left out, and for a file or argument the line says that there is no command.
+  and `%` stay literal, spaces are kept as they are). A word with a single quote, a double quote, a control
+  character, an empty word or a backslash at the end of a word that holds a space has no safe spelling (Windows
+  PowerShell 5.1 loses the quote, drops the empty argument and lets the trailing backslash swallow the rest of the
+  line): a `--filter` is left out, and for a file or argument the line says that there is no command. A value that
+  starts with `--` is written `--filter='--help prints usage'` (the argument parser would take it for the next option
+  in the `--filter <value>` form). A case name longer than 200 bytes is cut to that many: the filter is a plain
+  substring of the case id, so the prefix still selects the case, and the line stays short.
 * **`--agent-budget <n>`** (default 4000, at least 200) bounds the characters of everything after the verdict lines.
   An entry that does not fit in full is tried in short form (head line and `rerun:`); what still does not fit is
   counted in the last `more:` line, never dropped silently.
@@ -164,7 +187,9 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   `{"kind":"omitted",...}` when the budget cut something.
 * **Hostile input**: case names, messages, values and file names go through the same cleaning as `term` (control
   characters, escape sequences, C1, bidi overrides, invalid UTF-8), are cut to one line, and a line that would start
-  with `::` (a workflow command) is written with `\x3A:`.
+  with `::` (a workflow command) is written with `\x3A:`. That holds after any whitespace, ASCII or Unicode (a
+  no-break space, an ideographic space, U+2028: the runner of GitHub Actions trims all of it before it looks for
+  `::`), and for every line the run writes to stderr, a line after a line break inside a message included.
 * **No sentinel.** `GREEN` is printed exactly where the sentinel would be. A script that greps for the sentinel
   uses `--reporter term` (or `TESTING_AGENT=0`).
 

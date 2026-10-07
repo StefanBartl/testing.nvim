@@ -5,7 +5,9 @@
 --- run that prints the sentinel), `green-partial` when it exited 0 but did not look at everything (a
 --- selection, a case filter, a skipped case, a `--maxfail` stop, a case `--allow-flaky` accepted after a retry:
 --- no sentinel), and `red` when the exit code is not 0.
---- The exit code itself is not touched by any of this (0 green and partial, 1 red, 2 and 3 as before).
+--- The exit code itself is not touched by any of this (0 green and partial, 1 red, 2 and 3 as before). One
+--- exception, on the reader's side: `testing stamp` exits 1 for a run that was not given its stamp although no case
+--- failed; the stdout reporters then show `stamp_refused(verdict)` (red, exit 1), never a `green` with `exit 0`.
 ---
 --- `build` is pure. The run driver fills the facts and stores the result as `run.verdict` of the IR, so
 --- every reporter (and the `--json` file) reads the same data; a reporter handed an IR without it
@@ -45,10 +47,11 @@ M.MAX_CHANGED = 12
 ---@field exit_code integer
 ---@field files { total: integer, selected: integer, cached: integer, ran: integer, skipped: integer, unrun: integer }
 ---@field cases { total: integer, skipped: integer, flaky: integer }
----@field reasons? string[] Why a run is not `green` (partial only).
+---@field reasons? string[] Why a run is not `green` (partial; a refused stamp adds its own reason).
 ---@field last_green? { ts: integer, sha?: string }
 ---@field changed_since? { count: integer, files: string[] }
 ---@field derived? boolean Built from the cases alone (`from_result`), not by the run driver.
+---@field stamp_refused? boolean `testing stamp` asked for a stamp and none was written: `kind` is `red` and `exit_code` 1 although no case failed (`stamp_refused`).
 
 ---@param n any
 ---@return integer
@@ -119,6 +122,25 @@ function M.build(f)
     v.reasons = reasons
   end
   return v
+end
+
+---The verdict a `testing stamp` run shows when it exits 1 although no case failed: the stamp was asked for and
+---not written (the run was partial, or the file, the secret or the note failed). A run that exits 0 must be a
+---complete green run (the sentinel is printed exactly there), so what a reader sees first (`RED ... exit 1`) must
+---agree with the exit code of the process. `v` is not changed; the reasons of a partial run stay, the refusal is
+---added (what exactly went wrong is on stderr, `testing: stamp: not written: ...`).
+---@param v Testing.Verdict A verdict with `exit_code` 0.
+---@return Testing.Verdict
+function M.stamp_refused(v)
+  local out = vim.deepcopy(v)
+  out.kind = "red"
+  out.exit_code = 1
+  out.stamp_refused = true
+  out.last_green, out.changed_since = nil, nil
+  local reasons = vim.deepcopy(v.reasons or {})
+  reasons[#reasons + 1] = "stamp not written"
+  out.reasons = reasons
+  return out
 end
 
 ---A verdict from the cases alone, for an IR that carries none (a file read back, a hand-built IR). It cannot
@@ -214,6 +236,18 @@ end
 function M.red_lines(v)
   if v.kind ~= "red" or v.derived then
     return {}
+  end
+  if v.stamp_refused then
+    -- the run itself was not red: the line says what is, not a last green run that would suggest it was
+    local why = {}
+    for i, r in ipairs(v.reasons or {}) do
+      why[i] = util.clean(tostring(r), { bidi = true, c1 = true })
+    end
+    return {
+      ("no case failed; %s (the reason is on stderr: `testing: stamp: not written`)"):format(
+        table.concat(why, "; ")
+      ),
+    }
   end
   local g = v.last_green
   if type(g) ~= "table" or type(g.ts) ~= "number" then

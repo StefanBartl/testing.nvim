@@ -490,5 +490,36 @@ end
     eq(r.code, 1, "without --allow-flaky the same run is red")
   end
 
+  -- ------------------------- --maxfail does not apply to the rerun: the case it is there for must be reached
+  do
+    -- `early` fails only when the file runs for the second time (the retry), `late` only the first time (the run). With
+    -- `--maxfail 1` the rerun would stop at `early` and never reach `late`: it would be "missing", not flaky.
+    local counter = tmp .. "/c9.txt"
+    local spec = ([[
+local path = %q
+local n = 0
+local f = io.open(path, "rb")
+if f then
+  n = tonumber(f:read("*a")) or 0
+  f:close()
+end
+f = assert(io.open(path, "wb"))
+f:write(tostring(n + 1))
+f:close()
+n = n + 1
+describe('g', function()
+  it('early', function() assert.is_true(n ~= 2) end)
+  it('late', function() assert.is_true(n ~= 1) end)
+end)
+]]):format(counter)
+    local root = project({ ["TESTS/g_spec.lua"] = spec })
+    local r = go(root, { "--maxfail", "1", "--retry-failed", "1" })
+    eq(slurp(counter), "2", "the file ran twice: the run and the retry")
+    eq(r.code, 1, "flaky stays red\n" .. r.out .. r.err)
+    has(r.out, "flaky: 1 case(s) failed and then passed on a retry", "`late` is found flaky")
+    has(r.out, "g::late", "by name")
+    lacks(r.out .. r.err, "missing from the output", "it is not reported as missing from the retry")
+  end
+
   vim.fn.delete(tmp, "rf")
 end

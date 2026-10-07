@@ -272,7 +272,12 @@ function Hasher:tree(dir, opts)
     end
     return false
   end
-  local files = collect.files(dir, { ignore = ignore })
+  -- a directory the walk cannot list is NOT an empty one: the files below it would be left out of the digest, and
+  -- an edit of one of them (a spec may open it by name) would be served a stale green. No digest, no key.
+  local files, unreadable = collect.files(dir, { ignore = ignore })
+  if unreadable then
+    return nil, ("unreadable directory: %s"):format(tostring(unreadable[1]))
+  end
   local real_dir = uv.fs_realpath(dir) or dir
   local seen = { [real_dir] = true }
   local followed = 0
@@ -286,7 +291,11 @@ function Hasher:tree(dir, opts)
       if followed > M.MAX_LINKS then
         return nil, ("more than %d symlinked directories below %s"):format(M.MAX_LINKS, dir)
       end
-      vim.list_extend(files, collect.files(link, { ignore = ignore }))
+      local more, link_unreadable = collect.files(link, { ignore = ignore })
+      if link_unreadable then
+        return nil, ("unreadable directory: %s"):format(tostring(link_unreadable[1]))
+      end
+      vim.list_extend(files, more)
     end
   end
   for _, link in ipairs(all_links) do

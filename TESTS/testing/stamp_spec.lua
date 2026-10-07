@@ -430,6 +430,90 @@ return function(H)
     "a note is never looked up for a name that is not an object id"
   )
 
+  -- `.deps/` (the dependency checkouts CI makes below the project) is no change of the project
+  local status_argv
+  collect.git_facts("/x", function(argv)
+    if argv[2] == "status" then
+      status_argv = argv
+    end
+    return fake("")(argv)
+  end)
+  ok(
+    status_argv and vim.tbl_contains(status_argv, ":(exclude).deps"),
+    "the status leaves out .deps: " .. vim.inspect(status_argv)
+  )
+  eq(
+    status_argv and { status_argv[#status_argv - 2], status_argv[#status_argv - 1] },
+    { "--", "." },
+    "below the project directory only, then the exclusion"
+  )
+
+  -- ---------------------------------------------------------------- the environment facts
+  local env_facts = collect.environment({ config_digest = "cfg" })
+  ok(not env_facts.nvim:find("apinil", 1, true), "the API level is not read from a missing field")
+  ok(env_facts.nvim:find("|api%d+$") ~= nil, "it names the API level: " .. env_facts.nvim)
+  eq(
+    env_facts.nvim:match("|api(%d+)$"),
+    tostring(vim.fn.api_info().version.api_level),
+    "the real one"
+  )
+
+  -- ---------------------------------------------------------------- what a stamp keeps after the run
+  local function rec(file, key, reason, kind)
+    return { file = file, key = key, uncacheable = reason, kind = kind }
+  end
+  local before = {
+    rec("TESTS/a_spec.lua", K1),
+    rec("TESTS/b_spec.lua", nil, "reads the clock", "clock"),
+  }
+  local CLOCK_B = rec("TESTS/b_spec.lua", nil, "reads the clock", "clock")
+  local kept, moved = write.reconcile(before, vim.deepcopy(before))
+  eq({ #kept, #moved }, { 2, 0 }, "nothing moved: both kept, none named")
+  eq(
+    select(2, write.reconcile(before, { rec("TESTS/a_spec.lua", K2), CLOCK_B })),
+    { "TESTS/a_spec.lua" },
+    "a file with another key after the run moved"
+  )
+  eq(
+    select(2, write.reconcile(before, { rec("TESTS/a_spec.lua", K1), rec("TESTS/b_spec.lua", K2) })),
+    { "TESTS/b_spec.lua" },
+    "no key before, a key after: moved"
+  )
+  eq(
+    select(
+      2,
+      write.reconcile(before, { rec("TESTS/a_spec.lua", nil, "reads another thing"), CLOCK_B })
+    ),
+    { "TESTS/a_spec.lua" },
+    "a key before, another reason after: moved"
+  )
+  eq(
+    select(2, write.reconcile(before, { rec("TESTS/a_spec.lua", K1) })),
+    { "TESTS/b_spec.lua" },
+    "a file that is gone after the run moved"
+  )
+  eq(
+    select(
+      2,
+      write.reconcile(before, { rec("TESTS/a_spec.lua", K1), CLOCK_B, rec("TESTS/0_spec.lua", K2) })
+    ),
+    { "TESTS/0_spec.lua" },
+    "a file that is new after the run moved (byte order)"
+  )
+  local flipped = rec(
+    "TESTS/a_spec.lua",
+    nil,
+    "nondeterministic: the same key gave different results",
+    "nondeterministic"
+  )
+  kept, moved = write.reconcile(before, { flipped, CLOCK_B })
+  eq(moved, {}, "a key the run made nondeterministic is no moved input")
+  eq(
+    { kept[1].key, kept[1].kind },
+    { nil, "nondeterministic" },
+    "and is listed as not provable, the key of before is not kept"
+  )
+
   -- ---------------------------------------------------------------- reasons are cleaned
   eq(
     collect.clean_reason("reads 'C:/p/x' here\nand\27[31m there", "C:/p"),

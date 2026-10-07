@@ -105,7 +105,9 @@ the workflow never disagree (the plan does not drop a checkout that `scripts/tes
 * `<DEP>_PATH: ...` in the environment of the run step, for a dependency the plan resolves, becomes
   `<DEP>_DIR` (the name `testing.deps` reads): `HOVER_NVIM_PATH` is now `HOVER_NVIM_DIR`. Not when the step sets
   `<DEP>_DIR` already (a key twice in one mapping is invalid YAML) or when another file reads `<DEP>_PATH` (the rest of
-  the workflow, a script, the init script): the line stays and a note names the readers.
+  the workflow, a script, the init script): the line stays and a note names the readers. A line that only SETS the
+  name (`HOVER_NVIM_PATH: ...` in another step or job) is no reader: a workflow with several runner jobs is renamed in
+  all of them.
 * `-c "lua dofile('scripts/ci/headless_tests.lua')"` (a spec script started from a `-c` command) is
   mapped to the runner call (only a script that is named like a runner: `test.lua`, `tests*.lua`, `test_*.lua`,
   `*_test(s).lua`, `headless_test*`; `gen_testdata.lua` or `setup_test_env.lua` are helpers and are left alone), with the policy `isolated = "file"`, `host = "c"` (one editor per file,
@@ -116,7 +118,9 @@ the workflow never disagree (the plan does not drop a checkout that `scripts/tes
   NOT checked out") keeps it out of `deps` and out of the checkout steps the plan adds; it is listed as
   optional with a risk, because the old CI is the reference for what the specs need. The comment must say it of
   that name (a word of its own, the phrase after it in the same sentence, not negated, not in the past) and of
-  that name only: a line that names two plugins closes nothing.
+  that name only: a line that names two plugins closes nothing. `never` or `unless` BEFORE the phrase turns it around
+  ("never kept off", "checked out unless the matrix says not checked out"); after the phrase they only qualify it ("kept
+  off the runtimepath unless a spec adds it" still keeps the plugin away).
 * A harness beside the specs (`scripts/ci/harness.lua` next to `scripts/ci/specs/`) counts as the
   project's own harness, not only `TESTS/harness.lua`.
 
@@ -234,5 +238,5 @@ local result = migrate.apply(plan, { apply = true })           -- result.applied
 ```
 
 `plan.empty` is `true` for a migrated repository; `plan.skipped` / `plan.error` explain why there is no
-plan. Every string from the repository is escaped (`\xNN`) before it is shown, so a hostile file name or
-workflow line cannot reach your terminal as an escape sequence.
+plan. Every string from the repository is escaped (`\xNN`, bidirectional overrides as `\uNNNN`) before it is shown, so
+a hostile file name or workflow line cannot reach your terminal as an escape sequence or read backwards.

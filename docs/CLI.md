@@ -241,19 +241,24 @@ testing verify . --stamp ci/stamp.json --max-age 3d
 
 `stamp` is a run (every option of a run applies, because the cache keys depend on them). When its verdict is `green` it
 writes, for every spec file, the cache key or the reason there is none, plus runner digest, Neovim version, OS and
-configuration digest, the commit and the tree. Any other verdict writes nothing and exits `1`: you asked for a stamp
-and did not get one. `--changed`, `--since`, `--affected`, `--filter`, `--file`, `--tags`, `--exclude-tags`, `--lf`,
+configuration digest, the commit and the tree, all taken before the first spec runs: an input that changed while the
+specs ran (an editor that saved, a formatter, a spec that rewrites a source) writes nothing and exits `1` as well. Any
+other verdict writes nothing and exits `1`: you asked for a stamp and did not get one. The first line of the agent
+report and the `verdict:` line of the terminal report say so before anything else: `RED ... exit 1` and `verdict:
+red` with `no case failed; stamp not written` (the reason is on stderr), never `GREEN` or `exit 0` for a run that exits
+`1` ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#agent)). The stamp is only attempted when every report file of the run was
+written: a failed `--json`, `--junit` or `--github` file is exit `3` and no stamp. `--changed`, `--since`, `--affected`, `--filter`, `--file`, `--tags`, `--exclude-tags`, `--lf`,
 `--shard`, `--maxfail`, `--list`, `--watch`, `--shuffle` and path arguments are refused with exit `2`.
 
-`verify` recomputes the keys (roughly editor start plus the keys: a few tenths of a second, not milliseconds) and says
-exactly one of
+`verify` recomputes the keys (roughly editor start plus the keys: a few tenths of a second, not milliseconds) after the
+`minit` of the project, as a run does, and says exactly one of
 
 | Answer | Meaning | Exit |
 | --- | --- | --- |
 | `verified` | every file of the stamp has the same key now, the stamp is young enough, the tree is clean, the stamp is trusted | `0`, and the sentinel as last line |
 | `partial` | nothing a key can see changed, but some files have no key (clock, process, ...): they are not proven. The command to run them is printed | `1`, never the sentinel |
 | `changed` | a file has another key, is gone, or is new; for a changed file the explanation of `testing explain` (which dependency, which environment name) when the cache still holds the entry of the stamped key | `1` |
-| `rejected` | runner, Neovim, OS/architecture or configuration differ from the stamp (the cause is named) | `1` |
+| `rejected` | runner, Neovim, OS/architecture or configuration differ from the stamp (the cause is named), or the `minit` of the project failed (the keys cannot be computed the way a run computes them) | `1` |
 | `expired` | older than `--max-age` (default `7d`; `s`, `m`, `h`, `d`) | `1` |
 | `dirty` | `git status` is not empty: what is checked is not the committed tree (`--allow-dirty` overrules, explicitly) | `1` |
 | `untrusted` | a local stamp in CI, a CI stamp that was not written on a trusted ref, a missing or wrong HMAC | `1` |
@@ -365,7 +370,9 @@ recorded as the last green run. So `green` stays exactly the run that prints the
 `--maxfail`: a stop that left files unrun keeps the verdict partial even when a retry turned the failure green.
 
 The retry runs the whole file again (the driver of the first run: this editor or a child editor) and looks only at
-the cases that were red; what the rest of the file did the first time stands. `--retry-failed` excludes `--list` and
+the cases that were red; what the rest of the file did the first time stands. The `--maxfail` threshold does not apply
+to the rerun: a case of the file that failed this time (and not before) must not stop it before the case it is there
+for has run again (that case would be `missing from the output of a retry`, not found flaky). `--retry-failed` excludes `--list` and
 `--watch` (exit `2`). A quarantine (a known flaky case that is set aside until a date) is not part of this flag.
 
 ### Worker pool

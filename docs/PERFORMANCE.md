@@ -122,7 +122,18 @@ What this says, plainly:
 * Keys: `testing.cache.key` of 100 spec files whose closures hold 8 modules each takes about 70 ms with a warm index
   (`testing budget`, case `cache_key_100`); the closure of lib.nvim's 87 specs takes 230 ms warm. Within one run a file
   is hashed, analysed and stat-ed once, instead of once per spec (the review measured 110 - 160 ms per spec and 8.3 s for
-  118 specs before).
+  118 specs before). The Neovim part of the key (version, API level, OS, architecture) is made once per process: it
+  cost about 1.8 ms per key (`vim.version()` and `vim.fn.api_info()`), which the budget case does not show because it
+  fixes `ctx.nvim` (measured with the real version, 100 specs with a closure of one module each, warm index, best of
+  5, Windows 11, Neovim 0.12.2, 2026-10-07: 218 ms before, 41 ms after). The digests of the runtime directories of the
+  project root (`ftplugin/`, `queries/`, ...) are made once per run, like every other directory digest.
+* A file made to keep the scanner busy costs what any other file costs. The header directives (`-- @cache ...`,
+  `-- @cache-allow`, `-- @cache-env`, `-- @cache-inputs`, `-- @require-wrapper`) used to be read with `(.-)%s*$`, which is
+  quadratic in the blanks of a line (a directive and 40 000 blanks took 2.6 s for all five, 100 000 took 22 s for one;
+  at the size the hash index allows, hours, with no spec run). They read the rest of the line now (linear), and a header
+  line is read up to 16384 bytes. The same shape is gone from the regex fallback of the spec discovery and from the CI
+  migration (`TESTS/testing/scan_hostile_line_spec.lua`: 60 000 blanks, a quarter of a second as the limit, about a
+  millisecond measured).
 * A hit rate counts only what is sound. The earlier version of this section reported 41 - 83 % on four of these
   suites; stale passes found in the review (a module that reads a file next to it, a `package.path` that points outside
   the spec root, `:runtime`, a path above the project, an mtime put back with `touch -r`, a lint spec that reads the

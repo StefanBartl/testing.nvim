@@ -209,12 +209,12 @@ function M.render_summary(records, summary, selection)
   return lines
 end
 
----Run `testing explain`.
 ---@param plan Testing.Cli.RunPlan
 ---@param sv Testing.Run.Services
 ---@param own Testing.Explain.Own
+---@param run_opts Testing.Run.Options
 ---@return integer exit_code
-function M.main(plan, sv, own)
+local function explain_main(plan, sv, own, run_opts)
   local out, err = sv.out, sv.err
   local project = require("testing.run.project")
   local cached = require("testing.run.cached")
@@ -223,16 +223,6 @@ function M.main(plan, sv, own)
   local function say(line)
     out(project.safe_line(line))
   end
-  -- the seed of a shuffled run is part of its key, and a run without `--seed` draws a new one each time: no key
-  -- computed here would be the key of any run
-  if args.shuffle and args.seed == nil then
-    err(
-      "testing: explain: --shuffle needs --seed <n>: the seed is part of a shuffled run's cache key, and a run without --seed draws a new one each time"
-    )
-    return project.EXIT_USAGE
-  end
-
-  local run_opts = require("testing.run.options").of(plan)
   local discover = sv.discover or require("testing.discover")
   local disc = discover.discover(root, {
     roots = plan.project.roots,
@@ -409,6 +399,35 @@ function M.main(plan, sv, own)
     end
   end
   return project.EXIT_OK
+end
+
+---Run `testing explain`. The keys are computed as a run computes them, after the `minit` of the project: the
+---explanation is never about another key than the run's (`testing.run.project.with_minit`).
+---@param plan Testing.Cli.RunPlan
+---@param sv Testing.Run.Services
+---@param own Testing.Explain.Own
+---@return integer exit_code
+function M.main(plan, sv, own)
+  local project = require("testing.run.project")
+  local args = plan.args
+  -- the seed of a shuffled run is part of its key, and a run without `--seed` draws a new one each time: no key
+  -- computed here would be the key of any run
+  if args.shuffle and args.seed == nil then
+    sv.err(
+      "testing: explain: --shuffle needs --seed <n>: the seed is part of a shuffled run's cache key, and a run without --seed draws a new one each time"
+    )
+    return project.EXIT_USAGE
+  end
+  local run_opts = require("testing.run.options").of(plan)
+  local code
+  local ok, merr = project.with_minit(plan, run_opts, function()
+    code = explain_main(plan, sv, own, run_opts)
+  end)
+  if not ok then
+    sv.err(project.safe_line("testing: " .. tostring(merr)))
+    return project.EXIT_INFRA
+  end
+  return code
 end
 
 return M

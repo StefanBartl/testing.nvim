@@ -146,6 +146,77 @@ function M.clean(s, opts)
   return table.concat(out)
 end
 
+---The multi-byte whitespace characters of .NET `char.IsWhiteSpace` (U+0085, U+00A0, U+1680, U+2000..U+200A,
+---U+2028, U+2029, U+202F, U+205F, U+3000) as byte patterns. The runner of GitHub Actions trims a line with
+---`TrimStart()` before it looks for `::`, and PowerShell 5.1 decides with `char.IsWhiteSpace` whether a word
+---needs quotes, so ASCII whitespace alone is not whitespace here.
+---@type string[]
+local UNICODE_SPACE = {
+  "\194[\133\160]",
+  "\225\154\128",
+  "\226\128[\128-\138]",
+  "\226\128[\168\169\175]",
+  "\226\129\159",
+  "\227\128\128",
+}
+
+---Byte length of the whitespace character that starts at byte `i` of `s`: ASCII (space, `\t` to `\r`) or one of
+---`UNICODE_SPACE`; nil when there is none. Independent of the locale.
+---@param s string
+---@param i integer
+---@return integer|nil
+function M.space_len(s, i)
+  local b = s:byte(i)
+  if not b then
+    return nil
+  end
+  if b < 0x80 then
+    return (b == 32 or (b >= 9 and b <= 13)) and 1 or nil
+  end
+  for _, pattern in ipairs(UNICODE_SPACE) do
+    local _, last = s:find("^" .. pattern, i)
+    if last then
+      return last - i + 1
+    end
+  end
+  return nil
+end
+
+---Does `s` hold a whitespace character anywhere (see `space_len`)?
+---@param s string
+---@return boolean
+function M.has_space(s)
+  if s:find("[ \9-\13]") then
+    return true
+  end
+  for _, pattern in ipairs(UNICODE_SPACE) do
+    if s:find(pattern) then
+      return true
+    end
+  end
+  return false
+end
+
+---Defuse a line that a CI runner would read as a workflow command: when the line starts with `::` after any
+---amount of whitespace (ASCII or Unicode, see `UNICODE_SPACE`: the runner trims all of it), the `::` is written
+---`\x3A:`. One physical line at a time; the whitespace in front stays, so the text keeps its indentation.
+---@param line string
+---@return string
+function M.defuse_command(line)
+  local i = 1
+  while true do
+    local n = M.space_len(line, i)
+    if not n then
+      break
+    end
+    i = i + n
+  end
+  if line:sub(i, i + 1) == "::" then
+    return line:sub(1, i - 1) .. "\\x3A:" .. line:sub(i + 2)
+  end
+  return line
+end
+
 ---Cut `s` to at most `max_bytes` bytes without splitting a UTF-8 character.
 ---@param s string
 ---@param max_bytes integer

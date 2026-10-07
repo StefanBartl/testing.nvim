@@ -1,4 +1,5 @@
 ---@module 'testing.stamp.collect'
+-- @cache-allow env
 ---@brief What a stamp and a `verify` look at: the keys of the spec files, the environment facts, the git facts.
 ---@description
 --- Nothing here runs a spec. The keys come from `testing.cache.key` through `testing.run.cached.key_inputs` (the
@@ -44,14 +45,40 @@ function M.environment(ctx)
     runner = "unhashable"
   end
   local v = vim.version()
-  local api = vim.fn.api_info().api_level
+  -- the API level is `api_info().version.api_level`; `api_info().api_level` does not exist (the stamp said `apinil`)
+  local info = vim.fn.api_info()
+  local level = type(info) == "table" and type(info.version) == "table" and info.version.api_level
+    or nil
   local jit_os = (jit and jit.os) or "?"
   local jit_arch = (jit and jit.arch) or "?"
   return {
     runner = runner,
-    nvim = ("%s|api%s"):format(tostring(v), tostring(api)),
+    nvim = ("%s|api%s"):format(tostring(v), level and tostring(level) or "?"),
     os = jit_os .. "/" .. jit_arch,
     config = tostring(ctx.config_digest or "none"),
+  }
+end
+
+---The state of this process that a key reads besides the files: the runtime path, the environment and `package.path`.
+---@class Testing.Stamp.Frozen
+---@field rtp string[]
+---@field environ table<string, string>
+---@field package_path string
+
+---Take that state now. A stamp compares the keys of before and after a run: the specs of an in-process run may
+---change the runtime path or the environment of this editor (that is no input of theirs that changed), so the keys
+---of after the run are computed with the state of before it, and only the files can make them differ.
+---
+---Reading the whole environment here is why the header says `-- @cache-allow env` (as in `testing.run.cached`): the
+---copy is only handed on to the key, which adds the declared variables to it; without the directive every spec that
+---loads the runner (through `testing.run.project`) would have no cache key at all.
+---@return Testing.Stamp.Frozen
+function M.freeze()
+  local ok, rtp = pcall(vim.api.nvim_list_runtime_paths)
+  return {
+    rtp = ok and rtp or {},
+    environ = vim.fn.environ(),
+    package_path = package.path,
   }
 end
 
@@ -61,16 +88,24 @@ end
 ---@param run_opts Testing.Run.Options
 ---@param ordered Testing.Discover.File[]
 ---@param disc? { findings?: { path?: string }[] }
+---@param frozen? Testing.Stamp.Frozen Compute with this state instead of the live one (`M.freeze`).
 ---@return Testing.Stamp.Current[] records Sorted by byte order of the file name.
 ---@return Testing.Stamp.Env env
-function M.records(plan, sv, run_opts, ordered, disc)
+function M.records(plan, sv, run_opts, ordered, disc, frozen)
   local cached = require("testing.run.cached")
   local cache = sv.cache or require("testing.cache")
-  local inputs = cached.key_inputs(
-    plan,
-    run_opts,
-    { mode = "use", cache_dir = sv.cache_dir, seed = plan.args.seed }
-  )
+  local inputs = cached.key_inputs(plan, run_opts, {
+    mode = "use",
+    cache_dir = sv.cache_dir,
+    seed = plan.args.seed,
+    environ = frozen and frozen.environ or nil,
+  })
+  if frozen then
+    inputs.ctx.dep_roots = frozen.rtp
+    inputs.ctx.environ = function()
+      return frozen.environ
+    end
+  end
   local keylog = require("testing.cache.keylog").load(plan.root, { state_dir = sv.state_dir })
   -- a key that gave different results is no proof of anything (`testing.cache.keylog`)
   inputs.ctx.flipped = function(file, key)
@@ -83,25 +118,37 @@ function M.records(plan, sv, run_opts, ordered, disc)
     end
   end
   local records = {}
-  for _, f in ipairs(ordered) do
-    if with_finding[f.rel] then
-      records[#records + 1] = {
-        file = f.rel,
-        uncacheable = "the discovery has a finding for this file",
-        kind = "discovery",
-      }
-    else
-      local key, why, parts, detail = cache.key(inputs.info_of(f), inputs.ctx)
-      if key then
-        records[#records + 1] = { file = f.rel, key = key, parts = parts }
-      else
+  local function compute()
+    for _, f in ipairs(ordered) do
+      if with_finding[f.rel] then
         records[#records + 1] = {
           file = f.rel,
-          uncacheable = M.clean_reason(why, plan.root),
-          kind = detail and detail.kind or nil,
+          uncacheable = "the discovery has a finding for this file",
+          kind = "discovery",
         }
+      else
+        local key, why, parts, detail = cache.key(inputs.info_of(f), inputs.ctx)
+        if key then
+          records[#records + 1] = { file = f.rel, key = key, parts = parts }
+        else
+          records[#records + 1] = {
+            file = f.rel,
+            uncacheable = M.clean_reason(why, plan.root),
+            kind = detail and detail.kind or nil,
+          }
+        end
       end
     end
+  end
+  -- a module that is on no runtime path is looked up on `package.path` too
+  local live_path = package.path
+  if frozen then
+    package.path = frozen.package_path
+  end
+  local ok, err = pcall(compute)
+  package.path = live_path
+  if not ok then
+    error(err, 0)
   end
   require("testing.stamp").sort_records(records)
   return records, M.environment(inputs.ctx)
@@ -126,6 +173,9 @@ local function object_id(s)
 end
 
 ---The git facts of the working tree. `run` is the git runner (default: the real git, three commands at once).
+---`.deps/` (the checkouts of the dependencies below the project directory, as CI makes them) is not a change of
+---the project: its content is part of the key of every spec that reaches it, so a changed dependency is `changed`,
+---never lost, and a `.deps/` that is not ignored would otherwise make every tree `dirty`.
 ---@param root string
 ---@param run? fun(argv: string[], cwd: string): Testing.Affected.GitResult
 ---@return Testing.Stamp.GitFacts
@@ -134,7 +184,16 @@ function M.git_facts(root, run)
   local argvs = {
     { "git", "rev-parse", "HEAD" },
     { "git", "rev-parse", "HEAD:./" },
-    { "git", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--", "." },
+    {
+      "git",
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=normal",
+      "--",
+      ".",
+      ":(exclude).deps",
+    },
   }
   local answers
   if run then

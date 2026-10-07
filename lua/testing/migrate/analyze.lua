@@ -363,8 +363,12 @@ local KEPT_PHRASES = {
   "stays off",
   "not on the runtimepath",
 }
----Words in the same sentence that turn such a statement around or make it a thing of the past.
-local KEPT_FLIPS = { "no longer", "anymore", "any more", "used to", "formerly", "unless", "never" }
+---Words anywhere in the same sentence that make such a statement a thing of the past.
+local KEPT_PAST = { "no longer", "anymore", "any more", "used to", "formerly" }
+---Words that turn the statement around when they stand BEFORE the phrase ("is never kept off", "is checked out unless the
+---matrix says not checked out"). After the phrase they only qualify it ("kept off unless a spec adds it", "not checked
+---out: the plugin must work without it and never hard-require it"): the old CI still kept the plugin away.
+local KEPT_TURNS = { "unless", "never" }
 
 ---Positions after which `name` ends, where it stands as a word of its own (not `my-ui.nvim`, not `ui.nvim.old`).
 ---@param line string Lower case.
@@ -397,8 +401,9 @@ end
 ---must not add a checkout nor list it in `deps`.
 ---
 ---The comment must say it of THIS name: the name stands as a word of its own, the phrase comes after it in the
----same sentence, it is not negated ("is not kept off") or put in the past ("no longer kept off"), and a line
----that names more than one plugin closes nothing (it is not clear which one the phrase is about).
+---same sentence, it is not negated ("is not kept off", "is never kept off", "is checked out unless ... not checked out")
+---or put in the past ("no longer kept off"), and a line that names more than one plugin closes nothing (it is not clear
+---which one the phrase is about). `never` and `unless` after the phrase only qualify it ("kept off unless a spec adds it").
 ---@param ci_src string The workflows, comments included.
 ---@param name string
 ---@return boolean
@@ -413,18 +418,28 @@ function M.kept_away(ci_src, name)
       if vim.tbl_count(names) <= 1 then
         for _, e in ipairs(whole_name_ends(line, needle)) do
           local sentence = line:sub(e + 1):match("^(.-)[%.;!?]%s") or line:sub(e + 1)
-          local flipped = false
-          for _, w in ipairs(KEPT_FLIPS) do
+          local past = false
+          for _, w in ipairs(KEPT_PAST) do
             if sentence:find(w, 1, true) then
-              flipped = true
+              past = true
             end
           end
-          if not flipped then
+          if not past then
             for _, phrase in ipairs(KEPT_PHRASES) do
               local at = sentence:find(phrase, 1, true)
               if at then
+                local before = sentence:sub(1, at - 1)
+                local turned = false
+                for _, w in ipairs(KEPT_TURNS) do
+                  if before:find("%f[%w]" .. w .. "%f[%W]") then
+                    turned = true
+                  end
+                end
                 local lead = sentence:sub(math.max(1, at - 8), at - 1)
-                if not (lead:match("not%s+$") or lead:match("n't%s+$") or lead:match("no%s+$")) then
+                if
+                  not turned
+                  and not (lead:match("not%s+$") or lead:match("n't%s+$") or lead:match("no%s+$"))
+                then
                   return true
                 end
               end

@@ -78,6 +78,19 @@ M.HOOK_FILES = {
   { path = "scripts/hooks/claude-stop", template = "hook_claude_stop.tpl", exec = true },
 }
 
+---What is left to do by hand after `init --hooks`, one line each (docs/HOOKS.md, Install). The `chmod` of the scaffold
+---does nothing on NTFS, and git there records every file as `100644`; a clone on Linux, macOS or WSL then skips a hook
+---that is not executable with nothing but a hint, and every push or commit goes through unchecked.
+---@return string[] lines
+function M.hook_next_steps()
+  return {
+    "next: git add scripts/hooks",
+    "      git update-index --chmod=+x scripts/hooks/pre-push scripts/hooks/pre-commit",
+    "      git config core.hooksPath scripts/hooks",
+    "(the second line: without it a clone on Linux, macOS or WSL silently skips the hooks, see docs/HOOKS.md)",
+  }
+end
+
 ---Longest accepted plugin name.
 local MAX_NAME = 64
 

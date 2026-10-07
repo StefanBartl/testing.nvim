@@ -67,8 +67,32 @@ function M.join(lines, shape)
   return table.concat(lines, shape.eol) .. (shape.final and shape.eol or "")
 end
 
+---The first `max` bytes of `s`, without the pieces of a multi-byte character that the cut went through.
+---@param s string
+---@param max integer
+---@return string
+local function utf8_head(s, max)
+  local head = s:sub(1, max)
+  local i = #head
+  local back = 0
+  while i > 0 and back < 3 and head:byte(i) >= 0x80 and head:byte(i) < 0xC0 do
+    i = i - 1
+    back = back + 1
+  end
+  local lead = head:byte(i)
+  if lead and lead >= 0xC0 then
+    local need = lead >= 0xF0 and 4 or lead >= 0xE0 and 3 or 2
+    if #head - i + 1 < need then
+      head = head:sub(1, i - 1)
+    end
+  end
+  return head
+end
+
 ---Make repository-controlled text safe to display: C0 controls (except TAB), DEL and the C1 range
----that terminals interpret become `\xNN`; the result is cut at `max` bytes with an ellipsis.
+---that terminals interpret become `\xNN`; bidirectional overrides and isolates (U+202A..202E, U+2066..2069: a file name
+---that reads backwards, "Trojan Source") become `\uNNNN`; the result is cut at `max` bytes, on a character boundary,
+---with an ellipsis.
 ---@param s any
 ---@param max? integer Default 200.
 ---@return string
@@ -77,7 +101,7 @@ function M.show(s, max)
   max = max or 200
   local cut = #s > max
   if cut then
-    s = s:sub(1, max)
+    s = utf8_head(s, max)
   end
   s = s:gsub("[%c\127]", function(c)
     if c == "\t" then
@@ -89,6 +113,13 @@ function M.show(s, max)
   -- the two-byte forms below and are just as live in some terminals.
   s = s:gsub("\194([\128-\159])", function(c)
     return ("\\u%04X"):format(c:byte())
+  end)
+  -- U+202A..U+202E are E2 80 AA..AE, U+2066..U+2069 are E2 81 A6..A9 (the set of `report.util.clean { bidi = true }`)
+  s = s:gsub("\226\128([\170-\174])", function(c)
+    return ("\\u%04X"):format(0x2000 + c:byte() - 0x80)
+  end)
+  s = s:gsub("\226\129([\166-\169])", function(c)
+    return ("\\u%04X"):format(0x2040 + c:byte() - 0x80)
   end)
   return cut and (s .. "...") or s
 end

@@ -11,7 +11,11 @@
 --- multi-line values, the `--durations` list, the seed of a shuffled run and a summary line.
 ---
 --- Every string that came from the code under test passes `testing.report.util.clean` first, so a
---- test cannot inject terminal escape sequences, bidi overrides or invalid UTF-8 into the log.
+--- test cannot inject terminal escape sequences, bidi overrides or invalid UTF-8 into the log. A last
+--- pass in `render` writes every line that would start with `::` (after any indentation, ASCII or
+--- Unicode) as `\x3A:`: the runner of GitHub Actions trims a line before it looks for a workflow
+--- command, and this reporter indents all of its detail lines, so without the pass a message, an error,
+--- a diff context line or a process command line could forge an annotation or `::stop-commands::`.
 
 local util = require("testing.report.util")
 local result_mod = require("testing.core.result")
@@ -621,6 +625,11 @@ function M.render(result, opts)
     for _, l in ipairs(verdict.red_lines(run.verdict)) do
       lines[#lines + 1] = fit(l, math.max(width, 400))
     end
+  end
+  -- one pass over everything, not a call in each block: a block added later cannot forget it. A colour
+  -- sequence starts with ESC, which the runner does not trim, so those lines stay as they are.
+  for i, l in ipairs(lines) do
+    lines[i] = util.defuse_command(l)
   end
   return lines
 end

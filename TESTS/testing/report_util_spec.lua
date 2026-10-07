@@ -60,6 +60,44 @@ return function(H)
   eq(util.split_lines(""), { "" }, "empty is one empty line")
   eq(util.split_lines("a\n\nb"), { "a", "", "b" }, "empty middle line kept")
 
+  -- whitespace and the workflow-command guard ----------------------------------------------------
+  -- the runner of GitHub Actions trims a line with .NET `TrimStart()` (every `char.IsWhiteSpace`) before it looks for `::`
+  local spaces =
+    { 9, 10, 11, 12, 13, 32, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }
+  for cp = 0x2000, 0x200A do
+    spaces[#spaces + 1] = cp
+  end
+  for _, cp in ipairs(spaces) do
+    local ch = vim.fn.nr2char(cp)
+    eq(util.space_len(ch .. "x", 1), #ch, ("space_len knows U+%04X"):format(cp))
+    ok(util.has_space("a" .. ch .. "b"), ("has_space knows U+%04X"):format(cp))
+    local line = "  " .. ch .. "::stop-commands::tok"
+    eq(
+      util.defuse_command(line),
+      "  " .. ch .. "\\x3A:stop-commands::tok",
+      ("a command behind U+%04X is defused"):format(cp)
+    )
+  end
+  -- what is no whitespace stays what it is: the zero-width space, the BOM, the line above 0x3000, a letter
+  for _, cp in ipairs({ 0x200B, 0x200C, 0xFEFF, 0x180E, 0x3001, 0xE9, 0x00A1 }) do
+    local ch = vim.fn.nr2char(cp)
+    eq(util.space_len(ch, 1), nil, ("U+%04X is no whitespace"):format(cp))
+    eq(
+      util.defuse_command(ch .. "::x"),
+      ch .. "::x",
+      ("U+%04X in front of :: is not trimmed by the runner"):format(cp)
+    )
+  end
+  eq(util.defuse_command("::error::x"), "\\x3A:error::x", "a command at the start of the line")
+  eq(util.defuse_command("   ::error::x"), "   \\x3A:error::x", "after ASCII indentation, kept")
+  eq(util.defuse_command("a ::error::x"), "a ::error::x", "a `::` in the middle is no command")
+  eq(util.defuse_command(": :error"), ": :error", "one colon, a space, one colon is none")
+  eq(util.defuse_command("   "), "   ", "only whitespace")
+  eq(util.defuse_command(""), "", "the empty line")
+  eq(util.defuse_command("\\x3A:error"), "\\x3A:error", "an already defused line is left alone")
+  eq(util.has_space("plain-word"), false, "no whitespace")
+  eq(util.has_space("a\226\128\139b"), false, "a zero-width space is none")
+
   -- classes --------------------------------------------------------------------------------------
   eq(util.class_of("pass"), "ok", "pass is ok")
   eq(util.class_of("xfail"), "ok", "xfail is ok")

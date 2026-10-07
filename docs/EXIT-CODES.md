@@ -37,7 +37,10 @@ Rules behind the numbers:
 `untrusted`, `invalid`, `no-stamp`: a partial proof is never `0`), `2` a usage error (a bad flag or duration, a secret
 shorter than 16 characters), `3` an internal failure. `stamp` is a run: it exits as the run does, except that a run that
 did not earn a stamp (not `green`: a skip, an accepted flaky case, a stop) exits `1` instead of `0`, because the caller
-asked for a stamp and did not get one; a selection option is `2` before anything runs ([CLI.md](CLI.md#stamp-and-verify)).
+asked for a stamp and did not get one (so is a run whose stamp could not be written); the first line of the agent report
+and the `verdict:` line of the terminal report agree with that exit code (`RED ... exit 1`, `verdict: red`), never
+`GREEN`/`exit 0` for a run that exits `1`. A selection option is `2` before anything runs
+([CLI.md](CLI.md#stamp-and-verify)).
 
 `scripts/test.sh` adds one case of its own: `nvim` not on `PATH` is exit `3`.
 

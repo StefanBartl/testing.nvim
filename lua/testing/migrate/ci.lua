@@ -233,6 +233,23 @@ function M.mentions(line, name)
   end
 end
 
+---Does `line` READ `name`? A line that only sets it (`NAME: value`, the key of an `env:` mapping in another step or job)
+---reads nothing: renaming the key of one step breaks nothing there. A value that names it again
+---(`NAME: ${{ env.NAME }}/x`) is a read.
+---@param line string
+---@param name string
+---@return boolean
+function M.reads(line, name)
+  if not M.mentions(line, name) then
+    return false
+  end
+  local value = line:match("^%s*" .. vim.pesc(name) .. ":%s*(.*)$")
+  if value ~= nil then
+    return M.mentions(value, name)
+  end
+  return true
+end
+
 ---Command kind of one logical line.
 ---@param cmd string
 ---@return "testsh"|"legacy"|"manual"|"other"
@@ -811,11 +828,12 @@ function M.edit(src, ctx)
               break
             end
             if structural(l) then
-              local lib_value = l:match("^ +LIB_NVIM_PATH:%s*(.-)%s*$")
+              -- (`(.*)` and a `%s*$` in the test below, never `(.-)%s*$`: quadratic in the blanks of a hostile line)
+              local lib_value = l:match("^ +LIB_NVIM_PATH:%s*(.*)")
               if ctx.drop_plenary and l:match("^ +PLENARY[%w_]*:") then
                 dropped[#dropped + 1] = i
                 dropped_plenary = true
-              elseif lib_value and lib_value:match("/lib%.nvim[\"']?$") then
+              elseif lib_value and lib_value:match("/lib%.nvim[\"']?%s*$") then
                 dropped[#dropped + 1] = i
                 dropped_lib = true
               else
@@ -832,7 +850,7 @@ function M.edit(src, ctx)
             -- would read nothing after a rename: the line stays, and the person decides
             local readers = {}
             for i, l in ipairs(lines) do
-              if i ~= r.line and not comment(l) and M.mentions(l, r.old) then
+              if i ~= r.line and not comment(l) and M.reads(l, r.old) then
                 readers[#readers + 1] = ("the workflow (line %d)"):format(i)
                 break
               end
@@ -916,7 +934,7 @@ function M.edit(src, ctx)
               if l:match("^ +steps:") then
                 break
               end
-              local pre, value = l:match("^( +name:%s*)(.-)%s*$")
+              local pre, value = l:match("^( +name:%s*)(.*)")
               if pre and value:lower():find("plenary", 1, true) then
                 local neutral = vim.trim((value:gsub("[Pp][Ll][Ee][Nn][Aa][Rr][Yy]%s*", "")))
                 if neutral == "" or neutral == '""' or neutral == "''" then

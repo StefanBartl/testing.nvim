@@ -172,6 +172,31 @@ local function run_minit(root, cfg)
   return true, nil
 end
 
+---Run `fn` in the environment the keys of a run are computed in: the test-environment defaults in and the `minit` of
+---the project run. A `minit` puts directories on the runtime path that no `deps` entry names, and a key looks at that
+---path; `testing verify` and `testing explain` compute keys without running a spec and would otherwise key against a
+---bare runtime path (a stamp that is always `changed`, an explanation about another key than the run's). The defaults
+---go out again on every exit path; an error of `fn` is raised again after that.
+---@param plan Testing.Cli.RunPlan
+---@param run_opts Testing.Run.Options
+---@param fn fun()
+---@return boolean ok False when the `minit` failed: `fn` did not run.
+---@return string|nil err
+function M.with_minit(plan, run_opts, fn)
+  local restore = require("testing.run.options").apply_first_run_default(run_opts.disable_first_run)
+  local mok, merr = run_minit(plan.root, plan.project)
+  if not mok then
+    restore()
+    return false, merr
+  end
+  local ok, err = pcall(fn)
+  restore()
+  if not ok then
+    error(err, 0)
+  end
+  return true, nil
+end
+
 ---@param args Testing.Args
 ---@param cfg Testing.ProjectConfig
 ---@return { case_ms: integer|nil, file_ms: integer|nil }
@@ -264,12 +289,11 @@ end
 ---`\u{NNNN}` (the spec's own `print` must not be able to clear the screen, retitle the window, or
 ---forge a link), and a leading `::` (a GitHub workflow command such as `::error::` or
 ---`::stop-commands::`) is written as `\x3A:` so that no runner executes it, whatever a reporter does with the
----indent later.
+---indent later (the runner trims Unicode whitespace as well, see `util.defuse_command`). One physical line.
 ---@param line string
 ---@return string
 local function safe_output_line(line)
-  local clean = util.clean(line, { bidi = true, c1 = true })
-  return (clean:gsub("^(%s*)::", "%1\\x3A:"))
+  return util.defuse_command(util.clean(line, { bidi = true, c1 = true }))
 end
 
 ---Plain text for any line of the run's own diagnostics (`--profile`, the cache line): see `safe_output_line`.
@@ -417,10 +441,12 @@ end
 ---@return integer exit_code
 function M.execute(plan, sv)
   local raw_err = sv.err
-  -- every diagnostic line passes `util.clean`, one physical line at a time
+  -- every diagnostic line passes `util.clean` and the guard against a workflow command (`::` at the start), one
+  -- physical line at a time: only the first line of a message carries the `testing: ` prefix, a later one may
+  -- start with text from the code under test (the id of a case with a newline in it)
   local function err(s)
     for line in (tostring(s) .. "\n"):gmatch("(.-)\n") do
-      raw_err(safe(line))
+      raw_err(safe_output_line(line))
     end
   end
   local options_mod = require("testing.run.options")
@@ -767,6 +793,18 @@ function M.execute_run(plan, sv, run_opts, err)
       )
     end
   end
+  -- `testing stamp`: the stamp is about the inputs the specs were given, so they are taken now, before any spec
+  -- runs (what a spec or an editor changes during the run is then seen after it, and the stamp is refused)
+  local stamp_pre
+  if plan.stamp then
+    stamp_pre = require("testing.stamp.write").before_run({
+      plan = plan,
+      sv = sv,
+      run_opts = run_opts,
+      ordered = ordered,
+      disc = disc,
+    })
+  end
   -- the result cache: a file whose inputs are byte-identical to an earlier green run does not run
   local cached_mod = require("testing.run.cached")
   local prep = cached_mod.prepare({
@@ -830,7 +868,10 @@ function M.execute_run(plan, sv, run_opts, err)
     -- `--retry-failed`: a red case runs again; one that passes is flaky and the run stays red
     local retry_mod = require("testing.run.retry")
     local function rerun(list)
-      local again = vim.tbl_extend("force", common, { files = list, maxfail = nil, findings = {} })
+      local again = vim.tbl_extend("force", common, { files = list, findings = {} })
+      -- not part of the table above: a nil field does not exist there, so `common.maxfail` would stay. A rerun
+      -- that stops at the threshold may never reach the case it is there for (it is then "missing", not flaky)
+      again.maxfail = nil
       local runner = inproc
       if options_mod.any_isolated(run_opts, list) then
         runner = sv.isolated or require("testing.run.isolated")
@@ -949,6 +990,11 @@ function M.execute_run(plan, sv, run_opts, err)
   ---@param why? string Why the run did not complete (set: the held lines are replaced by one INFRA line).
   local function flush_primary(why)
     if why and primary == "agent" then
+      -- ONE line, whatever `why` holds (an IR that failed validation names the offending ids on several lines, ids of
+      -- the code under test): the first line of the report is the verdict, the rest is on stderr (`err` above)
+      local text = tostring(why)
+      local first = text:match("^[^\r\n]*") or ""
+      why = safe(first ~= text and (first .. " ...") or first)
       if args.format == "jsonl" then
         out(require("lib.nvim.json").encode({
           kind = "infra",
@@ -966,17 +1012,26 @@ function M.execute_run(plan, sv, run_opts, err)
     held = {}
   end
 
-  if primary == "term" or primary == "agent" then
+  ---Render the stdout reporter (`term`, `agent`) into `held`, for the verdict it is to show. It is the verdict of the
+  ---run, except for a `testing stamp` run that exits 1 without a red case (the stamp, see below).
+  ---@param shown Testing.Verdict
+  local function render_primary(shown)
     local reporter_opts = primary == "term" and term_options(sv, args, #res.cases)
       or agent_options(sv, args)
+    res.run.verdict = shown
     -- the real IR, like `term`: paths are made relative by the reporter itself
     local outputs, errors = reports.run_reporters(res, {
       reporters = { primary },
       defaults = { [primary] = reporter_opts },
     })
+    res.run.verdict = verdict
+    held = {}
     emit(outputs, errors, function(line)
       held[#held + 1] = line
     end)
+  end
+  if primary == "term" or primary == "agent" then
+    render_primary(verdict)
   end
   local need_ir = #sanitized_specs > 0 or primary == "json" or args.json ~= nil
   local ir, json_text
@@ -1020,6 +1075,35 @@ function M.execute_run(plan, sv, run_opts, err)
       out(line)
     end
     return M.EXIT_INFRA
+  end
+
+  -- `testing stamp`: a stamp only for the verdict `green`; a run that earned none exits 1 (asked for, not given).
+  -- Only a run whose reports are all in place is stamped (a failed report file is exit 3, and a stamp is proof). The
+  -- step comes BEFORE the first line of the report is printed: that line says "exit 0" or "exit 1" and `GREEN` only
+  -- where the sentinel is printed, so it has to know. The report files (`--json`, `--junit`, `--github`) are written
+  -- by then and describe the cases; they say nothing about the stamp, which shows in the exit code, in the stderr
+  -- line `stamp: not written` and in the verdict of the stdout reporters (`term`, `agent`), rendered again here.
+  if plan.stamp and not infra_failed then
+    local sok, stamped = pcall(require("testing.stamp.write").after_run, {
+      plan = plan,
+      sv = sv,
+      run_opts = run_opts,
+      ordered = ordered,
+      disc = disc,
+      pre = stamp_pre,
+      res = res,
+      verdict = verdict,
+      err = err,
+    })
+    if not sok then
+      err("testing: stamp: not written: " .. tostring(stamped))
+    end
+    if not (sok and stamped) and code == M.EXIT_OK then
+      code = M.EXIT_FAILED
+      if primary == "term" or primary == "agent" then
+        render_primary(require("testing.report.verdict").stamp_refused(verdict))
+      end
+    end
   end
   flush_primary(infra_failed and "a report file could not be written (see stderr)" or nil)
   for _, line in ipairs(spec_lines) do
@@ -1134,26 +1218,6 @@ function M.execute_run(plan, sv, run_opts, err)
 
   if infra_failed then
     return M.EXIT_INFRA
-  end
-
-  -- `testing stamp`: a stamp only for the verdict `green`; a run that earned none exits 1 (asked for, not given)
-  if plan.stamp then
-    local sok, stamped = pcall(require("testing.stamp.write").after_run, {
-      plan = plan,
-      sv = sv,
-      run_opts = run_opts,
-      ordered = ordered,
-      disc = disc,
-      res = res,
-      verdict = verdict,
-      err = err,
-    })
-    if not sok then
-      err("testing: stamp: not written: " .. tostring(stamped))
-    end
-    if not (sok and stamped) and code == M.EXIT_OK then
-      code = M.EXIT_FAILED
-    end
   end
 
   -- the sentinel: last line, only for the verdict `green` (a complete run, nothing skipped, stopped or accepted as

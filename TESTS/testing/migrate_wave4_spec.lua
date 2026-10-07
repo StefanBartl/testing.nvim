@@ -173,6 +173,31 @@ jobs:
     true,
     "kept_away: a clear statement after the name still works"
   )
+  -- `never` / `unless` AFTER the phrase qualify it, they do not turn it around: the old CI still kept the plugin away
+  eq(
+    analyze.kept_away(
+      "# ui.nvim is deliberately not checked out: the plugin must work without it and never hard-require it\n",
+      "ui.nvim"
+    ),
+    true,
+    "kept_away: 'never' after the phrase does not flip it"
+  )
+  eq(
+    analyze.kept_away("# ui.nvim is kept off the runtimepath unless a spec adds it\n", "ui.nvim"),
+    true,
+    "kept_away: 'unless' after the phrase does not flip it"
+  )
+  -- ... and BEFORE the phrase they do
+  for _, c in ipairs({
+    { "# ui.nvim is never kept off the runtimepath", "never before the phrase" },
+    { "# ui.nvim is never deliberately absent", "never before another phrase" },
+    {
+      "# ui.nvim is checked out unless the matrix says not checked out",
+      "unless before the phrase",
+    },
+  }) do
+    eq(analyze.kept_away(c[1] .. "\n", "ui.nvim"), false, "kept_away: " .. c[2])
+  end
 
   local r3 = mk(
     "away.nvim",
@@ -411,6 +436,96 @@ end
   has(ci7, "HOVER_NVIM_PATH:", "a variable another file reads is not renamed")
   lacks(ci7, "HOVER_NVIM_DIR:", "and no second spelling appears")
   has(table.concat(plan7.notes, "\n"), "scripts/helper.sh", "the reader is named in the notes")
+
+  -- the same key SET in another job is no reader: the rename of one step breaks nothing there
+  local ENV_STEP = "        env:\n"
+    .. "          HOVER_NVIM_PATH: ${{ github.workspace }}/../hover.nvim\n"
+  local OLD_RUN =
+    '        run: nvim --headless -u scripts/minimal_init.lua -c "PlenaryBustedDirectory TESTS"\n'
+  ---@param name string
+  ---@param ci string
+  ---@return string|nil after The workflow of the plan.
+  ---@return string notes
+  local function plan_ci(name, ci)
+    local root = mk(
+      name,
+      'local h = require("hover")\nlocal n = require("lib.nvim.notify")\nreturn { h, n }\n',
+      ci
+    )
+    local plan = migrate.run(root, { fleet_root = fleet_dir })
+    for _, op in ipairs(plan.ops) do
+      if op.path == ".github/workflows/ci.yml" then
+        return op.after, table.concat(plan.notes, "\n")
+      end
+    end
+    return nil, table.concat(plan.notes, "\n")
+  end
+  local TWO_JOBS_HEAD = "name: CI\non: [push]\njobs:\n"
+    .. "  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n"
+    .. "      - name: Lint\n"
+    .. ENV_STEP
+    .. "        run: echo lint\n"
+    .. "  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n    steps:\n      - uses: actions/checkout@v5\n"
+  local ci8, notes8 =
+    plan_ci("envjobs.nvim", TWO_JOBS_HEAD .. "      - name: Run\n" .. ENV_STEP .. OLD_RUN)
+  ok(ci8 ~= nil, "the workflow is rewritten (two jobs)")
+  has(
+    ci8,
+    "HOVER_NVIM_DIR:",
+    "the key of the run step is renamed although another job sets the old name"
+  )
+  lacks(
+    notes8,
+    "also read by the workflow",
+    "and the assignment of the other job is not named as a reader"
+  )
+  local _, n_old8 = ci8:gsub("HOVER_NVIM_PATH:", "")
+  eq(n_old8, 1, "the other job keeps its own line untouched")
+
+  -- two jobs that both run the old runner: both are renamed, neither one reads the other
+  local TWO_RUNNERS = "name: CI\non: [push]\njobs:\n"
+    .. "  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n"
+    .. "      - name: Run\n"
+    .. ENV_STEP
+    .. OLD_RUN
+    .. "  b:\n    runs-on: macos-latest\n    steps:\n      - uses: actions/checkout@v5\n"
+    .. "      - name: Run\n"
+    .. ENV_STEP
+    .. OLD_RUN
+  local ci9, notes9 = plan_ci("envrunners.nvim", TWO_RUNNERS)
+  ok(ci9 ~= nil, "the workflow is rewritten (two runner jobs)")
+  lacks(ci9, "HOVER_NVIM_PATH", "both old names are gone")
+  local _, n_new9 = ci9:gsub("HOVER_NVIM_DIR:", "")
+  eq(n_new9, 2, "both keys are renamed")
+  lacks(notes9, "also read by", "no note about readers")
+
+  -- a REAL reader in the workflow (a later step of the job) still keeps the name
+  local ci10, notes10 = plan_ci(
+    "envreader.nvim",
+    CI_HEAD
+      .. "      - name: Run\n"
+      .. ENV_STEP
+      .. OLD_RUN
+      .. '      - run: echo "$HOVER_NVIM_PATH"\n'
+  )
+  ok(ci10 ~= nil, "the workflow is rewritten (workflow reader)")
+  has(ci10, "HOVER_NVIM_PATH:", "a later step that reads the variable keeps the name")
+  lacks(ci10, "HOVER_NVIM_DIR:", "and no second spelling appears")
+  has(notes10, "also read by the workflow", "the note names the workflow as the reader")
+  -- a value that names the variable again is a read too
+  local ci11, notes11 = plan_ci(
+    "envself.nvim",
+    TWO_JOBS_HEAD:gsub(
+      "HOVER_NVIM_PATH: ${{ github.workspace }}/../hover.nvim",
+      "HOVER_NVIM_PATH: ${{ env.HOVER_NVIM_PATH }}/x",
+      1
+    )
+      .. "      - name: Run\n"
+      .. ENV_STEP
+      .. OLD_RUN
+  )
+  ok(ci11 ~= nil, "the workflow is rewritten (self reference)")
+  has(notes11, "also read by the workflow", "a value that reads the name is a reader")
 
   vim.fn.delete(tmp, "rf")
 end

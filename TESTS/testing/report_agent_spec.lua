@@ -297,6 +297,46 @@ return function(H)
     ok(not l:find("^%s*::"), "no line starts with ::")
   end
 
+  -- the runner trims Unicode whitespace as well as ASCII (.NET `TrimStart()`): a no-break space or an ideographic
+  -- space in front of `::` hides nothing. The check below is the runner's rule, written out on its own.
+  local runner_space = { [0xA0] = true, [0x1680] = true, [0x2028] = true, [0x2029] = true }
+  runner_space[0x202F], runner_space[0x205F], runner_space[0x3000] = true, true, true
+  for cp = 0x2000, 0x200A do
+    runner_space[cp] = true
+  end
+  local function runner_reads_command(l)
+    local chars = vim.fn.split(l, "\\zs")
+    local i = 1
+    while chars[i] and (chars[i] == " " or runner_space[vim.fn.char2nr(chars[i])]) do
+      i = i + 1
+    end
+    return chars[i] == ":" and chars[i + 1] == ":"
+  end
+  ok(runner_reads_command("  \u{00A0}::stop-commands::tok"), "(the check itself sees a command)")
+  ok(not runner_reads_command("\u{200B}::x"), "(and not behind a zero-width space)")
+  local unicode_spaces = { 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }
+  for cp = 0x2000, 0x200A do
+    unicode_spaces[#unicode_spaces + 1] = cp
+  end
+  for _, cp in ipairs(unicode_spaces) do
+    local ch = vim.fn.nr2char(cp)
+    local hs = new_run()
+    F.add(hs, {
+      file = "TESTS/u_spec.lua",
+      name = "u",
+      status = "error",
+      error = { message = ch .. "::stop-commands::tok", traceback = "" },
+    })
+    for _, format in ipairs({ "text", "jsonl" }) do
+      for _, l in ipairs(agent.render(hs, { command = CMD, format = format })) do
+        ok(
+          not runner_reads_command(l),
+          ("U+%04X: no %s line is a workflow command: %s"):format(cp, format, vim.inspect(l))
+        )
+      end
+    end
+  end
+
   -- guard findings: one line each, grouped -------------------------------------------------------------------------------------------
   local gd = new_run()
   local c1 = F.add(gd, { file = "TESTS/g_spec.lua", name = "leaks" })
@@ -462,8 +502,24 @@ return function(H)
     eq(agent.shell_quote("50%"), "'50%'", "a percent sign")
     eq(agent.shell_quote("!x"), "'!x'", "a bang")
     eq(agent.shell_quote("C:\\x\\y"), "'C:\\x\\y'", "a backslash")
-    eq(agent.shell_quote(""), "''", "the empty word")
+    eq(agent.shell_quote(""), nil, "the empty word: Windows PowerShell 5.1 drops an empty argument")
     eq(agent.shell_quote("it's"), nil, "a single quote has no spelling that holds in both shells")
+    -- Windows PowerShell 5.1 loses a double quote and lets a backslash before its own closing quote swallow the rest
+    eq(agent.shell_quote('say "hi"'), nil, "a double quote: 5.1 does not escape it for the program")
+    eq(agent.shell_quote('"'), nil, "a lone double quote")
+    eq(
+      agent.shell_quote("C:\\my dir\\"),
+      nil,
+      "a trailing backslash after a space: 5.1 eats the closing quote"
+    )
+    eq(
+      agent.shell_quote("C:\\my\u{00A0}dir\\"),
+      nil,
+      "a no-break space counts as whitespace to 5.1: the same"
+    )
+    eq(agent.shell_quote("C:\\mydir\\"), "'C:\\mydir\\'", "a trailing backslash alone is harmless")
+    eq(agent.shell_quote(".\\"), "'.\\'", "a path completed by PowerShell (.\\) stays")
+    eq(agent.shell_quote("C:\\my dir\\sub"), "'C:\\my dir\\sub'", "a backslash inside is harmless")
     eq(agent.shell_quote("a\nb"), nil, "a newline has none either")
     for _, q in ipairs({ "\u{2018}", "\u{2019}", "\u{201A}", "\u{201B}" }) do
       eq(
@@ -485,6 +541,134 @@ return function(H)
     rerun = agent.render(sf, { command = CMD })
     has(rerun[#rerun], "(no command:", "a file name with a quote: no command, and it says why")
     ok(not rerun[#rerun]:find("it's", 1, true), "and the name is not in the line")
+
+    -- Windows PowerShell 5.1 loses a double quote: the filter is left out, the file still reruns
+    local sd = new_run()
+    failing(sd, "TESTS/d_spec.lua", 'parses "nested" keys', { msg = "boom" })
+    rerun = agent.render(sd, { command = CMD })
+    rerun = rerun[#rerun]
+    has(rerun, "--file TESTS/d_spec.lua", "a case name with a double quote: the file stays")
+    ok(not rerun:find("--filter", 1, true), "... without a filter")
+    ok(not rerun:find('"', 1, true), "... and no double quote anywhere in the line")
+
+    -- an argument of the run with no safe spelling: no command, and it says why
+    local unspellable = {
+      ["a path with a space and a trailing backslash"] = { "C:\\my dir\\", "--reporter", "agent" },
+      ["an empty word"] = { ".", "--reporter", "agent", "--sentinel", "" },
+    }
+    for what, argv in pairs(unspellable) do
+      local sb = new_run({ argv = argv })
+      failing(sb, "TESTS/b_spec.lua", "n", { msg = "boom" })
+      rerun = agent.render(sb, { command = CMD })
+      has(rerun[#rerun], "(no command:", what .. ": no command")
+      has(rerun[#rerun], "no spelling that is safe", what .. ": and it says why")
+    end
+    local fine = new_run({ argv = { "C:\\mydir\\", "--reporter", "agent" } })
+    failing(fine, "TESTS/b_spec.lua", "n", { msg = "boom" })
+    rerun = agent.render(fine, { command = CMD })
+    has(
+      rerun[#rerun],
+      " 'C:\\mydir\\' --file TESTS/b_spec.lua",
+      "a trailing backslash without a space is fine"
+    )
+
+    -- the words a shell hands to the program: bare words and single-quoted parts, adjacent parts joined
+    local function shell_words(text)
+      local words, cur, i = {}, nil, 1
+      while i <= #text do
+        local ch = text:sub(i, i)
+        if ch == "'" then
+          local close = text:find("'", i + 1, true)
+          ok(close ~= nil, "the quotes of the line are closed: " .. text)
+          cur = (cur or "") .. text:sub(i + 1, (close or #text) - 1)
+          i = (close or #text) + 1
+        elseif ch == " " then
+          if cur then
+            words[#words + 1] = cur
+            cur = nil
+          end
+          i = i + 1
+        else
+          cur = (cur or "") .. ch
+          i = i + 1
+        end
+      end
+      if cur then
+        words[#words + 1] = cur
+      end
+      return words
+    end
+    local function parsed_rerun(cmdline)
+      local words = shell_words(cmdline:sub(#CMD + 2))
+      local parsed, perr = require("testing.args").parse(words)
+      ok(
+        parsed ~= nil,
+        "the runner parses its own rerun line: " .. tostring(perr) .. " <- " .. cmdline
+      )
+      return parsed or {}
+    end
+    local ordinary = new_run()
+    failing(ordinary, "TESTS/o_spec.lua", "own name", { msg = "boom" })
+    rerun = agent.render(ordinary, { command = CMD })
+    rerun = rerun[#rerun]
+    eq(parsed_rerun(rerun).filter, { "own name" }, "an ordinary name: the space form, parsed back")
+
+    -- a value that starts with `--` is taken for the next option by the argument parser: `--filter=<value>`
+    local dashes = new_run()
+    failing(dashes, "TESTS/o_spec.lua", "--help prints usage", { msg = "boom" })
+    rerun = agent.render(dashes, { command = CMD })
+    rerun = rerun[#rerun]
+    has(
+      rerun,
+      "--filter='--help prints usage'",
+      "a name that starts with -- is joined to its option"
+    )
+    local back = parsed_rerun(rerun)
+    eq(back.filter, { "--help prints usage" }, "and the runner reads the whole name as the filter")
+    eq(back.file, { "TESTS/o_spec.lua" }, "with the file")
+    local bare = new_run()
+    failing(bare, "--odd/a_spec.lua", "--x", { msg = "boom" })
+    rerun = agent.render(bare, { command = CMD })
+    rerun = rerun[#rerun]
+    has(rerun, "--file=--odd/a_spec.lua", "a file that starts with -- is joined too")
+    has(rerun, "--filter=--x", "so is a bare name")
+    back = parsed_rerun(rerun)
+    eq(back.file, { "--odd/a_spec.lua" }, "the file is read back")
+    eq(back.filter, { "--x" }, "and the name")
+
+    -- a very long case name does not push the entry out of the budget: the filter is a prefix of the name
+    local long = ("long name "):rep(420)
+    local sl = new_run()
+    failing(sl, "TESTS/l_spec.lua", long, { msg = "the message of the failure" })
+    for _, format in ipairs({ "text", "jsonl" }) do
+      local lines = agent.render(sl, { command = CMD, format = format })
+      local text = joined(lines)
+      has(
+        text,
+        "the message of the failure",
+        format .. ": the message survives a 4200-character name"
+      )
+      ok(not text:find("not shown", 1, true), format .. ": nothing is counted as left out")
+      local rr
+      if format == "text" then
+        rr = lines[#lines]:match("^  rerun: (.*)$")
+      else
+        for _, l in ipairs(lines) do
+          local obj = vim.json.decode(l)
+          if obj.kind == "failure" then
+            rr = obj.rerun
+          end
+        end
+      end
+      ok(rr ~= nil, format .. ": the entry has a rerun line")
+      ok(#(rr or "") < 400, format .. ": the rerun line stays short: " .. #(rr or ""))
+      local kept = (rr or ""):match("%-%-filter '(.-)'$")
+      ok(kept ~= nil and #kept > 100, format .. ": it still carries a filter")
+      ok(
+        kept ~= nil and #kept <= 200 and long:sub(1, #kept) == kept,
+        format .. ": which is a prefix of the case name (a substring selects the case)"
+      )
+    end
   end
 
   -- a retried case, an unasserted case and a busted file without a case are on stdout of the agent reporter ------------------

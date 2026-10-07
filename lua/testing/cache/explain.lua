@@ -34,8 +34,15 @@ end
 
 ---Kinds of key lines that name something with `<id>=<value>`.
 ---@type table<string, true>
-local NAMED =
-  { dep = true, input = true, data = true, extra = true, env = true, ["child-env"] = true }
+local NAMED = {
+  dep = true,
+  input = true,
+  data = true,
+  runtime = true,
+  extra = true,
+  env = true,
+  ["child-env"] = true,
+}
 
 ---One key line as `kind`, `name` (what it is about) and `value` (what changes).
 ---@param line string

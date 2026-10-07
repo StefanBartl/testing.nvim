@@ -34,6 +34,12 @@ M.SHOWN = 15
 ---Most files a rerun command names (more: the command runs the whole suite).
 ---@type integer
 M.MAX_RERUN_FILES = 25
+---Most key lines the terminal text names per changed file, and for all of them together (a closure of hundreds of
+---files that moved with a dependency would otherwise print a line each: `testing explain <file>` shows them all).
+---@type integer
+M.MAX_DETAILS = 8
+---@type integer
+M.MAX_DETAIL_LINES = 60
 
 ---Flags of `verify` that are not options of a run.
 ---@class Testing.Verify.Own
@@ -69,10 +75,19 @@ local function when(ts)
   return os.date("%Y-%m-%d %H:%M", ts) --[[@as string]]
 end
 
+---A hash or key, cut to the length that tells two apart.
 ---@param s string
 ---@return string
 local function short(s)
   return #s > 14 and s:sub(1, 12) or s
+end
+
+---A fact of the environment (`Neovim`, `OS/architecture`): shown whole, because the part that differs (the build of a
+---nightly, the API level) is at the end of the text. Only a hostile stamp makes it long, and then it is cut.
+---@param s string
+---@return string
+local function fact(s)
+  return #s > 60 and (s:sub(1, 57) .. "...") or s
 end
 
 ---The command that runs `files` (or, with too many, the whole suite) with the options of this invocation.
@@ -145,15 +160,16 @@ end
 ---@param plan Testing.Cli.RunPlan
 ---@param sv Testing.Run.Services
 ---@param own Testing.Verify.Own
+---@param get_facts fun(): Testing.Stamp.GitFacts The git facts of the tree (asked once per check).
 ---@param run? fun(argv: string[], cwd: string): table
 ---@return string|nil text
 ---@return string|nil why
 ---@return string|nil source
 ---@return "no-stamp"|"invalid"|nil status What a failure is.
-local function read_text(plan, sv, own, run)
+local function read_text(plan, sv, own, get_facts, run)
   local collect = require("testing.stamp.collect")
   if own.from_note then
-    local facts = collect.git_facts(plan.root, run)
+    local facts = get_facts()
     if not facts.tree then
       return nil, "no tree to look a note up for (not a git checkout, or no commit yet)", "note"
     end
@@ -203,7 +219,15 @@ function M.check(plan, sv, own)
     return finish(res, "usage", res.usage)
   end
 
-  local text, why, source, failure = read_text(plan, sv, own, run)
+  -- three git processes: asked once, whichever of the note lookup and the tree comparison needs them first
+  local collect = require("testing.stamp.collect")
+  local facts_memo
+  local function get_facts()
+    facts_memo = facts_memo or collect.git_facts(plan.root, run)
+    return facts_memo
+  end
+
+  local text, why, source, failure = read_text(plan, sv, own, get_facts, run)
   res.source = source
   if not text then
     return finish(res, failure or "no-stamp", why)
@@ -316,8 +340,7 @@ function M.check(plan, sv, own)
   end
 
   -- the checked tree is the committed one?
-  local collect = require("testing.stamp.collect")
-  local facts = collect.git_facts(plan.root, run)
+  local facts = get_facts()
   res.git = facts
   if not facts.git then
     if st.head.tree or st.head.commit then
@@ -350,28 +373,41 @@ function M.check(plan, sv, own)
     res.same_tree = facts.tree == st.head.tree
   end
 
-  -- the keys now
+  -- the keys now, in the environment a run computes them in: after the `minit` of the project, which puts
+  -- directories on the runtime path that the keys look at (the minit of a project is run as `testing run` runs it)
   local run_opts = require("testing.run.options").of(plan)
   local discover = sv.discover or require("testing.discover")
-  local disc = discover.discover(plan.root, {
-    roots = plan.project.roots,
-    dialect = plan.project.dialect,
-    spec_pattern = plan.project.spec_pattern,
-  })
-  local ordered = discover.order(disc)
-  local records, env = collect.records(plan, sv, run_opts, ordered, disc)
+  local disc, records, env
+  local mok, merr = require("testing.run.project").with_minit(plan, run_opts, function()
+    disc = discover.discover(plan.root, {
+      roots = plan.project.roots,
+      dialect = plan.project.dialect,
+      spec_pattern = plan.project.spec_pattern,
+    })
+    local ordered = discover.order(disc)
+    records, env = collect.records(plan, sv, run_opts, ordered, disc)
+  end)
+  if not mok then
+    return finish(
+      res,
+      "rejected",
+      ("%s: the keys of a run are computed after it, so this tree cannot be compared with the stamp"):format(
+        tostring(merr)
+      )
+    )
+  end
   res.sentinel = plan.args.sentinel or (disc.runner and disc.runner.sentinel) or "TESTING_OK"
 
   -- what differs in the world around the keys: named as a cause
   local causes = {}
-  local function differ(label, old, new)
+  local function differ(label, old, new, show)
     if old ~= new then
-      causes[#causes + 1] = ("%s: %s -> %s"):format(label, short(old), short(new))
+      causes[#causes + 1] = ("%s: %s -> %s"):format(label, show(old), show(new))
     end
   end
-  differ("runner (lua/testing)", st.env.runner, env.runner)
-  differ("Neovim", st.env.nvim, env.nvim)
-  differ("OS/architecture", st.env.os, env.os)
+  differ("runner (lua/testing)", st.env.runner, env.runner, short)
+  differ("Neovim", st.env.nvim, env.nvim, fact)
+  differ("OS/architecture", st.env.os, env.os, fact)
   if st.env.config ~= env.config then
     causes[#causes + 1] =
       "configuration: the options of this invocation or .testing.lua differ from the stamp's (digest changed)"
@@ -487,6 +523,31 @@ function M.check(plan, sv, own)
   return finish(res, "verified")
 end
 
+---Which key lines come first when only some are shown: what changed, then what is new, then what is gone (a
+---dependency that went away drags hundreds of `removed` lines with it).
+local WEIGHT = { changed = 1, added = 2, removed = 3 }
+
+---@param details { change: string }[]
+---@return { change: string }[] sorted A copy; the order of equals is kept.
+local function by_weight(details)
+  local idx = {}
+  for i = 1, #details do
+    idx[i] = i
+  end
+  table.sort(idx, function(a, b)
+    local wa, wb = WEIGHT[details[a].change] or 4, WEIGHT[details[b].change] or 4
+    if wa ~= wb then
+      return wa < wb
+    end
+    return a < b
+  end)
+  local out = {}
+  for i, k in ipairs(idx) do
+    out[i] = details[k]
+  end
+  return out
+end
+
 ---The terminal text of a result.
 ---@param res table
 ---@return string[]
@@ -538,6 +599,7 @@ function M.render(res)
         res.counts.files
       )
     )
+    local budget = M.MAX_DETAIL_LINES
     for i, c in ipairs(res.changed) do
       if i > M.SHOWN then
         add(("  ... and %d more (--json lists them all)"):format(#res.changed - M.SHOWN))
@@ -545,7 +607,10 @@ function M.render(res)
       end
       if c.change == "changed" then
         add(("  changed  %s: key %s -> %s"):format(c.file, short(c.old), short(c.new)))
-        for _, d in ipairs(c.details or {}) do
+        local details = by_weight(c.details or {})
+        local shown = math.max(0, math.min(#details, M.MAX_DETAILS, budget))
+        for j = 1, shown do
+          local d = details[j]
           local name = d.name == d.kind and "" or (" " .. d.name)
           local what = d.change == "changed"
               and ("%s -> %s"):format(tostring(d.old), tostring(d.new))
@@ -554,6 +619,15 @@ function M.render(res)
               or "gone"
             )
           add(("      %s %s%s: %s"):format(d.change, d.kind, name, what))
+        end
+        budget = budget - shown
+        if #details > shown then
+          add(
+            ("      ... and %d more key line(s) (`testing explain %s --parts` lists the key lines)"):format(
+              #details - shown,
+              c.file
+            )
+          )
         end
         if c.details_why then
           add("      " .. c.details_why)
@@ -623,12 +697,20 @@ function M.document(res)
   end
   local changed = {}
   for _, c in ipairs(cap(res.changed)) do
+    local details = c.details
+    local total
+    if details and #details > M.MAX_LIST then
+      -- the list is cut (a document with thousands of key lines per file must stay small), the count is not
+      total = #details
+      details = vim.list_slice(by_weight(details), 1, M.MAX_LIST)
+    end
     changed[#changed + 1] = {
       file = c.file,
       change = c.change,
       old = c.old,
       new = c.new,
-      details = c.details,
+      details = details,
+      details_total = total,
       details_why = c.details_why,
     }
   end

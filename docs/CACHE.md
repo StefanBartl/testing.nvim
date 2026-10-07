@@ -99,6 +99,13 @@ until the store is within 64 MB and 5000 entries; a hit renews the age. An entry
 
 - the spec path and the content hash of the spec file,
 - the content hash of every file it depends on (below),
+- a digest of each **runtime directory** of the project root that exists (`runtime <dir>/=<digest>` key lines):
+  `after`, `autoload`, `colors`, `compiler`, `ftdetect`, `ftplugin`, `indent`, `keymap`, `lang`, `lsp`, `parser`,
+  `plugin`, `queries`, `spell`, `syntax` (`testing.cache.RUNTIME_DIRS`). An editor loads these without a `require`: a
+  child editor has the root on its runtime path and runs `filetype plugin indent on`, so a spec that sets a filetype or
+  opens a buffer runs the filetype plugin, the indent and syntax files and the Tree-sitter queries of the project, and
+  nothing in the spec leads there. They are in EVERY key, whether the scanner saw a file read or not (an edit of
+  `ftplugin/` changes the key of every spec; `lua/`, `doc/`, `docs/` and the spec files are not among them),
 - the runner version: a content digest of `lua/testing` (a dirty checkout differs from a clean one),
 - the Neovim version, API level (`api_info().version.api_level`), OS and CPU architecture (the key line used to read a
   field that does not exist and carried the word `apinil`: it names the level now, which changed every key once, on top of
@@ -118,14 +125,28 @@ until the store is within 64 MB and 5000 entries; a hit renews the age. An entry
 **Dependencies, as far as they are known.** The transitive closure of the spec's `require`s, resolved in the project,
 `ctx.dep_roots` and (default) the runtime path, so a change in lib.nvim invalidates the specs that load it. A literal
 `require("a.b")` is an edge; `require("a.dialect." .. name)` is an edge to every module below `a.dialect.`; a
-`require(expr)` nobody can resolve is an edge to every module of the checkout it appears in. A graph can replace the
-scan (`file_info.deps` with `deps_complete = true`).
+`require(expr)` nobody can resolve is an edge to every module of the checkout it appears in. The `require`s of the Lua
+files below the runtime directories that an editor loads by itself (`ftplugin/`, `indent/`, `after/` except
+`after/plugin/`, `colors/`, `lsp/`, ..., not `plugin/`: a child editor starts with `-u NONE` and does not source it) are
+edges of EVERY closure, because a spec that sets a filetype loads the file and so the module it requires; a
+`require` there that nothing resolves is judged like one of the spec (no key, or an `absent` line where the run says so).
+Those Lua files are **members** of every closure, not only edges: what they read, load and declare counts like what a
+module the spec requires does (next paragraph).
+A graph can replace the scan (`file_info.deps` with `deps_complete = true`; the runtime directories stay in the key, their
+`require`s are then the graph's business).
 
 **Hidden inputs of the whole closure.** A spec is only as deterministic as the files it loads, so the markers
 (below) are read from the spec AND from every file of the closure that belongs to the project (a dependency checkout
 such as `lib.nvim`, found on `ctx.dep_roots` or the runtime path, or below `.deps/`, contributes its content to the key
 and nothing else: it is tested in its own repository):
 
+- a Lua file below a runtime directory of the project (`ftplugin/mylang.lua`, `after/ftplugin/`, `indent/`, `colors/`,
+  ...) is judged like a project module in EVERY closure: the editor loads it by itself when a spec sets a filetype, so
+  an environment variable it reads (`vim.env.MYLANG_INDENT`) joins the key of every spec, the files it reads and the
+  data next to it do too, a `:runtime`/`packadd` in it takes the whole project into every key, and its `-- @cache-env`,
+  `-- @cache-allow` and `-- @cache off` count. `-- @cache off` in such a file leaves every spec of the project without a
+  key (the reason names the file); a computed environment read in it without `-- @cache-env` does as well, unless the
+  file runs in a child editor, whose whole environment is in the key,
 - a project module that reads files makes the spec a file reader (next paragraph), and the data files that lie next to
   that module (its directory, without the `.lua` files, which the closure already hashes) join the key,
 - a project module that reads a literal environment variable adds that variable's hashed value to the key; one that
@@ -163,6 +184,13 @@ command string such as `runtime plugin/x.lua` counts), and what it declares in i
 -- @cache-env CI GITHUB_* *_DIR
 ```
 
+The directives are read from the **first 30 lines** of the file, counted the way Lua counts lines (`\n`, `\r\n` and a
+lone `\r` each end one line, so a file checked out with CRLF has the same window as one with LF); a UTF-8 byte order
+mark in front of the first line is skipped. A directive on line 31 or later is ignored: `-- @cache off` there does not
+opt the file out. Put them at the top. A directive line is read up to 16384 bytes (`scan.MAX_HEADER_LINE`, cut after a
+whole word): a line made to keep the scanner busy (a directive and tens of thousands of blanks) costs the same few
+milliseconds as any other, and what lies beyond the bound is not read.
+
 `-- @cache-allow time random spawn net` is the author's statement that the clock, random numbers, a process or the
 network that this file uses do not decide what a spec sees; the file is then not judged for them.
 `-- @cache-allow outside` says that the places outside the project this file names (`".."` in path arithmetic, the
@@ -174,9 +202,11 @@ computed name or as a whole (a snapshot that is compared with itself, a redactio
 takes the environment as an argument and is tested with a fake one). The file is then not judged for those reads; a
 name it declares with `-- @cache-env` still joins the key. The runner's own modules that read the whole environment
 carry it (`testing.cache`, `testing.child`, `testing.guard.state`, `testing.isolation.snapshot`, `testing.rpc.trace`,
-`testing.run.cached`, `testing.run.inproc`): `*` there would put every variable of the process into the key, and a
-runner script that exports a per-run directory (`XDG_STATE_HOME` of `scripts/test.sh`) would give every invocation
-another key.
+`testing.run.cached`, `testing.run.inproc`, `testing.stamp.collect`): `*` there would put every variable of the process
+into the key, and a runner script that exports a per-run directory (`XDG_STATE_HOME` of `scripts/test.sh`) would give
+every invocation another key. A module without it takes the key away from every spec whose `require` closure reaches
+it (`testing.run.project` loads `testing.stamp.write`, and through it `testing.stamp.collect`): no false green, but the
+hit rate of the suite is gone. `TESTS/testing/cache_runner_keyable_spec.lua` keeps the runner modules keyable.
 
 **Vouching is visible.** Every `-- @cache-allow ...` and `-- @cache-env ...` of the spec and of the project files it loads is a statement of the author that the scanner cannot check (`-- @cache-env *` most of all: the whole environment is then trusted not to matter). `testing explain` prints each as a line `vouched: <directive> (<file>)`, and a `cache.stale_pass` finding of the audit repeats them, so a reviewer sees what a cached result rests on. A spec from an untrusted source (a pull request) should be reviewed for these lines.
 
@@ -195,7 +225,22 @@ names without `env_allow`.
 puts on a spec whose result changed under an unchanged key.
 
 A path that is **computed** at run time, with no literal anywhere (`root .. "/" .. ("da" .. "ta") .. "/x.txt"`), is not
-seen. That is the one stale pass this key cannot rule out: declare the path, or opt the file out with `-- @cache off`.
+seen. That is the one stale pass of a file of the project that this key cannot rule out: declare the path, or opt the
+file out with `-- @cache off`. (What lies outside the project, see "Limits and decisions": the runtime directories of a
+dependency checkout, `stdpath('data')/site`.)
+
+**What reads the environment.** `os.getenv`, `vim.fn.getenv`, `vim.uv.os_getenv`, `vim.env.NAME` and `vim.env["NAME"]` in
+every spelling (white space and line ends inside the call, `vim.fn["getenv"](...)`, `vim.fn.call("getenv", { "NAME" })`,
+`nvim_call_function("getenv", ...)`, `os.getenv"NAME"`, `pcall(os.getenv, "NAME")`), and the string arguments the editor
+expands: `vim.fn.expand("$NAME/x")`, `expandcmd`, `exists("$NAME")`, `eval` and `nvim_eval("$NAME")`, `glob`, and ex
+commands (`vim.cmd("let g:v = $NAME")`, `vim.cmd.edit("$NAME/x")`, `nvim_command`, `nvim_exec2`, `execute`) with
+`$NAME` or `${NAME}`; a leading `~` in such a string (`expand("~/x")`) reads `HOME` or `USERPROFILE`. A literal name is
+a variable to list (`env_allow`, `-- @cache-env`); a name that is built (`getenv(name)`, `expand("$" .. name)`) blocks the
+key unless the file declares what it can reach. In an ex command only `${NAME}` and an all-upper-case `$NAME` count
+(`1,$d`, `s/x$/y/` and `normal! $a` are no variables). A string that merely MENTIONS `os.getenv("X")` is no call: its
+name is collected (more variables in the key, never fewer), but it cannot hide a computed read in the same file. The
+string has to be an argument of such a call; a literal that is first kept in a variable
+(`local p = "$NAME/x"; vim.fn.expand(p)`) is not followed.
 
 ### When there is no key (the file is never cached)
 
@@ -209,8 +254,14 @@ seen. That is the one stale pass this key cannot rule out: declare the path, or 
 - a spec with a `require` that no checkout resolves (`ctx.unresolved = "absent"` makes the absence part of the key:
   right for optional plugins checked with `pcall(require, ...)`, valid while the runtime path is the one the run
   uses; with a spec that also changes the search path the whole project joins the key),
-- a spec with `-- @cache off`, a spec path outside the project, a declared input outside the project, or a
+- a spec with `-- @cache off` (or a project file the spec loads, or a Lua file of a runtime directory of the project,
+  which every spec loads), a spec path outside the project, a declared input outside the project, or a
   dependency closure of more than 3000 files, or a project too large to hash when it has to be,
+- a directory the key has to read that cannot be listed (`unreadable directory: <path>: <reason>`: a runtime directory, a
+  declared input, the data next to a module, the whole project, the modules below a computed `require` prefix, the
+  runner's own `lua/testing`: `the runner cannot be hashed`). A directory that cannot be listed is not an empty one:
+  the files below it would be missing from the key, and an edit of one of them (a spec can open a file in a directory
+  that can be entered but not listed) would be served a stale pass,
 - a spec whose key has given different results (`pass` once, `fail` another time): `nondeterministic`, see
   [below](#the-cache-proves-itself-audit-and-key-flip).
 
@@ -381,6 +432,17 @@ variables are never written, only their names appear in a reason.
 `--changed`, `--filter`, a path, `--maxfail`, ... up front), never for `green-partial` or `red`, never after a
 `cache.stale_pass`. A skip, an accepted flaky case or a stop are `green-partial`: no stamp.
 
+**What it is about: the inputs the specs were given.** The keys (and the git facts) are taken BEFORE the first spec
+runs, and the stamp lists those. After the run the keys are computed again; if any file has another key now (an editor
+that saved, a formatter, a spec that rewrote a source during the run), the run was green against the earlier content
+only, and the stamp is **not written** (`testing: stamp: not written: an input changed while the run was going`, exit
+1, the same rule that keeps the result cache from storing such a file). The same goes for a changed runner, Neovim or
+configuration digest and for a checkout whose commit or tree moved during the run. The keys of after the run are
+computed with the runtime path, the environment and `package.path` of before it: an in-process spec that changes those
+(they are no input that moved) cannot make the stamp unwritable, but a file can. A file the run itself made
+`nondeterministic` (the key gave another result than before) is listed as not provable. `head.dirty` is set when the
+tree was dirty before or after the run.
+
 **What `verify` proves, and what not.** It proves that every file has the same cache key as in the green run:
 the spec, everything it `require`s, the files it reads, runner, Neovim, configuration, environment names, dialect
 and seed. It proves exactly as much as the key does, so every limit above ("Known limit", "Limits and decisions")
@@ -398,9 +460,17 @@ sentinel only when **all** files are proven.
 - *Dirty tree*: `git status --porcelain` below the project directory must be empty (untracked files count),
   otherwise `dirty`: the keys would describe the working tree, which is not what is committed or pushed. `--allow-dirty`
   overrules, and the answer says it is about the working tree. A stamp that was written on a dirty tree says so
-  (`head.dirty`); the keys still decide.
+  (`head.dirty`); the keys still decide. `.deps/` (the checkouts of the dependencies, as CI makes them below the project
+  directory) is not counted: its content is part of the keys, and without the exception a `.deps/` that is not in the
+  `.gitignore` would make every tree `dirty`.
+- *Environment of the keys*: `verify` computes the keys the way a run does, **after the `minit` of the project** (the
+  runtime path a `minit` builds decides which module a `require` finds and is part of the key lines), and so does
+  `testing explain`. The `minit` therefore runs in the process of `verify` and `explain` too, with whatever is in that
+  environment (the HMAC secret included); if it fails, `verify` answers `rejected` and `explain` exits 3.
 - *Conditions*: runner digest, Neovim version, OS/architecture or configuration digest differ: `rejected`, with the
-  cause (`Neovim: v0.12.2|api14 -> v0.12.3|api14`). Every key would differ anyway; the cause is the useful part.
+  cause (`Neovim: v0.12.2|api14 -> v0.12.3|api14`; Neovim and OS are shown whole, the build of a nightly is the part
+  that differs). Every key would differ anyway; the cause is the useful part. A stamp that an earlier build wrote
+  (it recorded the API level as `apinil`) is `rejected` once for this reason: write it again.
 - *Key flip*: a file whose key gave different results (`testing.cache.keylog`) has no key now, so it is not proven.
   A `cache.stale_pass` finding of an audit that found the same result class is not remembered by the stamp: age and the
   nightly audit bound it (the stale-pass rate is measured, see below).
@@ -435,7 +505,8 @@ the tree id it returns is checked to be 40 or 64 hex digits before it is used.
   reads it back, and a rebase, a squash or a revert that leads to the same tree finds the same note; another tree has
   none. Notes are not fetched or pushed by default (`git push origin refs/notes/testing`, `git fetch origin
   refs/notes/testing:refs/notes/testing`), writing one needs a git identity, and a note is exactly as trustworthy as
-  whoever can push `refs/notes/testing`: protect the ref, or use the HMAC.
+  whoever can push `refs/notes/testing`: protect the ref, or use the HMAC. The `pre-push` hook of
+  [HOOKS.md](HOOKS.md) lets a push of `refs/notes/*` to `refs/notes/*` through without a check (it carries no code).
 - *Commit status* (not built): GitHub accepts a short description with a status; put only the `digest` there
   (`testing-stamp:<digest>`), never the stamp, and compare it with the digest of the file that came by another way.
   It needs a token with write access to statuses, which a command line tool of this project does not hold, so a
@@ -608,6 +679,13 @@ that only touches CI files.
 - The scanner is not a parser. It over-approximates (more dependencies, more hidden inputs), never under-approximates
   by design; it can miss a dependency that is reached only through a string that is built at run time (see "Files the
   spec reads"): that is the stale pass the key cannot rule out.
+- What an editor loads that is not a file of the project is not in the key: the runtime directories of a dependency
+  checkout (`.deps/*`, `ctx.dep_roots`, the runtime path: only its `lua/` closure is hashed, a `ftplugin/` or `queries/`
+  there is not), the `require`s inside Vim script files of the runtime directories (`lua require("x")` in an
+  `ftplugin/*.vim`: only Lua files are followed), and `stdpath('data')/site`, which a child editor has on its runtime
+  path for the installed Tree-sitter parsers and queries (a machine input like the Neovim build and the OS: updating a
+  parser does not change a key; the Neovim version does). A spec whose verdict depends on one of them runs with
+  `--no-cache`, or carries `-- @cache off`.
 - The clock and random numbers of a module, and the processes of a module that the run did not start, do not block a
   key (see "When there is no key"). `-- @cache-allow` and `-- @cache off` are the author's tools for the exceptions.
 - The stat pre-check relies on size, mtime and ctime. On a filesystem whose ctime does not change on write (seen on

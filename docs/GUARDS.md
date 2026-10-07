@@ -104,6 +104,10 @@ project's `ignore_groups` does not drop the editor's `nvim.`), plain values repl
 A key is checked on its own: a wrong value or an unknown key is one warning that names it
 (`key 'guards.fs.allow' is invalid ...`, `unknown key 'guards.fs.typo'`), and the valid keys of the same table stay,
 the `mode` included. (A table is dropped as a whole, and the guard keeps its default, only when no key of it is valid.)
+A list of Lua patterns (`allow_patterns`, `ignore_patterns`) is walked for its syntax, not just probed: `a[`, `%.log%`
+or `x%b` are refused with the key named (the default stays), because they raise on the first file name that reaches the
+broken item. An `ignore_patterns` entry that gets to the fs guard anyway (a use of the guard layer without the project
+configuration) is dropped with a note: the tree snapshot then sees more files, and is never lost.
 
 | Guard | Keys besides `mode` |
 | --- | --- |

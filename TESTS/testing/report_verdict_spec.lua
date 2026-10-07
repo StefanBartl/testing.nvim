@@ -241,4 +241,40 @@ return function(H)
   end
   has(sum, "\27[31m", "term: the summary line of a red verdict is red")
   ok(not sum:find("\27[32m", 1, true), "term: and not green")
+
+  -- a `testing stamp` run that exits 1 without a red case: asked for a stamp, not given one ---------------------------
+  local clean_v = verdict.build(facts())
+  local refused = verdict.stamp_refused(clean_v)
+  eq(refused.kind, "red", "a refused stamp is red: the process exits 1")
+  eq(refused.exit_code, 1, "with exit code 1, the one the process has")
+  eq(refused.stamp_refused, true, "and says why")
+  eq(refused.reasons, { "stamp not written" }, "the reason")
+  eq(clean_v.kind, "green", "the verdict it was made from is not touched")
+  eq(clean_v.exit_code, 0, "neither its exit code")
+  eq(clean_v.reasons, nil, "nor its reasons")
+  eq(refused.files, clean_v.files, "the counts stay")
+  local skipped_v = verdict.build(facts({ cases_skipped = 2 }))
+  local refused_skip = verdict.stamp_refused(skipped_v)
+  eq(
+    refused_skip.reasons,
+    { "2 case(s) skipped: a skip is never green", "stamp not written" },
+    "the reasons of a partial run stay, the refusal is added"
+  )
+  eq(
+    skipped_v.reasons,
+    { "2 case(s) skipped: a skip is never green" },
+    "and the partial verdict keeps its own"
+  )
+  local refused_lines = verdict.red_lines(refused)
+  eq(#refused_lines, 1, "one red line")
+  has(refused_lines[1], "no case failed; stamp not written", "it says what is: the cases are fine")
+  ok(
+    not refused_lines[1]:find("last green run", 1, true),
+    "a last green run would suggest the run itself was red"
+  )
+  local refused_ir = F.mixed()
+  refused_ir.run.verdict = refused
+  local refused_term = term.render(refused_ir)
+  has(refused_term[#refused_term - 1], "verdict: red (", "term: the verdict line says red")
+  has(refused_term[#refused_term], "no case failed; stamp not written", "term: and why")
 end

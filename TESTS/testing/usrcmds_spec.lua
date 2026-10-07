@@ -466,6 +466,35 @@ return function(H)
       "the file is the template again"
     )
   end)
+  -- :Testing init --hooks: a hook file that exists is kept and `--force` is NOT offered for it (it does not apply)
+  with_notify(function()
+    vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --hooks")
+    has(all_messages(), "created:", ":Testing init --hooks reports what it created")
+    has(
+      all_messages(),
+      "git update-index --chmod=+x scripts/hooks/pre-push scripts/hooks/pre-commit",
+      "and the command that makes the hooks executable for a clone elsewhere"
+    )
+    has(
+      all_messages(),
+      "git update-index --chmod=+x scripts/hooks/pre-push scripts/hooks/pre-commit",
+      "and names the step that makes the two git hooks executable in the index"
+    )
+    ok(vim.uv.fs_stat(target .. "/scripts/hooks/pre-push") ~= nil, "the pre-push recipe exists")
+    messages = {}
+    vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --hooks")
+    has(all_messages(), "kept (exists; --force does not apply to hooks)", "a second run keeps them")
+    lacks(all_messages(), "--force replaces", "and does not promise a --force that never applies")
+    messages = {}
+    vim.fn.writefile({ "#!/bin/sh", "echo mine" }, target .. "/scripts/hooks/pre-push")
+    vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --hooks --force")
+    has(all_messages(), "does not apply to hooks", "--force with --hooks says the same")
+    eq(
+      vim.fn.readfile(target .. "/scripts/hooks/pre-push")[2],
+      "echo mine",
+      "and the hook of the user is untouched"
+    )
+  end)
   with_notify(function()
     vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. ' --plugin=a"b')
     -- already exists: only reports; the point is that a hostile value does not raise

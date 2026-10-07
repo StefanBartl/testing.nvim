@@ -28,7 +28,7 @@ local M = {}
 ---Version of the analysis. Bump it whenever `analyze` can answer differently for the same text: the index
 ---of the cache (`testing.cache.hash`) keeps analyses with the hashes and drops the ones of another version.
 ---@type integer
-M.VERSION = 9
+M.VERSION = 10
 
 ---Largest file read by `index`/`read_text` (a bigger file is reported as unreadable, never cut).
 ---@type integer
@@ -162,22 +162,6 @@ local function uniq_sorted(list)
   return out
 end
 
----Count plain occurrences of `needle` in `text`.
----@param text string
----@param needle string
----@return integer
-local function count_plain(text, needle)
-  local n, pos = 0, 1
-  while true do
-    local s, e = text:find(needle, pos, true)
-    if not s then
-      return n
-    end
-    n = n + 1
-    pos = e + 1
-  end
-end
-
 ---Ex commands that read a file (or load one) named by their argument.
 ---@type table<string, true>
 local FILE_COMMANDS = {}
@@ -286,6 +270,179 @@ local function compared_not_read(text, str)
     return true
   end
   return before:find("[:%.]find%s*%(%s*$") ~= nil and after:find("^%s*,%s*1%s*,%s*true%s*%)") ~= nil
+end
+
+---The string literal of `strs` (sorted by position, never overlapping) that holds the byte at `pos`; the quote that
+---opens a string is not inside it.
+---@param strs Testing.LuaText.String[]
+---@param pos integer
+---@return Testing.LuaText.String|nil
+local function string_at(strs, pos)
+  local lo, hi = 1, #strs
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    local str = strs[mid]
+    if pos <= str.s then
+      hi = mid - 1
+    elseif pos > str.e then
+      lo = mid + 1
+    else
+      return str
+    end
+  end
+  return nil
+end
+
+---Number of matches of `pat` in `text`.
+---@param text string
+---@param pat string
+---@return integer
+local function count_pattern(text, pat)
+  local n = 0
+  for _ in text:gmatch(pat) do
+    n = n + 1
+  end
+  return n
+end
+
+---Callees whose string argument is an expression or a path the editor expands: `$NAME`, `${NAME}` and a leading `~`
+---read the environment (`vim.fn.expand("$HOME/x")`, `vim.fn.exists("$X")`, `vim.api.nvim_eval("$X")`).
+---@type table<string, true>
+local ENV_EXPRESSION = {
+  expand = true,
+  expandcmd = true,
+  exists = true,
+  eval = true,
+  nvim_eval = true,
+  glob = true,
+  globpath = true,
+}
+
+---Callees whose string argument is an ex command (`vim.cmd("edit $HOME/x")`, `let x = $X`).
+---@type table<string, true>
+local ENV_EX_COMMAND =
+  { cmd = true, nvim_command = true, nvim_exec = true, nvim_exec2 = true, execute = true }
+
+---How far back from a string literal the call that holds it is looked for.
+---@type integer
+local ENV_CALL_REACH = 200
+
+---Which environment-expanding call holds the string literal that starts at `at`: `"expression"`, `"ex"` or nil. The
+---nearest enclosing call that is one of them decides (a grouping parenthesis or another call in between is
+---looked through: `expand(("$X/%s"):format(n))`); `vim.cmd.edit("$X")` is an ex command with a path argument.
+---@param code string Text without comments and string contents (same offsets as the literal).
+---@param at integer Offset of the opening delimiter of the literal.
+---@return "expression"|"ex"|nil
+local function env_expander(code, at)
+  ---@param callee string
+  ---@param head string The text in front of the opening parenthesis (or of the literal).
+  ---@return "expression"|"ex"|nil
+  local function classify(callee, head)
+    if ENV_EXPRESSION[callee] then
+      return "expression"
+    end
+    if ENV_EX_COMMAND[callee] then
+      return "ex"
+    end
+    if FILE_COMMANDS[callee] and head:find("cmd%s*%.%s*[%a_]+%s*$") then
+      return "expression"
+    end
+    return nil
+  end
+  -- `vim.cmd"edit $X"`, `vim.cmd[[...]]`: the literal is the whole argument list
+  local near = code:sub(math.max(1, at - 60), at - 1)
+  local direct = near:match("([%a_][%w_]*)%s*$")
+  if direct then
+    local found = classify(direct, near)
+    if found then
+      return found
+    end
+  end
+  local depth = 0
+  for i = at - 1, math.max(1, at - ENV_CALL_REACH), -1 do
+    local ch = code:byte(i)
+    if ch == 41 then -- )
+      depth = depth + 1
+    elseif ch == 40 then -- (
+      if depth == 0 then
+        local head = code:sub(math.max(1, i - 60), i - 1)
+        local callee = head:match("([%a_][%w_]*)%s*$")
+        local found = callee and classify(callee, head)
+        if found then
+          return found
+        end
+      else
+        depth = depth - 1
+      end
+    end
+  end
+  return nil
+end
+
+---Does an ex command string only press keys (`normal! $a`)? `$` is the end of the line there, no variable.
+---@param content string
+---@return boolean
+local function keystrokes(content)
+  return content:find("^%s*:?%s*%d*%s*norm%a*!?%s") ~= nil
+end
+
+---Reads of the environment through string arguments that the editor expands: `vim.fn.expand("$X/y")`,
+---`vim.fn.exists("$X")`, `vim.api.nvim_eval("$X")`, `vim.cmd("edit ${X}/y")`, `vim.fn.expand("~")` (reads `HOME` or
+---`USERPROFILE`). The names are added to `names`. In an ex command only `${NAME}` and an all-upper-case `$NAME` count
+---(`1,$d`, `s/x$/y/`, `normal! $a` are no variables). A name that is built at run time (`expand("$" .. name)`) is
+---`computed`. The string has to be an argument of such a call: a literal that is kept in a variable first
+---(`local p = "$X/y"; vim.fn.expand(p)`) is not followed (a known limit, `docs/CACHE.md`).
+---@param text string Text without comments.
+---@param strs Testing.LuaText.String[] The string literals of `text`.
+---@param names string[] Receives the names of variables read by a literal name.
+---@return boolean computed
+local function scan_env_strings(text, strs, names)
+  local cands = {}
+  for _, str in ipairs(strs) do
+    local c = str.content
+    if #c <= 20000 then
+      local tail = c:find("%$[%w_]*$") or c:find("%${[%w_]*$")
+      if
+        c:find("%$[%a_{]")
+        or c:find("^~[/\\]?$")
+        or c:find("^~[/\\]")
+        or (tail and text:find("^%s*%.%.", str.e + 1))
+      then
+        cands[#cands + 1] = str
+      end
+    end
+  end
+  if #cands == 0 then
+    return false
+  end
+  local code = lua_text.code_only(text)
+  local computed = false
+  for _, str in ipairs(cands) do
+    local kind = env_expander(code, str.s)
+    if kind then
+      local c = str.content
+      local ex = kind == "ex"
+      if not (ex and keystrokes(c)) then
+        for name in c:gmatch("%$([%a_][%w_]*)") do
+          if not ex or name:find("^[A-Z_][A-Z0-9_]+$") then
+            names[#names + 1] = name
+          end
+        end
+        for name in c:gmatch("%${([%a_][%w_]*)}") do
+          names[#names + 1] = name
+        end
+        if not ex and (c == "~" or c:find("^~[/\\]")) then
+          names[#names + 1] = "HOME"
+          names[#names + 1] = "USERPROFILE"
+        end
+        -- `"$" .. name`, `"${" .. name .. "}"`, `"$PREFIX_" .. suffix`: the name is built at run time
+        if (c:find("%$[%w_]*$") or c:find("%${[%w_]*$")) and text:find("^%s*%.%.", str.e + 1) then
+          computed = true
+        end
+      end
+    end
+  end
+  return computed
 end
 
 ---@param code string Text without comments and string contents.
@@ -471,9 +628,10 @@ local function scan_markers(code, text)
       "nvim_list_runtime_paths",
     })
   local outside_paths = {}
+  local strs = lua_text.strings(text)
   -- ex commands and paths inside strings (`vim.cmd("runtime plugin/x.lua")`, `:luafile`, `:edit a.txt`):
   -- the contents of strings are not part of `code`
-  for _, str in ipairs(lua_text.strings(text)) do
+  for _, str in ipairs(strs) do
     local c = str.content
     if #c <= 400 then
       local word = c:match("^%s*:?%s*(%a+)!?%f[%A]")
@@ -505,52 +663,96 @@ local function scan_markers(code, text)
       end
     end
   end
-  -- environment: literal names are collected; a computed name or the whole environment is dynamic
+  -- environment: literal names are collected; a computed name or the whole environment is dynamic.
+  -- Every read is counted twice: all of them on `code` (`env_calls`: no string contents, so a string that mentions
+  -- `os.getenv("HOME")` adds nothing), and the ones with a literal name (`literal_calls`). More reads than literal
+  -- ones means a name is computed. Both counts must see the same text: a literal hit counts only when it STARTS
+  -- outside of a string literal (a mention in a string is no call, and must not hide a computed read next to it); its
+  -- name is collected all the same (more variables in the key, never fewer).
   local names, literal_calls = {}, 0
+  ---A hit of a pattern that names the variable by a literal. `at` is where the hit starts, `after` the position behind it.
+  ---@param at integer
+  ---@param name string
+  ---@param after integer
+  ---@param head_of_name? boolean The pattern does not close the call: `os.getenv"X" .. y` builds the name.
+  local function literal_hit(at, name, after, head_of_name)
+    local inside = string_at(strs, at)
+    -- a hit that starts in a string and runs out of it (`"os.getenv", "x"`: the quote that closes one string and
+    -- the one that opens the next) is no read at all
+    if inside and after - 1 > inside.e then
+      return
+    end
+    if head_of_name and text:find("^%s*%.%.", after) then
+      return
+    end
+    names[#names + 1] = name
+    if not inside then
+      literal_calls = literal_calls + 1
+    end
+  end
   for _, pat in ipairs({
     "os%.getenv%s*%(%s*[\"']([^\"']+)[\"']%s*[%),]",
     "uv%.os_getenv%s*%(%s*[\"']([^\"']+)[\"']%s*[%),]",
     "vim%.fn%.getenv%s*%(%s*[\"']([^\"']+)[\"']%s*[%),]",
-    "vim%.env%.([%a_][%w_]*)",
-    "vim%.env%[%s*[\"']([^\"']+)[\"']%s*%]",
+    "vim%.env%s*%.%s*([%a_][%w_]*)",
+    "vim%.env%s*%[%s*[\"']([^\"']+)[\"']%s*%]",
+    -- `vim.fn["getenv"]("X")`, `os["getenv"]("X")`: the member is named by a string
+    "%[%s*[\"'][%w_]*getenv[\"']%s*%]%s*%(%s*[\"']([^\"']+)[\"']%s*[%),]",
+    -- `vim.fn.call("getenv", { "X" })`, `vim.call("getenv", "X")`, `nvim_call_function("getenv", { "X" })`
+    "call%s*%(%s*[\"']getenv[\"']%s*,%s*{?%s*[\"']([^\"']+)[\"']%s*}?%s*[%),]",
+    "nvim_call_function%s*%(%s*[\"']getenv[\"']%s*,%s*{%s*[\"']([^\"']+)[\"']%s*}%s*%)",
   }) do
-    for name in text:gmatch(pat) do
-      names[#names + 1] = name
-      literal_calls = literal_calls + 1
+    for at, name, after in text:gmatch("()" .. pat .. "()") do
+      literal_hit(at, name, after)
     end
   end
   -- `os.getenv"HOME"` (call without parentheses) and `pcall(os.getenv, "HOME")` (the function handed on with its
   -- name): the literal name is known
   for _, pat in ipairs({
-    "%f[%w_]os%.getenv%s*[\"']([^\"']+)[\"']()",
-    "%f[%w_]os_getenv%s*[\"']([^\"']+)[\"']()",
-    "%f[%w_]fn%.getenv%s*[\"']([^\"']+)[\"']()",
-    "pcall%s*%(%s*[%w_%.]*getenv%s*,%s*[\"']([^\"']+)[\"']%s*[%),]()",
+    "%f[%w_]os%.getenv%s*[\"']([^\"']+)[\"']",
+    "%f[%w_]os_getenv%s*[\"']([^\"']+)[\"']",
+    "%f[%w_]fn%.getenv%s*[\"']([^\"']+)[\"']",
+    "pcall%s*%(%s*[%w_%.]*getenv%s*,%s*[\"']([^\"']+)[\"']%s*[%),]",
   }) do
-    for name, after in text:gmatch(pat) do
-      if not text:find("^%s*%.%.", after) then
-        names[#names + 1] = name
-        literal_calls = literal_calls + 1
-      end
+    for at, name, after in text:gmatch("()" .. pat .. "()") do
+      literal_hit(at, name, after, true)
     end
   end
   -- a function reference to the environment reader that is not called right away (`pcall(os.getenv, n)`,
-  -- `local g = os.getenv`, `os.getenv"X"`): a read, counted like a call so that an unnamed one is a computed name
+  -- `local g = os.getenv`, `os.getenv"X"`): a read, counted like a call so that an unnamed one is a computed name.
+  -- Looked for from `getenv` backwards (three characters): a pattern that starts at the beginning of the
+  -- identifier run (`[%w_%.]*getenv`) is quadratic in the length of the run
   local bare_refs = 0
-  for name, after in code:gmatch("([%w_%.]*getenv)()") do
+  for at, after in code:gmatch("()getenv()") do
+    local before = at > 3 and code:sub(at - 3, at - 1) or ""
     if
-      (name:find("os%.getenv$") or name:find("os_getenv$") or name:find("fn%.getenv$"))
-      and not code:find("^%s*%(", after)
+      (before == "os." or before == "os_" or before == "fn.") and not code:find("^%s*%(", after)
     then
       bare_refs = bare_refs + 1
     end
   end
+  -- readers whose name is a string and which `code` cannot show (its strings are empty): `vim.fn.call("getenv", ...)`,
+  -- `nvim_call_function("getenv", ...)`, `vim.fn["getenv"](...)`. Each one is a read; a literal name is counted above
+  local named_reads = 0
+  for _, pat in ipairs({
+    "call%s*%(%s*[\"']getenv[\"']",
+    "nvim_call_function%s*%(%s*[\"']getenv[\"']",
+    "%[%s*[\"'][%w_]*getenv[\"']%s*%]",
+  }) do
+    for at in text:gmatch("()" .. pat) do
+      if not string_at(strs, at) then
+        named_reads = named_reads + 1
+      end
+    end
+  end
   local env_calls = bare_refs
-    + count_plain(code, "getenv(")
-    + count_plain(code, "getenv (")
-    + count_plain(code, "vim.env.")
-    + count_plain(code, "vim.env[")
-  if env_calls > literal_calls then
+    + named_reads
+    + count_pattern(code, "getenv%s*%(")
+    + count_pattern(code, "vim%.env%s*%.%s*[%a_]")
+    + count_pattern(code, "vim%.env%s*%[")
+  -- `vim.fn.expand("$X/y")`, `vim.fn.exists("$X")`, `nvim_eval("$X")`, `vim.cmd("edit $X/y")`
+  local expanded_computed = scan_env_strings(text, strs, names)
+  if env_calls > literal_calls or expanded_computed then
     m.env_computed = true
   end
   if
@@ -584,6 +786,12 @@ M.MAX_ENV_DECLARED = 64
 ---Lines of a file scanned for `-- @cache ...` directives.
 ---@type integer
 M.HEADER_LINES = 30
+
+---Longest header line (bytes) a directive is read from; the rest of a longer line is not read (the word the cut
+---splits is dropped, so a truncated name never reads as another one). A directive line is a handful of words:
+---a line this long is a file made to keep the scanner busy.
+---@type integer
+M.MAX_HEADER_LINE = 16384
 
 ---String literals that look like a relative path (`docs/x.md`, `/README.md`, `fixtures/`, `a/*.lua`).
 ---@param text string
@@ -634,27 +842,69 @@ local ALLOWABLE = {
   nondeterministic = true,
 }
 
+---The first `max` lines of `text`, counted the way Lua counts them: `\n`, `\r`, `\r\n` and `\n\r` each end ONE line
+---(a pattern such as `[^\r\n]*` also yields an empty match after every line, and two for `\r\n`, which would
+---halve the window). The line ends are not part of the lines.
+---@param text string
+---@param max integer
+---@return string[]
+local function head_lines(text, max)
+  local lines, pos, len = {}, 1, #text
+  while pos <= len and #lines < max do
+    local stop = text:find("[\r\n]", pos)
+    if not stop then
+      lines[#lines + 1] = text:sub(pos)
+      break
+    end
+    lines[#lines + 1] = text:sub(pos, stop - 1)
+    local ch, nxt = text:sub(stop, stop), text:sub(stop + 1, stop + 1)
+    if (nxt == "\r" or nxt == "\n") and nxt ~= ch then
+      stop = stop + 1
+    end
+    pos = stop + 1
+  end
+  return lines
+end
+
+---The part of a header line a directive is read from: at most `M.MAX_HEADER_LINE` bytes, cut after a whole word.
+---@param line string
+---@return string
+local function clip_header_line(line)
+  if #line <= M.MAX_HEADER_LINE then
+    return line
+  end
+  local cut = line:sub(1, M.MAX_HEADER_LINE)
+  if line:sub(M.MAX_HEADER_LINE + 1, M.MAX_HEADER_LINE + 1):find("%s") then
+    return cut -- the cut falls between two words
+  end
+  local n = #cut
+  while n > 0 and not cut:sub(n, n):find("%s") do
+    n = n - 1
+  end
+  return cut:sub(1, n)
+end
+
 ---`-- @cache off`, `-- @cache-inputs a b c` and `-- @cache-allow time` in the first lines of a file.
+---
+---The patterns take the rest of the line (`(.*)`), never `(.-)%s*$`: that form is quadratic in the whitespace of
+---a line such as `-- @cache x` + 40 000 spaces + `y` (the lazy group is extended one byte at a time and `%s*$` runs
+---over the rest of the blanks each time). Every reader of a body ignores blanks at its end.
 ---@param text string
 ---@return { off: boolean, inputs: string[], allow: string[] }
 local function scan_directives(text)
   local d = { off = false, inputs = {}, allow = {}, wrapper = {}, env = {} }
   local allowed = {}
-  local n = 0
-  for line in text:gmatch("[^\r\n]*") do
-    n = n + 1
-    if n > M.HEADER_LINES then
-      break
-    end
+  for _, raw in ipairs(head_lines(text, M.HEADER_LINES)) do
+    local line = clip_header_line(raw)
     local members = require("testing.affected.wrapped").directive(line)
     if members then
       vim.list_extend(d.wrapper, members)
     end
-    local body = line:match("^%s*%-%-%s*@cache%s+(.-)%s*$")
+    local body = line:match("^%s*%-%-%s*@cache%s+(.*)")
     if body and body:match("^off%f[%W]") then
       d.off = true
     end
-    local allow = line:match("^%s*%-%-%s*@cache%-allow%s+(.-)%s*$")
+    local allow = line:match("^%s*%-%-%s*@cache%-allow%s+(.*)")
     if allow then
       for word in allow:gmatch("%a+") do
         if ALLOWABLE[word] and not allowed[word] then
@@ -663,7 +913,7 @@ local function scan_directives(text)
         end
       end
     end
-    local env = line:match("^%s*%-%-%s*@cache%-env%s+(.-)%s*$")
+    local env = line:match("^%s*%-%-%s*@cache%-env%s+(.*)")
     if env then
       for word in env:gmatch("%S+") do
         -- a name, or a pattern with `*` (`PREFIX_*`, `*_DIR`, `*` alone for the whole environment)
@@ -672,7 +922,7 @@ local function scan_directives(text)
         end
       end
     end
-    local inputs = line:match("^%s*%-%-%s*@cache%-inputs%s+(.-)%s*$")
+    local inputs = line:match("^%s*%-%-%s*@cache%-inputs%s+(.*)")
     if inputs then
       for word in inputs:gmatch("%S+") do
         if #word <= 200 and #d.inputs < 50 then
@@ -688,6 +938,10 @@ end
 ---@param text string
 ---@return Testing.Scan.Info
 function M.analyze(text)
+  -- a byte order mark is no part of the source (Lua skips it): it must not hide the directive of the first line
+  if text:sub(1, 3) == "\239\187\191" then
+    text = text:sub(4)
+  end
   local nocomment = lua_text.strip_comments(text)
   local code = lua_text.code_only(text)
   local reqs, prefs, dynamic = scan_requires(nocomment)

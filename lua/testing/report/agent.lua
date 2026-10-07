@@ -33,7 +33,8 @@
 ---
 --- Everything that came from the code under test (case names, messages, values, paths) passes
 --- `testing.report.util.clean` with C1 and bidi escaping, is cut to one line, and a line that would start with
---- `::` (a GitHub workflow command) is written with `\x3A:` so that no runner executes it.
+--- `::` (a GitHub workflow command; after ASCII or Unicode whitespace too: the runner trims both) is written
+--- with `\x3A:` so that no runner executes it.
 
 local util = require("testing.report.util")
 local verdict_mod = require("testing.report.verdict")
@@ -68,8 +69,9 @@ local LABEL = {
 ---@param s string
 ---@return string
 local function guard_command(s)
-  -- a workflow command must not survive at the start of a line, whatever indentation a reader adds later
-  return (s:gsub("^(%s*)::", "%1\\x3A:"))
+  -- a workflow command must not survive at the start of a line, whatever indentation a reader adds later: the
+  -- runner trims Unicode whitespace as well as ASCII, so a no-break space in front does not hide it
+  return util.defuse_command(s)
 end
 
 ---One printable line: control characters, C1 and bidi escaped, whitespace collapsed, at most `max` characters.
@@ -306,37 +308,68 @@ local function value_lines(a, o)
   return out
 end
 
----One word of a command line that is safe in bash AND PowerShell, or nil when no such word exists.
+---One word of a command line that is safe in bash AND PowerShell (7 and Windows PowerShell 5.1), or nil when no
+---such word exists.
 ---
 ---A word that is only made of `[%w_./:=+-]` stays bare. Everything else goes in single quotes: nothing is
 ---interpreted inside them, in either shell (`$(...)`, backticks, `$var`, `!`, `%`, `;`, `&`, `,` and `@` are all
----inert), unlike inside double quotes. The one character a single-quoted word cannot hold is the single quote
----itself (and, in PowerShell, the typographic U+2018..U+201B), and its escape differs between the shells (backslash-escaped in bash, doubled in PowerShell), so such a word,
----word with a control character, C1 or bidi character or a newline (it would not stay one line), has no safe
----spelling here: the caller leaves it out of the line. Whitespace is kept exactly as it is.
+---inert), unlike inside double quotes. Whitespace is kept exactly as it is. A word has no safe spelling, and the
+---caller leaves it out of the line, when it holds
+---
+---  * a single quote (its escape differs: backslash in bash, doubled in PowerShell) or, in PowerShell, one of the
+---    typographic U+2018..U+201B,
+---  * a double quote: Windows PowerShell 5.1 does not escape it for the program it starts, the quote is lost,
+---  * a control, C1 or bidi character or a newline (it would not stay one line),
+---  * a backslash at the end of a word that holds whitespace: Windows PowerShell 5.1 wraps such a word in double
+---    quotes, the backslash then escapes the closing one and the rest of the line becomes one argument,
+---  * nothing at all: Windows PowerShell 5.1 drops an empty argument, and every later word moves up by one.
 ---@param s any
 ---@return string|nil
 function M.shell_quote(s)
   s = tostring(s)
-  -- U+2018..U+201B (typographic single quotes): PowerShell reads them as a plain `'`
   if
-    s:find("[%c']")
+    s == ""
+    or s:find("[%c'\"]")
+    -- U+2018..U+201B (typographic single quotes): PowerShell reads them as a plain `'`
     or s:find("\226\128[\152-\155]")
     or util.clean(s, { c1 = true, bidi = true }) ~= s
+    or (s:sub(-1) == "\\" and util.has_space(s))
   then
     return nil
   end
-  if s ~= "" and not s:find("[^%w_%./:=+%-]") then
+  if not s:find("[^%w_%./:=+%-]") then
     return s
   end
   return "'" .. s .. "'"
+end
+
+---Longest case-name prefix a `--filter` of a `rerun:` line carries (bytes). The filter is a plain substring of the case
+---id, so a prefix still selects the case (and any other case that starts the same way); a name of thousands of
+---characters would otherwise push the whole entry out of the budget of the report.
+local MAX_FILTER = 200
+
+---Longest `rerun:` line that still carries a `--filter` (bytes); without it the file runs as a whole.
+local MAX_RERUN = 1000
+
+---`--flag value`, or `--flag=value` when the value itself starts with `--`: the argument parser takes a `--` word
+---after an option for the next option (`option --filter needs a value`), the inline form it reads as a value.
+---@param flag string
+---@param raw string The value as the program receives it.
+---@param quoted string The value as the line spells it (`shell_quote`).
+---@return string
+local function option_word(flag, raw, quoted)
+  if raw:sub(1, 2) == "--" then
+    return flag .. "=" .. quoted
+  end
+  return flag .. " " .. quoted
 end
 
 ---The command that repeats one failed case: the arguments of the run without what selects or shows
 ---(`args.repeat_argv`), then `--file` and, for a case inside a file, `--filter`. Every word passes
 ---`M.shell_quote`; a word without a safe spelling (a quote or a control character in a file name, an argument or
 ---a case name) is not put in the line: a `--filter` is dropped (the file still runs), anything else turns the
----line into a note that says why there is no command.
+---line into a note that says why there is no command. A long case name is cut to `MAX_FILTER` bytes (a prefix is
+---still a filter), and a line that is still longer than `MAX_RERUN` loses its `--filter`.
 ---@param result Testing.Result
 ---@param c Testing.Result.Case
 ---@param o table
@@ -347,22 +380,28 @@ local function rerun_command(result, c, o)
   for _, a in ipairs(require("testing.args").repeat_argv(argv)) do
     local q = M.shell_quote(a)
     if not q then
-      return "(no command: an argument of the run holds a quote or a control character; use --file <file> with the options of the run)"
+      return "(no command: an argument of the run has no spelling that is safe in bash and PowerShell (a quote, a control character, an empty word, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
     end
     parts[#parts + 1] = q
   end
   local file = M.shell_quote(c.file or "")
   if not file then
-    return "(no command: the file name holds a quote or a control character; use --file <file> with the options of the run)"
+    return "(no command: the file name has no spelling that is safe in bash and PowerShell (a quote, a control character, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
   end
-  parts[#parts + 1] = "--file " .. file
+  parts[#parts + 1] = option_word("--file", c.file or "", file)
+  local line = table.concat(parts, " ")
   local name = util.short_name(c)
-  local own = name ~= "" and name ~= (c.file or ""):match("([^/]+)$")
-  local filter = own and M.shell_quote(name)
-  if filter then
-    parts[#parts + 1] = "--filter " .. filter
+  if name ~= "" and name ~= (c.file or ""):match("([^/]+)$") then
+    name = util.cap(name, MAX_FILTER)
+    local filter = M.shell_quote(name)
+    if filter then
+      local with = line .. " " .. option_word("--filter", name, filter)
+      if #with <= MAX_RERUN then
+        line = with
+      end
+    end
   end
-  return table.concat(parts, " ")
+  return line
 end
 
 ---@param result Testing.Result

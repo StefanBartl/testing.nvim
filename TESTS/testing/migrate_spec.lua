@@ -288,6 +288,33 @@ jobs:
   eq(text.show("tab\there"), "tab\there", "a tab is kept")
   eq(text.show(("x"):rep(500), 10), ("x"):rep(10) .. "...", "long text is cut")
   eq(text.show("\194\155[31m"), "\\u009B[31m", "a C1 control (UTF-8) is made visible")
+  -- bidirectional overrides and isolates (U+202A..202E, U+2066..2069) make a file name read backwards: visible too
+  eq(
+    text.show("evil\226\128\174gpj.sh"),
+    "evil\\u202Egpj.sh",
+    "a right-to-left override is made visible"
+  )
+  for i, cp in ipairs({ "202A", "202B", "202C", "202D", "202E", "2066", "2067", "2068", "2069" }) do
+    local char = vim.fn.nr2char(tonumber(cp, 16))
+    eq(
+      text.show("a" .. char .. "b"),
+      "a\\u" .. cp .. "b",
+      ("U+%s is made visible (%d)"):format(cp, i)
+    )
+  end
+  for _, cp in ipairs({ "2029", "202F", "2060", "2065", "206A", "00E9", "4E2D" }) do
+    local char = vim.fn.nr2char(tonumber(cp, 16))
+    eq(
+      text.show("a" .. char .. "b"),
+      "a" .. char .. "b",
+      ("U+%s is an ordinary character"):format(cp)
+    )
+  end
+  -- a cut never leaves half of a multi-byte character behind
+  eq(text.show("ab\226\128\174cd", 3), "ab...", "a cut inside U+202E drops the pieces")
+  eq(text.show("ab\226\128\174cd", 4), "ab...", "a cut after two of its three bytes drops them")
+  eq(text.show("ab\226\128\174cd", 5), "ab\\u202E...", "a cut after the whole character keeps it")
+  eq(text.show("\195\169\195\169", 3), "\195\169...", "a cut inside the second two-byte character")
   eq(text.is_safe_rel("TESTS/a_spec.lua"), true, "a relative path is safe")
   for _, bad in ipairs({ "../x", "a/../b", "/abs", "C:/x", "a\0b", "", "\\x" }) do
     eq(text.is_safe_rel(bad), false, "unsafe path refused: " .. vim.inspect(bad))
@@ -986,14 +1013,17 @@ jobs:
         reason = "r\27[0m",
       },
     },
-    notes = { "note \27[7m" },
-    risks = { "risk \194\155" },
+    notes = { "note \27[7m", "FOO is also read by evil\226\128\174gpj.sh" },
+    risks = { "risk \194\155 \226\129\166" },
     empty = false,
   }
   for _, fmt in ipairs({ "markdown", "text" }) do
     local out = migrate.render(esc_plan, { format = fmt })
     lacks(out, "\27", fmt .. ": no escape character in the output")
     lacks(out, "\194\155", fmt .. ": no C1 control in the output")
+    lacks(out, "\226\128\174", fmt .. ": no bidi override in a note")
+    lacks(out, "\226\129\166", fmt .. ": no bidi isolate in a risk")
+    has(out, "evil\\u202Egpj.sh", fmt .. ": the file name is shown with its override made visible")
     has(out, "\\x1B[31m", fmt .. ": the escape is made visible")
   end
 
