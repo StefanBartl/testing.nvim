@@ -500,6 +500,94 @@ local function replace_word(s, word, repl, ci)
   return table.concat(out)
 end
 
+---E-mail shape `local@domain.tld`, for the redaction and for the validator. The frontier lets only the start of a run
+---of local-part characters begin a match (a long run without an `@` is read once, not from every position of it), and
+---the domain starts with exactly one `[%w%-]` (with a `+` there the run behind an `@` was tried from several lengths).
+local EMAIL = "%f[%w%.%_%+%-][%w%.%_%+%-]+@[%w%-][%w%.%-]*%.%a%a+"
+
+-- The profile folder of a user (`Users/<name>`) in a text. The rule is private first (SEC-45) and keeps a `users`
+-- directory of a project readable (`GET /users/42`, `lua/app/users/model.lua:12`):
+--
+--   * `Users` with a capital U is a profile folder wherever it stands (after a drive letter, in `/mnt/c/Users/x`, in
+--     a URL, in a path a spec asserts about). The segment `Users/<name>` goes, the rest of the path stays.
+--   * `users` in any other spelling (`users`, `USERS`) is one only as the FIRST folder below a root of a file system
+--     that does not tell the spellings apart: `c:\users\x`, `/mnt/c/users/x`, `/cygdrive/c/users/x` and the share of
+--     `\\host\users\x` (`//host/users/x`, unless a `:` in front makes it the tail of a URL). Anywhere else it is a
+--     directory of a project or a route: `/api/users/42`, `https://host/users/42`, `D:\data\users\x` stay as they are.
+--
+-- `redact_string` removes these shapes and the validator (`abs_path_leak`) looks for the same ones.
+
+---`Users` in every spelling.
+local USERS_ANY = "[Uu][Ss][Ee][Rr][Ss]"
+
+---Any spelling of `Users` followed by a separator: a text without it holds no such path.
+local USERS_SEP = USERS_ANY .. "[\\/]"
+
+---A drive letter on its own (the frontier: `route:/users/42` has no drive), then its root.
+local DRIVE_ROOT = "%f[%a]%a:[\\/]+"
+
+---The roots whose first folder `Users/<name>` can be (as patterns that capture the root): a drive and the mount
+---of a drive under WSL and Cygwin. The whole root stays in the text.
+local ROOTS = {
+  "(" .. DRIVE_ROOT .. ")",
+  "([\\/]mnt[\\/]%a[\\/]+)",
+  "([\\/]cygdrive[\\/]%a[\\/]+)",
+}
+
+---A UNC share: two separators, a host, separators. A match starts at the separator, so the scan is linear.
+local UNC = "([\\/])([\\/])([^\\/%s\"']+[\\/]+)"
+
+---Characters that may stand in front of a UNC path written with forward slashes (Neovim spells `\\host\share` as
+---`//host/share`); a letter, a digit, a `:` or a `/` in front means the tail of a URL or of a path.
+local UNC_LEADER = "[%s\"'(%[{=<,;>|]"
+
+---What replaces the `<name>` that follows `Users/`: the placeholder; a quote or a bracket right behind the separators
+---is not part of the name and stays (`/srv/Users/<name>/z`).
+---@param first string The first character of the name (not a blank, not a separator).
+---@param rest string The rest of the name up to a quote or a bracket.
+---@return string
+local function user_segment(first, rest)
+  return M.USER_PATH .. (first:find("[\"'<>]") and first .. rest or "")
+end
+
+---`gsub` function for a root in front of `Users/<name>`: nil (no change) when nothing follows the separators.
+---@param prefix string
+---@param first string
+---@param rest string
+---@return string|nil
+local function after_root(prefix, first, rest)
+  if first == "" then
+    return nil -- `/Users/` followed by a blank or the end: no name, the validator ignores it too
+  end
+  return prefix .. user_segment(first, rest)
+end
+
+---The first `//host/users/<name>` at or after `init` that is a UNC path and not the tail of a URL.
+---@param s string
+---@param init integer
+---@return integer|nil from
+---@return integer|nil to
+---@return string|nil head The text from the first separator through the separators behind the host.
+---@return string|nil first
+---@return string|nil rest
+local function find_unc_users(s, init)
+  local pat = UNC .. USERS_ANY .. "[\\/]+([^\\/%s]?)([^\\/%s\"'<>]*)"
+  while true do
+    local i, j, a, b, host, first, rest = s:find(pat, init)
+    if not i then
+      return nil
+    end
+    -- `\\host` is a UNC path wherever it stands; `//host` only where a path can begin (not after `https:` or `a/`)
+    if
+      first ~= ""
+      and (a == "\\" or b == "\\" or i == 1 or s:sub(i - 1, i - 1):find(UNC_LEADER) ~= nil)
+    then
+      return i, j, a .. b .. host, first, rest
+    end
+    init = i + 1
+  end
+end
+
 ---Redact one free-text string. Order matters: environment pairs first (their whole value goes),
 ---then user-home paths, e-mail shapes, then the named words. Works on the decoded string, never on
 ---JSON text, so a user called `pass` cannot break a key or a value of the IR.
@@ -531,27 +619,48 @@ local function redact_string(s, r, ci)
       end
     end
   end
-  s = s:gsub("%a:[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", M.PLACEHOLDERS.home)
-  s = s:gsub("([^%w])[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", "%1" .. M.PLACEHOLDERS.home)
+  -- (the rules of a profile path are described above `USERS_ANY`; every one of them starts at a letter-colon, at
+  -- a character that is no separator, or at a literal separator, so a run of separators is read once)
+  local users = s:find(USERS_SEP) ~= nil
+  if users then
+    s = s:gsub(DRIVE_ROOT .. USERS_ANY .. "[\\/]+[^\\/%s\"']+", M.PLACEHOLDERS.home)
+    s = s:gsub("([^%w\\/])[\\/]+Users[\\/]+[^\\/%s\"']+", "%1" .. M.PLACEHOLDERS.home)
+  end
   s = s:gsub("/home/[^/%s\"']+", M.PLACEHOLDERS.home)
-  -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`,
-  -- a path at the start of the text, a URL path, a synthetic path a spec asserts about): the
-  -- `Users/<name>` segment goes, whatever the spec meant by it, the rest of the token stays
-  -- (`/mnt/c/<USER-PATH>/y`). A cosmetic check must never need to reject an IR, so this is exactly
-  -- the shape the validator looks for (`abs_path_leak`: a capital `Users` between separators). A
-  -- lowercase `users` directory is no profile folder of this rule (`/api/users/42`,
-  -- `lua/app/users/model.lua:12`); with a drive letter or a non-word character in front the rules
-  -- above take it. The pattern starts at a literal separator, so it is linear.
-  s = s:gsub("([\\/])Users[\\/]+([^\\/%s]?)([^\\/%s\"'<>]*)", function(sep, first, rest)
-    if first == "" then
-      return nil -- `/Users/` followed by a blank or the end: no name, the validator ignores it too
+  if users then
+    -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`,
+    -- a path at the start of the text, a URL path, a synthetic path a spec asserts about): the
+    -- `Users/<name>` segment goes, whatever the spec meant by it, the rest of the token stays
+    -- (`/mnt/c/<USER-PATH>/y`). A cosmetic check must never need to reject an IR, so these are the
+    -- shapes the validator looks for (`abs_path_leak`).
+    s = s:gsub("([\\/])Users[\\/]+([^\\/%s]?)([^\\/%s\"'<>]*)", after_root)
+    for _, root in ipairs(ROOTS) do
+      s = s:gsub(root .. USERS_ANY .. "[\\/]+([^\\/%s]?)([^\\/%s\"'<>]*)", after_root)
     end
-    -- the name goes; a quote or bracket right behind the separators is not part of it
-    return sep .. M.USER_PATH .. (first:find("[\"'<>]") and first .. rest or "")
-  end)
-  -- (the frontier lets only the start of a run begin a match: a long token without an `@` is
-  -- read once instead of from every position)
-  s = s:gsub("%f[%w%.%_%+%-][%w%.%_%+%-]+@[%w%-][%w%.%-]*%.%a%a+", "<EMAIL>")
+    local out, pos, from = {}, 1, 1
+    while true do
+      local i, j, head, first, rest = find_unc_users(s, from)
+      if not i or not j then
+        break
+      end
+      out[#out + 1] = s:sub(pos, i - 1)
+      out[#out + 1] = head .. user_segment(first --[[@as string]], rest --[[@as string]])
+      pos, from = j + 1, j + 1
+    end
+    if pos > 1 then
+      out[#out + 1] = s:sub(pos)
+      s = table.concat(out)
+    end
+  end
+  -- (an address that starts right behind the end of another one - `a@b.com1@c.org` - is not at the start of a run
+  -- of the first pass, so a second pass reads it; more than a few such neighbours are no text)
+  for _ = 1, 3 do
+    local replaced
+    s, replaced = s:gsub(EMAIL, "<EMAIL>")
+    if replaced == 0 then
+      break
+    end
+  end
   for _, w in ipairs(r.words or {}) do
     if type(w.text) == "string" and #w.text >= 3 then
       -- always case-insensitive, like the validator's `forbid` scan: what one removes the other
@@ -661,8 +770,21 @@ end
 ---@param s string
 ---@return string|nil what
 local function abs_path_leak(s)
-  if s:find("[/\\]Users[/\\][^/\\%s]") or s:find("/home/[^/%s]") then
+  if s:find("[/\\]Users[/\\]+[^/\\%s]") or s:find("/home/[^/%s]") then
     return "a user home path"
+  end
+  -- the other spellings of the folder, where it is a profile folder (see `USERS_ANY`): the same shapes the redaction
+  -- takes, so what it leaves is what this finds
+  if s:find(USERS_SEP) then
+    local tail = USERS_ANY .. "[/\\]+[^/\\%s]"
+    if find_unc_users(s, 1) then
+      return "a user home path"
+    end
+    for _, root in ipairs(ROOTS) do
+      if s:find(root .. tail) then
+        return "a user home path"
+      end
+    end
   end
   return nil
 end
@@ -700,7 +822,7 @@ local function scan_leaks(value, path, opts, problems, depth)
     if
       not opts.allow_emails
       and (free_text or not opts.forbid_free_text_only)
-      and value:find("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+")
+      and value:find(EMAIL)
     then
       problems[#problems + 1] = ("%s: contains an e-mail address"):format(path)
     end

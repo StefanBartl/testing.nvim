@@ -1,7 +1,10 @@
 -- TESTS/testing/core_result_redact_spec.lua -- the free-text redaction of the Result-IR (`result.encode` with
 -- `redact`): a profile path loses its `Users/<name>` segment and nothing else (a `users` directory of a project,
--- a REST route and the `file:line` of an error stay readable), a long token without a blank is read in linear
--- time, and `result.normalizer` builds its path matchers once.
+-- a REST route and the `file:line` of an error stay readable), a lowercase `users` is a profile folder only as the
+-- first folder below a root (drive, WSL / Cygwin mount, UNC share) where the file system does not tell the spellings
+-- apart, the validator (`abs_path_leak`) knows the same shapes, a long token without a blank is read in linear
+-- time (by the redaction, by the validator and through `inproc.sanitize`), and `result.normalizer` builds its path
+-- matchers once.
 
 return function(H)
   local ok = H.ok
@@ -49,6 +52,19 @@ return function(H)
     "lua/myapp/users/model.lua:12: attempt to index a nil value",
     "E:/work/proj/lua/myapp/users/model.lua:12: in function 'f'",
     "tests/Users.lua:3: boom",
+    -- a lowercase `users` is no profile folder when nothing marks it as the first folder below a root
+    "GET /users/42",
+    '"/users/42"',
+    "expected /users/42 got /users/43",
+    "(/users/42)",
+    "route:/users/42",
+    "see users/42 and /users/",
+    "https://h.example/users/42",
+    "/api//v1/users/42",
+    [[D:\data\users\maria\x]],
+    [[\\fs01\data\users\maria\x]],
+    "/mnt/c/proj/users/maria/x",
+    "/mnt/wsl/users/maria",
   }) do
     local case = redacted(text)
     eq(case.assertions[1].msg, text, "message: " .. text)
@@ -62,8 +78,74 @@ return function(H)
   ok(msg_of("/api/users/42") ~= msg_of("/api/users/43"), "expected and actual stay distinguishable")
 
   -- ---------------------------------------------------------------- a profile path loses its segment
+  ---Does the validator (`abs_path_leak`) refuse `text` as free text of a note?
+  ---@param text string
+  ---@return boolean
+  local function leaks(text)
+    local c = result.new_case({ file = "a_spec.lua", name = "x" })
+    c.assertions[1] = { ok = true, kind = "eq" }
+    c.notes = { text }
+    result.finish_case(c)
+    local ir = result.new({ id = "2026-10-08T10:00:00Z-0011", nvim = "0.12.0", os = "linux" })
+    result.add_case(ir, c)
+    result.finalize(ir)
+    local sink = {}
+    local valid = result.validate(ir, { leak_warnings = sink })
+    ok(valid, "the fixture of the validator is a valid IR")
+    for _, finding in ipairs(sink) do
+      if finding:find("user home path", 1, true) then
+        return true
+      end
+    end
+    return false
+  end
+
+  -- Which `users` is a profile folder: `Users` with a capital U wherever it stands; any other spelling only as the
+  -- first folder below a root that does not tell the spellings apart (a drive, `/mnt/<letter>`, `/cygdrive/<letter>`,
+  -- a UNC share; `//host/users` unless a `:` or a word in front makes it the tail of a URL). The validator knows the
+  -- same shapes, so it neither lets one through nor refuses a project directory.
+  for _, text in ipairs({
+    "GET /users/42",
+    "route:/users/42",
+    "https://h.example/users/42",
+    "/api//v1/users/42",
+    [[D:\data\users\maria\x]],
+    [[\\fs01\data\users\maria\x]],
+    "/mnt/c/proj/users/maria/x",
+    "E:/work/proj/lua/myapp/users/model.lua:12: in function 'f'",
+    "the /Users/ folder",
+  }) do
+    ok(not leaks(text), "the validator leaves a project directory alone: " .. text)
+  end
+  for _, text in ipairs({
+    "/Users/maria/x",
+    "C:/Users/maria",
+    "/mnt/c/users/maria/x",
+    [[\\fs01\users\maria\x]],
+    "//fs01/users/maria/x",
+    [[c:\USERS\bob]],
+    "/cygdrive/d/Users//bob",
+  }) do
+    ok(leaks(text), "the validator refuses a profile path: " .. text)
+  end
+
   local LEAK = "[/\\]Users[/\\][^/\\%s]" -- what the validator (`abs_path_leak`) refuses
   for _, case in ipairs({
+    -- a lowercase or upper-case spelling as the first folder below a root, the name goes
+    { [[\\fs01\users\maria\x]], "maria", [[\\fs01\<USER-PATH>\x]] },
+    { "//fs01/users/maria/x", "maria", "//fs01/<USER-PATH>/x" },
+    { "wrote //fs01/users/maria/x", "maria", "wrote //fs01/<USER-PATH>/x" },
+    -- (written like this at the start of a token it cannot be told from a protocol-relative URL: the private reading wins)
+    { "//cdn.example/users/42", "42", "//cdn.example/<USER-PATH>" },
+    { '"//fs01/USERS/maria"', "maria", '"//fs01/<USER-PATH>"' },
+    { "/mnt/c/users/maria/x", "maria", "/mnt/c/<USER-PATH>/x" },
+    { "see /mnt/d/USERS//bob/x", "bob", "see /mnt/d/<USER-PATH>/x" },
+    { "/cygdrive/c/users/maria", "maria", "/cygdrive/c/<USER-PATH>" },
+    { [[wrote c:\users\bob\x]], "bob", [[wrote <HOME>\x]] },
+    { "wrote C:/USERS/bob/x", "bob", "wrote <HOME>/x" },
+    { "C:/users/'bob'", "", "C:/<USER-PATH>'bob'" },
+    { "see /Users/bob/x", "bob", "see <HOME>/x" },
+    { "file:/Users/42", "42", "file:<HOME>" },
     { "/mnt/c/Users/maria/y", "maria", "/mnt/c/<USER-PATH>/y" },
     { [[\\fs01\data\Users\bob]], "bob", [[\\fs01\data\<USER-PATH>]] },
     { [[D:\Data\Users\bob\x]], "bob", [[D:\Data\<USER-PATH>\x]] },
@@ -82,6 +164,8 @@ return function(H)
     local got = msg_of(text)
     eq(got, want, "the segment goes, the rest stays: " .. text)
     ok(not got:find(LEAK), "the validator finds nothing in " .. got)
+    ok(leaks(text), "the validator refuses the text before: " .. text)
+    ok(not leaks(got), "and finds nothing in " .. got)
     ok(name == "" or not got:find(name, 1, true), "the name is gone from " .. got)
   end
   -- nothing follows the separator: no name, nothing to remove
@@ -103,12 +187,57 @@ return function(H)
     at_then_run = "a@" .. ("a"):rep(SIZE),
     profile_chain = ("/Users/x"):rep(SIZE / 8),
     address_like = ("a.b@"):rep(SIZE / 4),
+    -- runs of separators: the prefix of a rule that is itself a separator re-reads the run from every position
+    slashes = ("/"):rep(SIZE),
+    backslashes = ("\\"):rep(SIZE),
+    drive_slashes = "a:" .. ("/"):rep(SIZE),
+    spaced_slashes = (" " .. ("/"):rep(7)):rep(SIZE / 8),
+    -- the roots of a lowercase `users`: mounts and UNC shares written one after the other
+    mounts = ("/mnt/c/"):rep(SIZE / 7),
+    drives = ("c:/"):rep(SIZE / 3),
+    unc_hosts = ("//a"):rep(SIZE / 3),
+    unc_host = "//" .. ("x"):rep(SIZE),
+    unc_roots = ("//h/users"):rep(SIZE / 9),
+    lowercase_chain = ("/users/x"):rep(SIZE / 8),
   }
   for name, text in pairs(shapes) do
     local t0 = vim.uv.hrtime()
     redacted(text)
     local ms = (vim.uv.hrtime() - t0) / 1e6
     ok(ms < LIMIT_MS, ("redacting %s (%d bytes) took %.0f ms"):format(name, #text, ms))
+  end
+
+  -- The validator reads the same texts (`inproc.sanitize` runs it after every redaction, over every free-text field):
+  -- its e-mail pattern started a read at every position of a run (30 000 bytes without an `@` took five seconds, `a@`
+  -- and 30 000 more ten), and a message with a long token costs that per field.
+  for name, text in pairs(shapes) do
+    local t0 = vim.uv.hrtime()
+    leaks(text)
+    local ms = (vim.uv.hrtime() - t0) / 1e6
+    ok(ms < LIMIT_MS, ("validating %s (%d bytes) took %.0f ms"):format(name, #text, ms))
+  end
+  do
+    local inproc = require("testing.run.inproc")
+    local SANITIZED = 40000 -- four fields of this size go through the redaction and the validator
+    for name, text in pairs({
+      run = ("x"):rep(SANITIZED),
+      at_then_run = "a@" .. ("a"):rep(SANITIZED),
+      slashes = ("/"):rep(SANITIZED),
+      token_hex = ("0123456789abcdef"):rep(SANITIZED / 16),
+    }) do
+      local c = result.new_case({ file = "TESTS/a_spec.lua", name = "x" })
+      c.assertions[1] = { ok = false, kind = "eq", msg = text, expected = text, actual = text }
+      c.notes = { text }
+      result.finish_case(c)
+      local ir = result.new({ id = "2026-10-08T10:00:00Z-0012", nvim = "0.12.0", os = "linux" })
+      result.add_case(ir, c)
+      result.finalize(ir)
+      local t0 = vim.uv.hrtime()
+      local decoded, _, err = inproc.sanitize(ir, "E:/repos/demo")
+      local ms = (vim.uv.hrtime() - t0) / 1e6
+      ok(decoded ~= nil, "sanitize works on " .. name .. ": " .. tostring(err))
+      ok(ms < LIMIT_MS, ("sanitizing %s (4 x %d bytes) took %.0f ms"):format(name, #text, ms))
+    end
   end
 
   -- ---------------------------------------------------------------- normalizer: matchers once

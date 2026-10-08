@@ -27,9 +27,19 @@ is never a pass: the run ends with exit code `3`.
 * With `--json` the free text is **redacted** by the kernel: user and host name, environment
   `NAME=value` pairs, e-mail addresses, and every `Users/<name>` segment of a path in free text
   (a spec about an anonymizer that asserts about a Windows profile path is no leak: the segment
-  becomes `<USER-PATH>`, the rest of the path and the text around it stay readable; a lowercase
-  `users` directory, a route such as `/api/users/42` and the `file:line` of an error are left alone).
-  The validator still refuses a structurally broken IR (exit 3), but a privacy finding it cannot
+  becomes `<USER-PATH>`, the rest of the path and the text around it stay readable). Which `users` is
+  a profile folder is decided on the side of privacy, but a project must stay readable:
+  * `Users` with a capital U is one wherever it stands (after a drive letter, in `/mnt/c/Users/x`, in a
+    URL, in a path a spec asserts about).
+  * `users` in any other spelling (`users`, `USERS`) is one only as the **first folder below a root** of
+    a file system that does not tell the spellings apart: `c:\users\x`, `/mnt/c/users/x`,
+    `/cygdrive/c/users/x`, the share of `\\host\users\x` and `//host/users/x` (not behind a `:` or a
+    word, where it is the tail of a URL or a path). Everywhere else it is a directory of the project
+    or a route and stays as it is: `GET /users/42`, `https://host/users/42`, `lua/app/users/model.lua:12`,
+    `D:\data\users\x`. A `users` folder deeper in a drive (`D:\data\users\maria`) is not read as a profile
+    folder, because `lua/myapp/users/` of a project on a Windows drive looks the same.
+  The validator (`abs_path_leak`) looks for the same shapes, so it neither lets one through nor refuses a
+  project directory (`TESTS/testing/core_result_redact_spec.lua`). The validator still refuses a structurally broken IR (exit 3), but a privacy finding it cannot
   remove (for example a user-home path in a case id) never discards the verdict: the IR keeps every case and gets a top-level
   `warnings` list (paths of the findings, never the leaked text), and the terminal prints a note.
   `--junit` and `--github` read the same sanitized IR.

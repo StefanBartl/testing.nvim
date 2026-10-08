@@ -139,8 +139,11 @@ What this says, plainly:
   run without a separator (quadratic: 20 000 hex digits in one argument took 17 s per pass, and a spawn goes through
   several passes). Each starts at a frontier or at a literal now (`TESTS/testing/guard_ledger_argv_spec.lua`,
   `TESTS/testing/core_result_redact_spec.lua`: 60 000 bytes, a second and a half as the limit, tens of milliseconds
-  measured). The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for
-  every text.
+  measured). The shapes in the specs include what the first version of the fix left out: runs of separators (a prefix
+  that is itself a separator is read again from every position of the run: 30 000 slashes took 8 s), the e-mail pattern
+  of the **validator** (`inproc.sanitize` runs it after every redaction over every free-text field, so a 40 KB token in
+  a message cost about 9 s per field), and the roots of a lowercase `users`.
+  The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for every text.
 * A hit rate counts only what is sound. The earlier version of this section reported 41 - 83 % on four of these
   suites; stale passes found in the review (a module that reads a file next to it, a `package.path` that points outside
   the spec root, `:runtime`, a path above the project, an mtime put back with `touch -r`, a lint spec that reads the
