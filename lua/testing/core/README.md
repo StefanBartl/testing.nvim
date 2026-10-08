@@ -55,7 +55,8 @@ Shape (the contract; reporters, cache, UI and adapters know nothing else):
 * **`result.validate`** checks shape, the status enum, unique ids, `id` starts with `<file>::`, the
   summary against a recount, status/assertion consistency (a `pass` needs at least one assertion and
   none failed), and that no user-home path (`/Users/x`, `C:\Users\x`, `/home/x`, and a `users` folder in another
-  spelling where it is the first folder below a drive, a `/mnt/<letter>` mount or a UNC share, see
+  spelling where it is the first folder below a drive, a `/mnt/<letter>` or `/cygdrive/<letter>` mount or a UNC
+  share, see
   [OUTPUT-FORMATS.md](../../../docs/OUTPUT-FORMATS.md)) and none of
   `opts.forbid` (e.g. the user name, case-insensitive) survived. Works on the in-memory table and
   on a decoded JSON file. At most 100 problems are returned. With `opts.leak_warnings` (a table) the

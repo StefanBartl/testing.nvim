@@ -65,6 +65,7 @@ return function(H)
     [[\\fs01\data\users\maria\x]],
     "/mnt/c/proj/users/maria/x",
     "/mnt/wsl/users/maria",
+    "x//fs01/users/maria", -- the forward-slash spelling behind a word is the tail of a path
   }) do
     local case = redacted(text)
     eq(case.assertions[1].msg, text, "message: " .. text)
@@ -127,6 +128,7 @@ return function(H)
     [[D:\data\users\maria\x]],
     [[\\fs01\data\users\maria\x]],
     "/mnt/c/proj/users/maria/x",
+    "x//fs01/users/maria",
     "E:/work/proj/lua/myapp/users/model.lua:12: in function 'f'",
     "the /Users/ folder",
   }) do
@@ -152,6 +154,11 @@ return function(H)
     { "wrote //fs01/users/maria/x", "maria", "wrote //fs01/<USER-PATH>/x" },
     -- (written like this at the start of a token it cannot be told from a protocol-relative URL: the private reading wins)
     { "//cdn.example/users/42", "42", "//cdn.example/<USER-PATH>" },
+    -- a share spelled with a backslash is a UNC path wherever it stands, behind a word and a path included (either of
+    -- the two leading separators being a backslash is enough); the forward-slash spelling needs a place where a path begins
+    { [[x\\fs01\users\maria]], "maria", [[x\\fs01\<USER-PATH>]] },
+    { [[x\/fs01/users/maria]], "maria", [[x\/fs01/<USER-PATH>]] },
+    { [[x/\fs01\users\maria]], "maria", [[x/\fs01\<USER-PATH>]] },
     { '"//fs01/USERS/maria"', "maria", '"//fs01/<USER-PATH>"' },
     { "/mnt/c/users/maria/x", "maria", "/mnt/c/<USER-PATH>/x" },
     { "see /mnt/d/USERS//bob/x", "bob", "see /mnt/d/<USER-PATH>/x" },

@@ -34,11 +34,15 @@ is never a pass: the run ends with exit code `3`.
     URL, in a path a spec asserts about).
   * `users` in any other spelling (`users`, `USERS`) is one only as the **first folder below a root** of
     a file system that does not tell the spellings apart: `c:\users\x`, `/mnt/c/users/x`,
-    `/cygdrive/c/users/x`, the share of `\\host\users\x` and `//host/users/x` (not behind a `:` or a
-    word, where it is the tail of a URL or a path). Everywhere else it is a directory of the project
-    or a route and stays as it is: `GET /users/42`, `https://host/users/42`, `lua/app/users/model.lua:12`,
-    `D:\data\users\x`. A `users` folder deeper in a drive (`D:\data\users\maria`) is not read as a profile
-    folder, because `lua/myapp/users/` of a project on a Windows drive looks the same.
+    `/cygdrive/c/users/x` and the share of a UNC path, `\\host\users\x` or `//host/users/x`. A share
+    written with a backslash is a UNC path wherever it stands. One written with forward slashes is one only
+    where a path can begin: at the start of the text, behind a blank, a quote or a bracket (`"`, `'`, `(`,
+    `[`, `{`) or behind one of `=`, `,`, `;`, `<`, `>`, `|`. Behind anything else (a `:`, a letter, a
+    digit, a `/`) it is the tail of a URL or of a path and stays: `https://host/users/x`, `x//host/users/x`.
+  * Everywhere else it is a directory of the project or a route and stays as it is: `GET /users/42`,
+    `https://host/users/42`, `lua/app/users/model.lua:12`, `D:\data\users\x`. A `users` folder deeper in a
+    drive (`D:\data\users\maria`) is not read as a profile folder, because `lua/myapp/users/` of a project on
+    a Windows drive looks the same.
   The validator (`abs_path_leak`) looks for the same shapes, so it neither lets one through nor refuses a
   project directory (`TESTS/testing/core_result_redact_spec.lua`). The validator still refuses a structurally broken IR (exit 3), but a privacy finding it cannot
   remove (for example a user-home path in a case id) never discards the verdict: the IR keeps every case and gets a top-level
