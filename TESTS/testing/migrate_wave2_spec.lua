@@ -257,8 +257,15 @@ jobs:
   eq({ branches.exists("o", "a.nvim") }, { true }, "ls-remote exit 0: the branch exists")
   eq(
     last_argv,
-    { "git", "ls-remote", "--exit-code", "--heads", "https://github.com/o/a.nvim", "ci-verified" },
-    "asked through an argv list"
+    {
+      "git",
+      "ls-remote",
+      "--exit-code",
+      "--heads",
+      "https://github.com/o/a.nvim",
+      "refs/heads/ci-verified",
+    },
+    "asked through an argv list, with the full ref (a short pattern also finds release/ci-verified)"
   )
   fake(2)
   eq({ branches.exists("o", "b.nvim") }, { false }, "exit 2: it does not")
@@ -272,6 +279,32 @@ jobs:
   local e4, w4 = branches.exists("o", "d.nvim")
   eq(e4, nil, "a raising vim.system is unknown, not an error")
   has(w4, "git is not installed", "with the reason")
+  vim.system = real_system
+  branches.reset()
+
+  -- a question that ran into the timeout ends the asking: the editor waits for each of them, and a network that
+  -- drops packets would cost the full timeout per dependency (nil: killed with its pipes held open by a child of it)
+  for _, silent in ipairs({ { code = 124, stdout = "", stderr = "" }, false }) do
+    local git_runs = 0
+    vim.system = function()
+      git_runs = git_runs + 1
+      return {
+        wait = function()
+          return silent or nil
+        end,
+      }
+    end
+    local t1, why1 = branches.exists("o", "slow.nvim")
+    eq(t1, nil, "a timeout is unknown")
+    has(why1, "did not answer within", "and says so")
+    local t2, why2 = branches.exists("o", "other.nvim")
+    eq(t2, nil, "the next question is not asked")
+    has(why2, "not asking again", "and says why")
+    eq(git_runs, 1, "git ran once")
+    branches.reset()
+  end
+  fake(0)
+  eq({ branches.exists("o", "after.nvim") }, { true }, "reset: asked again")
   vim.system = real_system
   branches.reset()
 

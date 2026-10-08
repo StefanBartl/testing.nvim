@@ -549,8 +549,27 @@ function M.wraps_old_runner(body)
   return false
 end
 
+---The `path:` of the checkout of the repository itself (the `actions/checkout` step without `repository:`), as a
+---relative path without `./` and trailing slash. Nil when the repository is checked out into the workspace root.
+---@param doc Testing.Migrate.CiDoc
+---@param job Testing.Migrate.CiJob
+---@return string|nil path
+function M.own_checkout_path(doc, job)
+  for _, step in ipairs(job.steps) do
+    local st = code_text(doc, step.dash, step.last)
+    if st:find("actions/checkout", 1, true) and not st:find("repository:", 1, true) then
+      local path = st:match("[\r\n]%s*path:%s*([%w._/%-]+)")
+      path = path and path:gsub("^%./", ""):gsub("/+$", "")
+      return (path and path ~= "" and path ~= ".") and path or nil
+    end
+  end
+  return nil
+end
+
 ---Where the job already checks the fleet out: `.deps/` (default), or "" for siblings of the workspace root
 ---(`path: lib.nvim`). A new checkout follows the same layout, because the repository's own scripts look there.
+---(With the repository in the workspace root, `path: lib.nvim` is a folder INSIDE it, not its sibling: the edit
+---says so in a note, `M.edit` (d).)
 ---@param doc Testing.Migrate.CiDoc
 ---@param job Testing.Migrate.CiJob
 ---@return string prefix
@@ -568,6 +587,26 @@ function M.checkout_prefix(doc, job)
     end
   end
   return ".deps/"
+end
+
+---Does `scripts/test.sh` find lib.nvim at `value` (the `LIB_NVIM_PATH` of a run step) without being told? It looks in
+---`<root>/.deps/lib.nvim`, `<root>/../lib.nvim` and `$LIB_NVIM_DIR` (root: the checkout of the repository itself).
+---`${{ github.workspace }}/lib.nvim` is the sibling of the repository only when the repository is checked out into a
+---folder of the workspace; with the repository in the workspace root it is a folder inside it.
+---@param value string
+---@param own_path string|nil `M.own_checkout_path`
+---@return boolean
+local function found_by_script(value, own_path)
+  local v = value:gsub("^%s*[\"']?", "")
+  v = v:gsub("[\"']?%s*$", "")
+  v = v:gsub("%${{%s*github%.workspace%s*}}", "WS")
+  if v == "WS/.deps/lib.nvim" or v == ".deps/lib.nvim" then
+    return own_path == nil
+  end
+  if v == "WS/lib.nvim" then
+    return own_path ~= nil and not own_path:find("/", 1, true)
+  end
+  return false
 end
 
 ---A command that only sets up the shell (`set -e`, `exec > >(tee ...) 2>&1`): nothing is lost when the
@@ -793,8 +832,9 @@ function M.edit(src, ctx)
       end
 
       -- (b) environment lines of the step the runner makes superfluous: PLENARY* when plenary goes,
-      -- and LIB_NVIM_PATH when it points to the sibling checkout `scripts/test.sh` finds by itself
+      -- and LIB_NVIM_PATH when it points to a checkout `scripts/test.sh` finds by itself (`found_by_script`)
       do
+        local own_path = M.own_checkout_path(doc, job)
         local env_at
         for i = step.dash, step.last do
           if lines[i]:match("^ +env:%s*$") and indent_of(lines[i]) == fi then
@@ -833,7 +873,11 @@ function M.edit(src, ctx)
               if ctx.drop_plenary and l:match("^ +PLENARY[%w_]*:") then
                 dropped[#dropped + 1] = i
                 dropped_plenary = true
-              elseif lib_value and lib_value:match("/lib%.nvim[\"']?%s*$") then
+              elseif
+                lib_value
+                and lib_value:match("/lib%.nvim[\"']?%s*$")
+                and found_by_script(lib_value, own_path)
+              then
                 dropped[#dropped + 1] = i
                 dropped_lib = true
               else
@@ -956,11 +1000,13 @@ function M.edit(src, ctx)
 
       -- (d) checkouts: testing.nvim and the fleet dependencies the job does not mention yet
       local blocks = {}
+      local added_names = {}
       local prefix = M.checkout_prefix(doc, job)
       if not ctx.is_self and not info.testing_checkout then
         local t, err = ctx.dep_step("testing.nvim", prefix)
         if t then
           blocks[#blocks + 1] = t
+          added_names[#added_names + 1] = "testing.nvim"
         else
           result.notes[#result.notes + 1] = "testing.nvim checkout step: " .. tostring(err)
         end
@@ -970,11 +1016,25 @@ function M.edit(src, ctx)
           local t, err = ctx.dep_step(dep, prefix)
           if t then
             blocks[#blocks + 1] = t
+            added_names[#added_names + 1] = dep
             result.added_deps[#result.added_deps + 1] = dep
           else
             result.notes[#result.notes + 1] = ("checkout step of %s: %s"):format(dep, tostring(err))
           end
         end
+      end
+      if #blocks > 0 and prefix == "" and M.own_checkout_path(doc, job) == nil then
+        -- the repository is the workspace root, so `path: <dep>` is a folder of the repository: `scripts/test.sh`
+        -- looks in `.deps/` and next to the repository, and `$<DEP>_DIR` is the way to name another place
+        local envs = {}
+        for _, dep in ipairs(added_names) do
+          envs[#envs + 1] = require("testing.deps").env_name(dep)
+        end
+        result.notes[#result.notes + 1] = ("job %s: the repository is checked out into the workspace root, so the checkout steps added before the run step (%s) put the dependencies into folders OF the repository, where scripts/test.sh does not look: set %s in the env of the run step to ${{ github.workspace }}/<folder>, or check them out to .deps/"):format(
+          job.id,
+          table.concat(added_names, ", "),
+          table.concat(envs, ", ")
+        )
       end
       if #blocks > 0 then
         local new = {}

@@ -289,7 +289,7 @@ return function(H)
     -- blanks at the end of a line are no part of its value
     local r = ci.edit(
       workflow(
-        "          LIB_NVIM_PATH: ${{ github.workspace }}/lib.nvim   ",
+        "          LIB_NVIM_PATH: ${{ github.workspace }}/.deps/lib.nvim   ",
         "    name: plenary tests   "
       ),
       ctx
