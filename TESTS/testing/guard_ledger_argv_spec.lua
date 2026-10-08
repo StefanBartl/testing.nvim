@@ -75,6 +75,30 @@ return function(H)
   )
   eq(ledger.redact_secrets("9://me@h.example"), "9://me@h.example", "a scheme needs a letter")
 
+  -- the JWT rule reads the same texts as before: three runs joined by dots, wherever they stand
+  local jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl"
+  eq(ledger.redact_secrets("t=" .. jwt .. "&x=1"), "t=<REDACTED>&x=1", "a JWT in a query")
+  eq(
+    ledger.redact_secrets("a " .. jwt .. " b " .. jwt),
+    "a <REDACTED> b <REDACTED>",
+    "every JWT of a line"
+  )
+  eq(ledger.redact_secrets("jwt-" .. jwt), "jwt-<REDACTED>", "a JWT glued to a word")
+  eq(ledger.redact_secrets("eyJa.b.c.d"), "<REDACTED>.d", "the fourth run is not part of it")
+  for _, line in ipairs({ "eyJ.a.b", "eyJa..b", "eyJa.b.", "eyJa.b", "eyJ" }) do
+    eq(ledger.redact_secrets(line), line, "not a JWT: " .. line)
+  end
+  eq(
+    ledger.redact_secrets(("eyJ"):rep(2000) .. " " .. jwt),
+    ("eyJ"):rep(2000) .. " <REDACTED>",
+    "a long run of starts without dots does not hide the token behind it"
+  )
+  eq(
+    ledger.redact_secrets("eyJa" .. ("eyJb"):rep(50) .. ".x.y"),
+    "<REDACTED>",
+    "a start inside a run that does get its dots is part of that token"
+  )
+
   -- A long run of name characters without a separator must not stall the run (the name patterns were
   -- re-scanned from every position of the run: 20 000 hex digits in one argument took tens of seconds).
   -- A linear pass over 60 000 bytes takes a few milliseconds, the quadratic one tens of seconds.
@@ -89,6 +113,11 @@ return function(H)
     colons = ("a:"):rep(SIZE / 2),
     schemes = ("a1."):rep(SIZE / 3) .. "://x",
     attached_flags = "curl" .. (" -u"):rep(SIZE / 3),
+    -- a JWT start in a run that never gets its dots (the dot pattern read the run again behind every `eyJ`)
+    jwt_starts = ("eyJ"):rep(SIZE / 3),
+    jwt_starts_letter = ("eyJa"):rep(SIZE / 4),
+    jwt_one_dot = ("eyJa."):rep(SIZE / 5),
+    jwt_second_run = "eyJa." .. ("eyJ"):rep(SIZE / 3),
   }
   for name, text in pairs(shapes) do
     local t0 = vim.uv.hrtime()

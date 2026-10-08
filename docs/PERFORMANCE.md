@@ -142,7 +142,8 @@ What this says, plainly:
   measured). The shapes in the specs include what the first version of the fix left out: runs of separators (a prefix
   that is itself a separator is read again from every position of the run: 30 000 slashes took 8 s), the e-mail pattern
   of the **validator** (`inproc.sanitize` runs it after every redaction over every free-text field, so a 40 KB token in
-  a message cost about 9 s per field), and the roots of a lowercase `users`.
+  a message cost about 9 s per field), the JWT rule of the ledger (`eyJeyJ...` without dots: 60 000 bytes took 7 s; the
+  scan goes on behind the run that failed instead of trying every `eyJ` of it), and the roots of a lowercase `users`.
   The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for every text.
 * A hit rate counts only what is sound. The earlier version of this section reported 41 - 83 % on four of these
   suites; stale passes found in the review (a module that reads a file next to it, a `package.path` that points outside

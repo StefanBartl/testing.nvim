@@ -167,6 +167,36 @@ local function redact_command_flags(s)
   return s
 end
 
+---Mask JWT shapes: `eyJ<header>.<payload>.<signature>`. One `gsub` pattern reads the run behind every `eyJ` again
+---when the dots are missing (quadratic: 20 000 bytes of `eyJeyJ...` took a second, 60 000 seven). A start inside a run
+---that failed ends where the first one did (the dot cannot be part of a run), so the scan goes on behind that run.
+---@param s string
+---@return string
+local function mask_jwt(s)
+  local pos, from, out = 1, 1, nil
+  while true do
+    local i = s:find("eyJ", from, true)
+    if not i then
+      break
+    end
+    local _, j = s:find("^eyJ[%w_%-]+%.[%w_%-]+%.[%w_%-]+", i)
+    if j then
+      out = out or {}
+      out[#out + 1] = s:sub(pos, i - 1)
+      out[#out + 1] = MASK
+      pos, from = j + 1, j + 1
+    else
+      local _, run_end = s:find("^[%w_%-]*", i)
+      from = (run_end or i) + 1
+    end
+  end
+  if not out then
+    return s
+  end
+  out[#out + 1] = s:sub(pos)
+  return table.concat(out)
+end
+
 ---Remove secrets from free text: `Authorization` / `Cookie` / `X-*-Token` headers, `name=secret`
 ---pairs and flags, URL user info and secret query keys, JSON `"password": "..."` members, the
 ---credential flags of curl / sshpass / docker login / mysql, well-known token shapes (GitHub, Slack,
@@ -255,7 +285,7 @@ function M.redact_secrets(s)
   end)
   s = s:gsub("xox[abprs]%-[%w%-]+", MASK)
   s = s:gsub("xapp%-[%w%-]+", MASK)
-  s = s:gsub("eyJ[%w_%-]+%.[%w_%-]+%.[%w_%-]+", MASK)
+  s = mask_jwt(s)
   s = s:gsub("AKIA[%u%d]+", function(t)
     return #t == 20 and MASK or t
   end)
