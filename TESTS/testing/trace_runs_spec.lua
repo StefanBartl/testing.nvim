@@ -66,5 +66,37 @@ return function(H)
     1,
     "a folder that is not named like a run is never touched"
   )
+
+  -- the old run folders of a base are looked for once per editor: every file that hangs or crashes writes a trace, and
+  -- the scan costs a stat per file of every run folder of the week (150 folders of 5 files: 0.1 s per trace)
+  make_run("20200103-000000-444", 30 * 24 * 3600)
+  ok(write(), "another trace in the same base")
+  eq(
+    vim.fn.isdirectory(base .. "/20200103-000000-444"),
+    1,
+    "a folder that is old by now waits for the next editor: the base is not scanned again"
+  )
+  local other = S.new_root() .. "/testing-traces"
+  vim.fn.mkdir(other .. "/20200101-000000-555", "p")
+  vim.uv.fs_utime(other .. "/20200101-000000-555", now - 30 * 24 * 3600, now - 30 * 24 * 3600)
+  ok(
+    isolated.write_trace({
+      base = other,
+      root = other,
+      rel = "TESTS/x_spec.lua",
+      reason = "timeout",
+      ---@diagnostic disable-next-line: missing-fields
+      h = { pid = 4243, exit = { code = 1 } },
+      frag = frag,
+      describe = "exit code 1",
+      err = "boom",
+    }),
+    "a trace in another base"
+  )
+  eq(
+    vim.fn.isdirectory(other .. "/20200101-000000-555"),
+    0,
+    "another base is scanned on its first trace"
+  )
   S.cleanup()
 end

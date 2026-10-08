@@ -216,8 +216,8 @@ holds the cases the child finished, how it ended (exit, kill reason) and the tai
 member's file has its RPC calls too. They go to `<stdpath('state')>/testing-traces/<run-id>/` (it
 survives the run, a CI job can upload it); `<run-id>` is `<date>-<time>-<pid>` of this editor, so
 parallel runs (CI jobs, the fleet) never share a folder. At most 40 files are kept per run, and whole
-run folders whose newest file is older than a week are removed; another run's young folder is never
-touched. File names carry the pid and a counter (a reused pid does not overwrite). The path in the IR
+run folders whose newest file is older than a week are removed (looked for once per editor, at its first
+trace); another run's young folder is never touched. File names carry the pid and a counter (a reused pid does not overwrite). The path in the IR
 is `<STATE>/testing-traces/<run-id>/...`.
 
 ## Calls that do not block

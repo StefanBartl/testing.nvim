@@ -336,6 +336,9 @@ M.KEEP_RUN_SECONDS = 7 * 24 * 3600
 ---@type string|nil
 local run_id
 local trace_seq = 0
+---Trace bases whose old run folders were removed in this editor (see `write_trace`).
+---@type table<string, true>
+local pruned_bases = {}
 
 ---The id of this run: `<date>-<time>-<pid>`, fixed for the life of the editor. It names the
 ---sub-directory the run's traces go to, so two runs (CI jobs, the fleet) never share a folder.
@@ -467,7 +470,14 @@ function M.write_trace(input)
   end
   pcall(prune_traces, dir)
   if not input.dir or input.dir == "" then
-    pcall(prune_runs, input.base or M.trace_base())
+    -- once per editor and base: the scan costs a stat per file of every run folder of the week, the result cannot
+    -- change within a run (other folders only get older, this run's own is skipped), and a file that hangs or
+    -- crashes writes a trace each
+    local base = input.base or M.trace_base()
+    if not pruned_bases[base] then
+      pruned_bases[base] = true
+      pcall(prune_runs, base)
+    end
   end
   return artifact
 end
