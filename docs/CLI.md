@@ -95,8 +95,9 @@ An option that is accepted by the parser but not implemented is **refused** with
 * **It hangs** (a blocking C call, a language server's prompt that nobody answers: stdin is the null
   device and `input()` / `inputlist()` / `confirm()` answer "cancelled"): `file_ms` (+ 2 s) after the
   start, or for busted files `case_ms` (+ 2 s) without a new case, the child **and its process tree**
-  are killed and the file ends with ONE `timeout` case. A process that is still alive 10 s after the kill
-  is abandoned: the run never waits for it.
+  are killed and the file ends with ONE `timeout` case (when the file's own guard already reported the
+  timeout and only the end of the child was missing, that case carries a note about the kill instead of a
+  second case). A process that is still alive 10 s after the kill is abandoned: the run never waits for it.
 * **It leaves a helper behind** that holds its stdout/stderr (a language server): the child counts as
   finished when its own process ended (plus 200 ms to read what was still in the pipes), not when the
   helper ends. On POSIX the leftovers of its process group are killed; on Windows they are not (no job

@@ -32,7 +32,8 @@
 ---
 --- WHAT BECOMES OF A CHILD (`classify`)
 ---   * it finished (`done` record, exit code 0): its cases, as it recorded them;
----   * the hard deadline killed it: the cases it finished, plus ONE `timeout` case for the file;
+---   * the hard deadline killed it: the cases it finished, plus ONE `timeout` case for the file (if the child's own
+---     guard had already streamed the file's timeout case, that case gets a note about the kill: one hang, one case);
 ---   * it died (exit code != 0, signal, native crash, `os.exit` by the spec, no `done` record, an
 ---     unreadable fragment): the cases it finished, plus ONE `crash` case with the exit description
 ---     and the tail of its stderr. The run goes on; the exit code of the run is 1;
@@ -239,6 +240,26 @@ local function abandoned_note(input)
   return "\nthe process did not end after the kill and was abandoned (it may still be running)"
 end
 
+---The case in which the child's own guard reported that the FILE ran out of time (`testing.run.timeout`: a record
+---the child streamed before it was killed), the last one when there are several.
+---@param cases Testing.Result.Case[]
+---@return Testing.Result.Case|nil
+local function own_file_timeout(cases)
+  local timeout = require("testing.run.timeout")
+  for i = #cases, 1, -1 do
+    local c = cases[i]
+    local message = c.error and c.error.message
+    if
+      c.status == "timeout"
+      and timeout.is_timeout(message)
+      and message:find("file exceeded", 1, true)
+    then
+      return c
+    end
+  end
+  return nil
+end
+
 ---Turn what a child left behind into the cases of its file. Pure: inputs in, cases out.
 ---@param input Testing.Isolated.ClassifyInput
 ---@return Testing.Result.Case[] cases
@@ -265,7 +286,20 @@ function M.classify(input)
   end
 
   local extra
-  if input.reason == "file" then
+  local own = input.reason == "file" and own_file_timeout(cases) or nil
+  if own then
+    -- The file's own guard fired first and the child streamed its timeout case, but it did not end within the
+    -- grace (a loaded machine needs longer to write the rest and quit than a small grace allows): ONE hang is ONE
+    -- case, the kill is a note on it. A second `timeout` case would count the same hang twice and leave the trace
+    -- artifact on a case that is not the first of the file.
+    own.notes = own.notes or {}
+    own.notes[#own.notes + 1] = ("the child did not end within %d ms of its own timeout record; its process tree was killed%s"):format(
+      input.grace_ms,
+      input.abandoned
+          and " and the process did not end after the kill: it was abandoned (it may still be running)"
+        or ""
+    )
+  elseif input.reason == "file" then
     extra = synthetic(
       rel,
       free_name(rel, cases),

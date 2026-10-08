@@ -137,6 +137,65 @@ return function(H)
   eq(file_kill[2].status, "timeout", "which is a timeout")
   has(file_kill[2].error.message, "file exceeded 1000 ms", "naming the limit")
   has(file_kill[2].error.message, "process tree was killed", "and the kill")
+
+  -- The file's own guard fired and the child streamed its timeout case, then the hard deadline killed it before it
+  -- could write its `done` record and quit (the grace is short, the machine is busy): ONE hang is ONE case. The
+  -- record of the child stays, the kill is a note on it, no second `timeout` case is made up.
+  local soft = result.new_case({ file = REL, name = "a_spec.lua" })
+  soft.status = "timeout"
+  soft.error = {
+    message = "testing: timeout: file exceeded 1000 ms (in-process best effort): " .. REL,
+    traceback = "",
+  }
+  local own_then_killed = classify({
+    frag = {
+      cases = {},
+      progress = { ok_case("one"), soft },
+      done = nil,
+      bad_lines = 0,
+      missing = false,
+    },
+    code = 1,
+    reason = "file",
+  })
+  eq(#own_then_killed, 2, "own timeout record, then killed: the finished case and ONE timeout case")
+  eq(own_then_killed[2], soft, "the timeout case is the record of the child")
+  eq(own_then_killed[2].status, "timeout", "which is a timeout")
+  has(
+    own_then_killed[2].notes[#own_then_killed[2].notes],
+    "its process tree was killed",
+    "and says it was killed"
+  )
+  has(own_then_killed[2].notes[#own_then_killed[2].notes], "within 200 ms", "after the grace")
+  local with_abandoned = result.new_case({ file = REL, name = "a_spec.lua" })
+  with_abandoned.status = "timeout"
+  with_abandoned.error = soft.error
+  local gave_up = classify({
+    frag = { cases = {}, progress = { with_abandoned }, done = nil, bad_lines = 0, missing = false },
+    code = 1,
+    reason = "file",
+    abandoned = true,
+  })
+  eq(#gave_up, 1, "an abandoned process: still one case")
+  has(
+    gave_up[1].notes[#gave_up[1].notes],
+    "was abandoned",
+    "which says that it may still be running"
+  )
+  -- only the FILE deadline is the same event: a case that ran out of time on its own is not the file's hang
+  local case_soft = result.new_case({ file = REL, name = "slow case" })
+  case_soft.status = "timeout"
+  case_soft.error = {
+    message = "testing: timeout: case exceeded 500 ms (in-process best effort): " .. REL,
+    traceback = "",
+  }
+  local case_then_killed = classify({
+    frag = { cases = {}, progress = { case_soft }, done = nil, bad_lines = 0, missing = false },
+    code = 1,
+    reason = "file",
+  })
+  eq(#case_then_killed, 2, "a timed out CASE and then the killed file are two events: two cases")
+  has(case_then_killed[2].error.message, "process tree was killed", "the second one is the kill")
   local stall = classify({ frag = frag({}, nil), code = 1, reason = "stall" })
   eq(stall[1].status, "timeout", "a stuck case is a timeout")
   has(stall[1].error.message, "a case exceeded 500 ms", "naming the case limit")
