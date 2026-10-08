@@ -16,7 +16,7 @@ IR; nothing here prints test results itself.
 | [`testing.run.select`](select.lua) | Pure: `--file`/`--filter`/`--tags` matching, `--lf` grouping, deterministic shuffle |
 | [`testing.run.timeout`](timeout.lua) | Best-effort in-process timeouts (count hook, `vim.wait` clamp) |
 | [`testing.history`](../history.lua) | `runs.jsonl` behind `--lf` / `--ff` (untrusted input when read back) |
-| [`testing.statelock`](../statelock.lua) | The short exclusive lock around the read-merge-write of the state files (`order.json`, `timings.json`, `durations.json`, `last_green.json`, `runs.jsonl`) |
+| [`testing.statelock`](../statelock.lua) | The short exclusive lock around the read-merge-write of the state files (`order.json`, `timings.json`, `durations.json`, `last_green.json`, `keys.json`, `runs.jsonl`) |
 | [`testing.cli`](../cli.lua) | Arguments, config, dependencies, exit codes; entry of [`scripts/testing.lua`](../../../scripts/testing.lua) |
 
 ## A run, in order

@@ -81,6 +81,70 @@ return function(H)
   ok(respected == false, "a fresh lock of somebody else is respected")
   uv.fs_unlink(target .. ".lock")
 
+  -- A directory that cannot be written is no lock held by somebody: the refusal (EACCES on POSIX, EPERM from libuv
+  -- on Windows) is reported as it is after a short grace, not as "locked by another run" after the full timeout
+  -- (up to 3 s per state file, five files per run). The failure is simulated at the open of the lock file, because a
+  -- directory without write permission cannot be made the same way on every platform.
+  do
+    local real_open = uv.fs_open
+    local refuse
+    uv.fs_open = function(p, ...)
+      if refuse and type(p) == "string" and p:find(".lock", 1, true) then
+        return nil, refuse
+      end
+      return real_open(p, ...)
+    end
+    local guarded_ok, guarded_err = pcall(function()
+      for _, why in ipairs({ "EACCES: permission denied", "EPERM: operation not permitted" }) do
+        refuse = why
+        local t0 = uv.hrtime()
+        local got, msg = lock.with(target, function()
+          ran = true
+        end, { grace_ms = 40, timeout_ms = 2500, poll_ms = 5 })
+        local ms = (uv.hrtime() - t0) / 1e6
+        ok(got == false and not ran, why .. ": the function did not run")
+        ok(
+          type(msg) == "string" and msg:find("cannot lock", 1, true) and msg:find(why, 1, true),
+          why .. ": the note names the error, not another run: " .. tostring(msg)
+        )
+        ok(
+          ms < 1500,
+          ("%s: reported after the grace (%.0f ms), not after the timeout"):format(why, ms)
+        )
+      end
+
+      -- a lock file that is there while the open is refused IS a lock somebody holds: it is waited for
+      refuse = "EPERM: operation not permitted"
+      local held = io.open(target .. ".lock", "wb")
+      assert(held):close()
+      local got, msg = lock.with(target, function()
+        ran = true
+      end, { grace_ms = 20, timeout_ms = 150, poll_ms = 5 })
+      ok(
+        got == false and tostring(msg):find("locked by another run", 1, true) ~= nil,
+        "a lock file in sight: the usual note, " .. tostring(msg)
+      )
+      uv.fs_unlink(target .. ".lock")
+
+      -- a refusal that goes away within the grace (a delete that was still pending) takes the lock
+      local refusals = 3
+      uv.fs_open = function(p, ...)
+        if refusals > 0 and type(p) == "string" and p:find(".lock", 1, true) then
+          refusals = refusals - 1
+          return nil, "EPERM: operation not permitted"
+        end
+        return real_open(p, ...)
+      end
+      local took_it = lock.with(target, function()
+        return true
+      end, { grace_ms = 500, timeout_ms = 2500, poll_ms = 5 })
+      ok(took_it, "a refusal that ends within the grace is waited out")
+    end)
+    uv.fs_open = real_open
+    ok(guarded_ok, tostring(guarded_err))
+    eq(uv.fs_stat(target .. ".lock"), nil, "no lock is left behind")
+  end
+
   -- a writer that cannot get the lock reports a note and leaves the file alone
   local tpath = timings.path(root, opts)
   vim.fn.mkdir(vim.fs.dirname(tpath), "p")
@@ -93,6 +157,44 @@ return function(H)
   )
   eq(uv.fs_stat(tpath), nil, "held: nothing was written")
   uv.fs_unlink(tpath .. ".lock")
+
+  -- the run says so on stderr when it could not update a state file: durations.json used to be the silent one
+  -- (`record_durations` answers `false, note` instead of raising, and the caller only looked for a raise)
+  do
+    local proj = vim.fs.normalize(vim.fn.tempname()) .. "-durnote"
+    vim.fn.mkdir(proj .. "/TESTS", "p")
+    vim.fn.writefile(
+      { "return function(H)", '  H.ok(true, "x")', "end" },
+      proj .. "/TESTS/x_spec.lua"
+    )
+    local pstate = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(pstate, "p")
+    local dpath = shard.durations_path(proj, { state_dir = pstate })
+    vim.fn.mkdir(vim.fs.dirname(dpath), "p")
+    vim.fn.writefile({}, dpath .. ".lock")
+    local errs = {}
+    local before = lock.TIMEOUT_MS
+    lock.TIMEOUT_MS = 100
+    local cli_ok, code = pcall(require("testing.cli").main, { proj }, {
+      out = function() end,
+      err = function(s)
+        errs[#errs + 1] = s
+      end,
+      state_dir = pstate,
+      cache_dir = pstate .. "/cache",
+      color = false,
+    })
+    lock.TIMEOUT_MS = before
+    ok(cli_ok and code == 0, "the run itself is green: " .. tostring(code))
+    local said = table.concat(errs, "\n")
+    ok(
+      said:find("durations not updated: durations.json is locked by another run", 1, true),
+      "a durations.json that is locked is a note: " .. said
+    )
+    eq(uv.fs_stat(dpath), nil, "and nothing was written")
+    vim.fn.delete(proj, "rf")
+    vim.fn.delete(pstate, "rf")
+  end
 
   -- ------------------------------------------------------------------ one process, stale reads
   -- timings: the caller read the history, a second run wrote, the first one records: both samples stay
@@ -139,6 +241,24 @@ return function(H)
   )
   local rec = green.load(root, opts)
   eq(rec and rec.run, "later", "green: the record of the later run stays")
+
+  -- a record dated in the future (a clock that jumped ahead, a planted file) does not pin the file: the next green
+  -- run of the real clock replaces it (a state directory of its own: the workers below stamp small times)
+  local fstate = vim.fn.tempname()
+  vim.fn.mkdir(fstate, "p")
+  local fopts = { state_dir = fstate }
+  ok(
+    green.record(root, { run = { id = "wrong-clock" } }, { state_dir = fstate, time = 4000000000 }),
+    "green: a run with a clock far ahead"
+  )
+  eq(
+    (green.load(root, fopts) or {}).run,
+    "wrong-clock",
+    "green: it is the record (nothing later exists)"
+  )
+  ok(green.record(root, { run = { id = "now" } }, { state_dir = fstate }), "green: a run of today")
+  eq((green.load(root, fopts) or {}).run, "now", "green: the future-dated record is replaced")
+  vim.fn.delete(fstate, "rf")
 
   -- ------------------------------------------------------------------ real parallel editors
   local workers, rounds = 4, 6

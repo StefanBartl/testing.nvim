@@ -340,12 +340,16 @@ long it took; `last_green.json` remembers the last full green run (see [the verd
 Both are bounded, read as untrusted input, written atomically, and a failure to read or write is a note.
 
 **Parallel runs of one project.** The state files beside `runs.jsonl` (`runs.jsonl`, `order.json`, `timings.json`,
-`durations.json`, `last_green.json`) are read, changed and written back whole, so two runs at the same time (a CI matrix
+`durations.json`, `last_green.json`, and `keys.json`, the memory of which cache key gave which result) are read, changed
+and written back whole, so two runs at the same time (a CI matrix
 on one machine, `watch` next to a manual run) must not overwrite each other. Every update takes a short lock
 (`<file>.lock`, created exclusively), reads the file AGAIN inside the lock and merges into what it finds: the entries
-of both runs survive, and `last_green.json` keeps the record of the run that was green later. A run that cannot get
-the lock within 3 s prints a note (`... is locked by another run: not updated`) and leaves the file alone; the state is
-a convenience, never part of the verdict, so the exit code does not change. A lock older than 10 s was left by a run that
+of both runs survive (for `keys.json` that is what keeps a key that gave `pass` in one run and `fail` in the other
+visible as a flip), and `last_green.json` keeps the record of the run that was green later (a record dated more than ten
+minutes ahead of the clock was written by a wrong clock and does not count as later). A run that cannot get the lock
+within 3 s prints a note (`... is locked by another run: not updated`) and leaves the file alone; a state directory that
+cannot be written at all is reported as it is (`cannot lock <file>: EACCES ...`) after a third of a second, not after the
+full wait; the state is a convenience, never part of the verdict, so the exit code does not change. A lock older than 10 s was left by a run that
 died and is taken over.
 
 ### Retry and flaky

@@ -413,10 +413,12 @@ run_measured = function(plan, sv)
   end
   if last and (code == M.EXIT_OK or code == M.EXIT_FAILED) and complete_enough(args, last) then
     local shard = require("testing.run.shard")
-    local ok, err =
+    -- `record_durations` answers `false, note` for a lock it could not get or a file it could not write, and
+    -- raises only for a bug: both are a note
+    local ok, kept, why =
       pcall(shard.record_durations, plan.root, last.result, nil, { state_dir = sv.state_dir })
-    if not ok then
-      sv.err("testing: note: durations not updated: " .. tostring(err))
+    if not ok or kept == false then
+      sv.err("testing: note: durations not updated: " .. tostring(ok and why or kept))
     end
     -- a file that took three times its median is a warning (the machine may be busy), never a failure
     local timings = require("testing.run.timings")

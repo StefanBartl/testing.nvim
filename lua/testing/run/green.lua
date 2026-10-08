@@ -25,6 +25,10 @@ M.MAX_DIRTY = 200
 ---A file larger than this is not hashed (it counts as changed whenever git lists it).
 ---@type integer
 M.MAX_HASH_BYTES = 1048576
+---A stored record dated further ahead of the clock than this (seconds) was written by a wrong clock: it does not
+---count as the later run (`record`).
+---@type integer
+M.FUTURE_SKEW_S = 600
 
 ---@class Testing.Green.Record
 ---@field v integer
@@ -188,9 +192,11 @@ function M.record(root, res, opts)
   local path = M.path(root, opts)
   local locked, ok, werr = require("testing.statelock").with(path, function()
     -- two runs that end at about the same time: the one that was green LATER stays (a slow run that started
-    -- earlier must not turn the record back to an older commit)
+    -- earlier must not turn the record back to an older commit). A record dated in the future (a clock that
+    -- jumped ahead and was set back, a file put there) is no later run: it would pin the file until that date, so
+    -- only a plausible time wins the comparison.
     local current = M.load(root, opts)
-    if current and current.ts > rec.ts then
+    if current and current.ts > rec.ts and current.ts <= os.time() + M.FUTURE_SKEW_S then
       return true, nil
     end
     return require("lib.nvim.fs.write.atomic")(path, text .. "\n", { mkdirp = true })
