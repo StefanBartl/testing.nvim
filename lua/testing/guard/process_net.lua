@@ -151,6 +151,10 @@ local function describe_cmd(cmd)
     return ledger.format_argv(shown), exe_name(cmd[1])
   end
   local s = tostring(cmd)
+  -- `cmd /c` wants the whole line in one more pair of quotes when the program itself is quoted
+  -- (`""git" "--version" 2>&1"`, what a Windows-minded `io.popen` caller builds): the outer pair is no part of
+  -- the command
+  s = s:match('^%s*"(".*)"%s*$') or s
   local first, rest = s:match('^%s*"([^"]+)"(.*)$')
   if not first then
     first, rest = s:match("^%s*(%S+)(.*)$")

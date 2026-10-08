@@ -167,6 +167,26 @@ B.case("green_config_allow_exec", {
   end,
 })
 
+B.case("green_config_allow_exec_shell_quotes", {
+  cfg = only_pn({ allow_exec = { "NVIM" } }),
+  body = function()
+    ---@param line string
+    ---@return string
+    local function popen(line)
+      return attempt(function()
+        local f = assert(io.popen(line))
+        f:close()
+      end)
+    end
+    return {
+      -- the quoting `cmd /c` wants around a line whose program is quoted: the outer pair is no part of the command
+      outer_pair = popen('""' .. exe .. '" "--version" 2>&1"'),
+      -- the program is still judged by its name: an unlisted one is blocked in this spelling, too
+      other = popen('""git" "--version" 2>&1"'),
+    }
+  end,
+})
+
 B.case("green_config_allow_host", {
   cfg = only_pn({ allow_hosts = { "127.0.0.1" } }),
   body = function()

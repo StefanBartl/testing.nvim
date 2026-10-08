@@ -266,7 +266,8 @@ Otherwise (mode `error`) the call raises `testing.guard: ... (blocked: tag the c
 in guards.process_net.allow_exec)`. Mode `warn` lets everything through and only reports.
 `@network` allows the network only, `@spawn` processes only. One attempt is one ledger entry
 (`vim.system` calls `uv.spawn`, `vim.net.request` calls `vim.system`: a re-entrancy guard folds
-them). A command given as a **shell string** is judged by its first word only.
+them). A command given as a **shell string** is judged by its first word only (the extra outer pair of quotes that
+`cmd /c` wants around a line whose program is quoted, `""git" "--version" 2>&1"`, is no part of it).
 
 Redaction (SEC-10 / SEC-22): `--token abc`, `--password=...`, `Authorization: <scheme> ...`, `Cookie:` /
 `X-*-Token` / `X-*-Key` headers, URL user info and secret query keys (`?key=`, `&sig=`), JSON members

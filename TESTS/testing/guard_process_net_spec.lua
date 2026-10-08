@@ -123,6 +123,19 @@ return function(H)
   eq(c.value.other, "blocked", "an unlisted executable is still blocked")
   eq(#S.of(c, "process.spawn_blocked"), 1, "only the unlisted one is a finding")
 
+  c = r.green_config_allow_exec_shell_quotes
+  eq(
+    c.value.outer_pair,
+    "ok",
+    "a listed program inside the outer quote pair of `cmd /c` is let through"
+  )
+  eq(c.value.other, "blocked", "an unlisted program in the same spelling is blocked")
+  eq(#S.of(c, "process.spawn_blocked"), 1, "only the unlisted one is a finding")
+  ok(
+    c.effects.spawned[1] ~= nil and not c.effects.spawned[1]:find('""', 1, true),
+    "and the ledger shows the command without the outer pair: " .. vim.inspect(c.effects.spawned)
+  )
+
   c = r.green_config_allow_host
   eq(c.value.local_ok, "ok", "allow_hosts lets the listed host through")
   eq(c.value.remote, "blocked", "an unlisted host is blocked")
