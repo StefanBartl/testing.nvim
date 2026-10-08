@@ -133,6 +133,23 @@ return function(H)
   end
   ok(seen, "a consumer that decodes the line gets the original case id")
 
+  -- the junit reporter on stdout is a log as well: the sequence is written as a character reference (an XML parser
+  -- reads the original text), the file of `--junit <file>` keeps it
+  r = go({ root, "--reporter", "junit" })
+  clean(r, "--reporter junit")
+  has(
+    r.out,
+    "a#&#35;[error]_spec.lua",
+    "the junit document names the file with a character reference"
+  )
+  local junit_file = tmp .. "/report.xml"
+  r = go({ root, "--junit", junit_file })
+  clean(r, "--junit <file>")
+  local jf = assert(io.open(junit_file, "rb"))
+  local xml = jf:read("*a")
+  jf:close()
+  has(xml, "a##[error]_spec.lua", "the junit file holds the original text")
+
   -- the file written by --json is no log: it keeps the text as it is
   local file = tmp .. "/ir.json"
   r = go({ root, "--json", file })

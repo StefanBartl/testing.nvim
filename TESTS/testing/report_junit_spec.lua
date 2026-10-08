@@ -239,6 +239,64 @@ return function(H)
   local _, default_text = parsed(big)
   ok(#default_text < 40000, "default cap bounds the document (" .. #default_text .. " bytes)")
 
+  -- stdout is a CI log: no workflow command in the document (`defuse`), the text stays the same --------------------------
+  do
+    local util = require("testing.report.util")
+    local logr = result.new({ id = "2026-10-08T10:00:00Z-0010", nvim = "0.12.0", os = "linux" })
+    F.add(logr, {
+      file = "TESTS/a##[error]_spec.lua",
+      describe = { "suite ##[group]g" },
+      name = "case ###[warning]n",
+      assertions = {
+        {
+          ok = false,
+          kind = "eq",
+          msg = "m ##[add-mask]s\n::error::forged\n   ::warning::indented\n\t::notice::tab\n\226\128\131::set-output::em\n\194\160::debug::nbsp",
+          expected = "e ##[x]\n##[y]",
+          actual = "]]>##[z]]>\n::error::after the split",
+        },
+      },
+    })
+    F.add(logr, {
+      file = "TESTS/b_spec.lua",
+      name = "errs",
+      status = "error",
+      error = { message = "::error::first line ##[x]", traceback = "tb\n::error::tb ##[y]" },
+    })
+    F.add(
+      logr,
+      { file = "TESTS/c_spec.lua", name = "skipped ##[z]", status = "skip", reason = "r ##[q]" }
+    )
+    result.finalize(logr)
+
+    local plain_root, plain_text = parsed(logr)
+    ok(plain_text:find("##[", 1, true), "a report file keeps the text as it is")
+    local log_root, log_text = parsed(logr, { defuse = true })
+    ok(not log_text:find("##[", 1, true), "defuse: no `##[` anywhere in the document")
+    for line in (log_text .. "\n"):gmatch("(.-)\n") do
+      eq(util.defuse_command(line), line, "defuse: no line the runner reads as a command: " .. line)
+    end
+    -- the XML parser that reads the log gets the same text: attributes after their references, bodies as they were
+    local function same_text(a, b, what)
+      local av = a.attrs
+      for key, value in pairs(av) do
+        eq((value:gsub("<#35>", "#")), b.attrs[key], what .. ": attribute " .. key)
+      end
+      eq(a.text, b.text, what .. ": text")
+      eq(#a.kids, #b.kids, what .. ": children")
+      for i, kid in ipairs(a.kids) do
+        same_text(kid, b.kids[i], what .. "/" .. kid.name)
+      end
+    end
+    same_text(log_root, plain_root, "the defused document")
+    -- a document without those sequences is the same bytes with and without it
+    eq(
+      junit.render(F.mixed(), { defuse = true }),
+      junit.render(F.mixed()),
+      "nothing to defuse, nothing changed"
+    )
+  end
+
   -- empty, suite name, determinism ------------------------------------------------------------------------------------
   local empty = parsed(result.new({ id = "2026-10-05T10:00:00Z-0009" }))
   eq({ empty.attrs.tests, #empty.kids }, { "0", 0 }, "an empty run is a valid empty document")

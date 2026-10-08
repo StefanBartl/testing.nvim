@@ -240,6 +240,10 @@ warning says how many were left out. The step summary table is **appended** to
 * Well-formed XML for any input: invalid UTF-8 becomes U+FFFD, characters XML 1.0 forbids become a
   visible `\xNN`, attributes are escaped, bodies are CDATA with `]]>` split and size-capped.
 * Deterministic: no timestamp, no host name, fixed attribute order, times in seconds.
+* On stdout (`--reporter junit`) the document is a CI log: no line may hold a workflow command. The legacy `##[` is
+  written `#&#35;[` in an attribute and `#]]><![CDATA[#[` inside a body, and a body line that starts with `::` gets the
+  two colons apart (`:]]><![CDATA[:`); an XML parser reads the original text back. A file (`--junit <file>`) is no
+  log and keeps the text as it is.
 
 The module-level reference for authors of reporters is
 [`lua/testing/report/README.md`](../lua/testing/report/README.md).

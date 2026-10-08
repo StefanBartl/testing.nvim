@@ -25,6 +25,8 @@ local M = {}
 ---@class Testing.Report.JunitOpts
 ---@field max_body_bytes? integer Cap of one element body in bytes (default 16384).
 ---@field suite_name? string `name` of the root `<testsuites>` (default `testing.nvim`).
+---@field defuse? boolean The document goes to a CI log (`--reporter junit` on stdout): see `M.defuse` (default false,
+---a report file is no log and keeps the text as it is).
 
 ---@type Testing.Report.JunitOpts
 M.DEFAULTS = { max_body_bytes = 16384, suite_name = "testing.nvim" }
@@ -167,6 +169,60 @@ local function guard_out(c)
   return #lines > 0 and table.concat(lines, "\n") or nil
 end
 
+---A document for a CI log: the runner reads workflow commands from stdout, so no line may hold them (`util.defuse_command`
+---does it for the text reporters). The text stays what it was for the XML parser that reads the log:
+---* the legacy `##[` (read anywhere in a line) is written `#&#35;[` in attribute values and `#]]><![CDATA[#[` inside a
+---  CDATA section (a character reference is no reference there, but two sections are one text),
+---* a line of a CDATA body that starts with `::` after any whitespace gets its `::` split the same way
+---  (`:]]><![CDATA[:`), outside of CDATA `&#58;:`.
+---The state of the CDATA section is carried from line to line (a body holds the line breaks of the message).
+---@param lines string[] The lines of `render` (an element may hold line breaks).
+---@return string[]
+function M.defuse(lines)
+  local in_cdata = false
+  local out = {}
+  for n, element in ipairs(lines) do
+    local physical = vim.split(element, "\n", { plain = true })
+    for k, line in ipairs(physical) do
+      -- a leading `::` (the runner trims all whitespace first)
+      local at = 1
+      while true do
+        local width = util.space_len(line, at)
+        if not width then
+          break
+        end
+        at = at + width
+      end
+      if line:sub(at, at + 1) == "::" then
+        line = line:sub(1, at - 1)
+          .. (in_cdata and ":]]><![CDATA[:" or "&#58;:")
+          .. line:sub(at + 2)
+      end
+      local pieces, pos = {}, 1
+      while true do
+        local marker = in_cdata and "]]>" or "<![CDATA["
+        local from, to = line:find(marker, pos, true)
+        local text = line:sub(pos, (from or #line + 1) - 1)
+        if in_cdata then
+          text = text:gsub("##%[", "#]]><![CDATA[#[")
+        else
+          text = text:gsub("##%[", "#&#35;[")
+        end
+        pieces[#pieces + 1] = text
+        if not from or not to then
+          break
+        end
+        pieces[#pieces + 1] = marker
+        pos = to + 1
+        in_cdata = not in_cdata
+      end
+      physical[k] = table.concat(pieces)
+    end
+    out[n] = table.concat(physical, "\n")
+  end
+  return out
+end
+
 ---@class Testing.Report.JunitSuite
 ---@field tests integer
 ---@field failures integer
@@ -302,6 +358,9 @@ function M.render(result, opts)
     lines[#lines + 1] = l
   end
   lines[#lines + 1] = "</testsuites>"
+  if o.defuse then
+    return M.defuse(lines)
+  end
   return lines
 end
 

@@ -102,6 +102,9 @@ share the file), capped at `summary_max_bytes` (default 900000).
   visible `\xNN`, attributes escape `& < > " '`, bodies are CDATA with `]]>` split, bodies are capped at
   `max_body_bytes` (default 16384).
 * Deterministic: no timestamp, no host name, fixed attribute order, IR order of cases, times in seconds.
+* `defuse = true` (the `--reporter junit` document on stdout, a CI log): no `##[` and no line that starts with `::`
+  (see `junit.defuse`): a character reference in an attribute, two CDATA sections in a body; the parsed text is the
+  same. A report file is written without it.
 
 ## Specs
 

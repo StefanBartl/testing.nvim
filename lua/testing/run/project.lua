@@ -215,8 +215,11 @@ end
 local function reporter_plan(args, effective)
   local primary = effective or args.reporter or "term"
   local sanitized = {}
-  if primary == "github" or primary == "junit" then
+  if primary == "github" then
     sanitized[#sanitized + 1] = { name = primary }
+  elseif primary == "junit" then
+    -- the document goes to the log of a CI runner: no workflow command in it (a report file keeps the text)
+    sanitized[#sanitized + 1] = { name = primary, opts = { defuse = true } }
   end
   if args.github and primary ~= "github" then
     sanitized[#sanitized + 1] = { name = "github" }
