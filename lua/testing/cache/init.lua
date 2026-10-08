@@ -1413,6 +1413,11 @@ local function key_once(file_info, ctx)
   -- key must not read CRLF as LF (`M.key` makes the key again from the raw ones)
   if active and (agg.eol or file_info.deps_complete) then
     active.eol = true
+    if not ctx.raw_eol then
+      -- the raw pass makes the whole key again and this one is thrown away: the rest of it (the data inputs, the
+      -- runtime directories, the parts, the digest) would be work for nothing
+      return nil, "line endings", nil, { kind = "input" }
+    end
   end
   local outside_lines = {}
   if agg.io and agg.outside then
@@ -1543,9 +1548,13 @@ function M.key(file_info, ctx)
     error(res[2], 0)
   end
   if tracker.eol and not ctx.raw_eol then
-    -- the raw pass has its own memo (a hash is remembered per file and mode) and reads everything else from `ctx`
-    ctx.memo_raw = ctx.memo_raw or {}
-    local raw_ctx = setmetatable({ raw_eol = true, memo = ctx.memo_raw }, { __index = ctx })
+    -- the raw pass has its own memo (a hash is remembered per file and mode) and reads everything else from `ctx`.
+    -- It lives INSIDE `ctx.memo`: whoever replaces the memo to look at the files again (the check after a run for an
+    -- input that changed while it went) starts the raw pass from nothing, too, and not from the hashes of the start
+    local raw_ctx = setmetatable(
+      { raw_eol = true, memo = memo_table(ctx, "#raw") },
+      { __index = ctx }
+    )
     return M.key(file_info, raw_ctx)
   end
   return res[2], res[3], res[4], res[5]

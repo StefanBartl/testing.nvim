@@ -442,4 +442,55 @@ return function(H)
     S.remove(root)
     S.remove(cdir)
   end
+
+  -- ---------------------------------------------------------------- the same, for a key made from the RAW hashes
+  -- A module that looks at line endings makes the key a second time from the raw hashes (`eol raw`), with a memo of
+  -- its own. The check after the run replaces the memo to look at the files again; the memo of the raw pass has to
+  -- go with it, or the key made again is the key of the start and the edit is never seen.
+  do
+    local cached = require("testing.run.cached")
+    local result = require("testing.core.result")
+    local with_eol = function(v)
+      return ('return { sep = "\\r\\n", v = %d }\n'):format(v)
+    end
+    local root = S.project({ ["lua/proj/b.lua"] = with_eol(1) })
+    local cdir = vim.fs.normalize(vim.fn.tempname())
+    local file = "TESTS/proj/a_spec.lua"
+    local c = ctx(root, { cache_dir = cdir, hasher = false })
+    local info = { file = file }
+    local key, _, parts = cache.key(info, c)
+    assert(key, "a key")
+    ok(
+      table.concat(parts or {}, "\n"):find("eol raw", 1, true) ~= nil,
+      "the closure looks at line endings: the key is made from the raw hashes"
+    )
+    local res = require("testing.run.inproc").begin_result(root, { argv = {}, jobs = 1 })
+    res.cases = { S.case(file, "a") }
+    result.finalize(res)
+    local prep = {
+      mode = "use",
+      files = { { rel = file } },
+      run_files = { { rel = file } },
+      hits = {},
+      keys = { [file] = key },
+      infos = { [file] = info },
+      uncacheable = {},
+      stored = 0,
+      not_stored = {},
+      ctx = c,
+    }
+    S.edit(root, "lua/proj/b.lua", with_eol(99))
+    cached.finish(prep, { result = res, stopped = false }, { root = root, cache_dir = cdir })
+    H.eq(prep.stored, 0, "raw key: a result is not stored under the key of the old content")
+    ok(
+      prep.not_stored["an input changed while the run was going"] == 1,
+      "raw key: the reason is named: " .. vim.inspect(prep.not_stored)
+    )
+    -- the key of a new context differs from the one of the start, so the check had something to see
+    local fresh = assert(cache.key(info, ctx(root, { cache_dir = cdir, hasher = false })))
+    ok(fresh ~= key, "and the edit does change the key")
+    cache.reset()
+    S.remove(root)
+    S.remove(cdir)
+  end
 end
