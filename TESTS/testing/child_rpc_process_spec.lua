@@ -47,7 +47,7 @@ return function(H)
     ok(S.alive(gpid), "the grandchild runs")
     c.kill()
     ok(
-      S.wait(10000, function()
+      S.wait(30000, function()
         return not S.alive(pid) and not S.alive(gpid)
       end),
       "after kill() neither the child nor its grandchild is alive"
@@ -67,12 +67,19 @@ return function(H)
 
     -- ===================================================================
     -- 2. crash detection: exit codes, :qa, os.exit. Never a hang, always the exit and the call that was running
-    local crash = S.spawn()
+    -- The yardstick of "promptly" is the call timeout: a death that was only noticed by the timeout would take all
+    -- of it. It is set far above what noticing a death costs on a busy machine, so the claim does not depend on how
+    -- busy that is.
+    local crash = S.spawn({ call_timeout_ms = 60000 })
     crash.lua("vim.notify('about to die', vim.log.levels.WARN)")
     local t0 = vim.uv.hrtime() / 1e6
     local cok, cerr = pcall(crash.lua, "vim.cmd('cquit 139')")
     ok(not cok, "a child that exits during a call raises")
-    ok(vim.uv.hrtime() / 1e6 - t0 < 8000, "and does so promptly (not after the call timeout)")
+    local noticed_ms = vim.uv.hrtime() / 1e6 - t0
+    ok(
+      noticed_ms < 30000,
+      ("and does so promptly, not after the call timeout of 60 s (took %d ms)"):format(noticed_ms)
+    )
     has(cerr, "child died during nvim_exec_lua", "names the call")
     has(cerr, "exit code 139", "and the exit code")
     local st = crash.status()
@@ -122,12 +129,15 @@ return function(H)
     local hok, herr = pcall(hung.lua, "while true do end")
     local took = vim.uv.hrtime() / 1e6 - h0
     ok(not hok, "an endless loop in the child raises in the parent")
-    ok(took < 10000, ("and does not hang (took %d ms)"):format(took))
+    -- Killing the tree of a child takes seconds on a busy Windows machine (the process table, `taskkill`), and the
+    -- driver waits up to `REAP_MS` for the process to end before it gives up on it: the call returns within a few
+    -- of those. A hang is a call that does not return.
+    ok(took < 3 * rpc.REAP_MS, ("and does not hang (took %d ms)"):format(took))
     has(herr, "timed out after 500 ms", "the timeout is named")
     has(herr, "nvim_exec_lua", "with the call")
     has(herr, "was killed", "the child was killed")
     ok(
-      S.wait(5000, function()
+      S.wait(30000, function()
         return not S.alive(hpid)
       end),
       "the hung process is gone"
@@ -213,13 +223,13 @@ return function(H)
     local spid = sc.pid
     sc.close_stdin()
     ok(
-      S.wait(8000, function()
+      S.wait(30000, function()
         return not S.alive(spid)
       end),
       "an editor whose client went away quits by itself"
     )
     -- the pid is gone before the exit callback of the handle ran: wait for the state to follow
-    S.wait(2000, function()
+    S.wait(10000, function()
       return sc.status().state ~= "running"
     end)
     eq(sc.status().state, "exited", "which is 'exited', not 'crashed'")
@@ -237,7 +247,7 @@ return function(H)
     eq(r.g.state_before, nil, "with a fresh state")
     eq(r.g.rpc_minit_ran, true, "the minit ran again")
     ok(
-      S.wait(10000, function()
+      S.wait(30000, function()
         return not S.alive(old_pid)
       end),
       "the old process is gone"
@@ -269,15 +279,27 @@ return function(H)
 
     -- ===================================================================
     -- 8. payloads and noise
-    local big = S.spawn()
+    -- Bulk data is slow and erratic on a busy machine, and not because of the driver: the same 3 MB result took
+    -- from 60 ms to 19 s on Windows while the 2 MB argument (parent to child) stayed at 0.2 s, and `wire.feed`
+    -- decodes the 3 MB in under 10 ms. The limit of a call here is the point where the spec gives up on a stuck
+    -- child (a child that never answers is a timeout whatever the limit), not a performance claim.
+    local big = S.spawn({ call_timeout_ms = 120000 })
     local n = 3 * 1024 * 1024
     eq(#big.lua("return string.rep('x', ...)", n), n, "a 3 MB result arrives (many chunks)")
     local blob = ("y"):rep(2 * 1024 * 1024)
     eq(big.lua("return #...", blob), #blob, "a 2 MB argument is sent")
+    -- Where the child's stderr goes decides what a flood measures. A pipe is drained by the parent as the data
+    -- arrives: 1.5 MB must not block the child. On Windows Neovim gives an embedded editor a console of its own
+    -- (stdio is a character device there and nothing reaches our pipe, docs/CHILD.md), so the write is paid to
+    -- conhost.exe: 10 to 75 s for 1.5 MB on a machine that other work keeps busy, none of it the driver's. That
+    -- case floods less; a blocked child is a timeout either way. The pipe itself (drain, cap, newest output) is
+    -- covered with a real process on every system in child_output_spec.lua.
+    local sink = big.lua("return vim.uv.guess_handle(2)")
+    local lines = sink == "tty" and 100 or 3000
     eq(
-      big.lua("for i = 1, 3000 do io.stderr:write(('e'):rep(500), '\\n') end return 'done'"),
+      big.lua("for i = 1, ... do io.stderr:write(('e'):rep(500), '\\n') end return 'done'", lines),
       "done",
-      "a child that floods stderr does not block"
+      ("a child that floods stderr (%d lines, into a %s) does not block"):format(lines, sink)
     )
     ok(#big.stderr() <= require("testing.child").OUTPUT_CAP + 1000, "and its stderr is capped")
     ok(big.alive(), "still alive")

@@ -185,8 +185,12 @@ end]==],
       ["TESTS/hang_spec.lua"] = "return function(H) while true do end end",
     }
     local order = { "TESTS/ok_spec.lua", "TESTS/crash_spec.lua", "TESTS/hang_spec.lua" }
+    -- the deadline applies to EVERY file of the run, the green one too: it has to be far above what starting a
+    -- child editor takes on a busy machine (1.5 s turned `ok_spec` into a timeout there), and the grace far above
+    -- what the hanging child needs to write its own timeout record and quit
+    local limits = { timeouts = { file_ms = 6000 }, grace_ms = 1000 }
     local root = S.new_root()
-    local rep = run(root, files, order, nil, { timeouts = { file_ms = 1500 }, grace_ms = 300 })
+    local rep = run(root, files, order, nil, limits)
     eq(
       S.statuses(rep),
       { "TESTS/ok_spec.lua:pass", "TESTS/crash_spec.lua:crash", "TESTS/hang_spec.lua:timeout" },
@@ -199,9 +203,18 @@ end]==],
     eq(#traces, 2, "two trace files: one per dead child")
     for _, rel in ipairs({ "TESTS/crash_spec.lua", "TESTS/hang_spec.lua" }) do
       local case = S.case_of(rep, rel)
-      local art = case.artifacts[1]
-      ok(art and art.kind == "trace", rel .. ": the case carries a trace artifact")
-      ok(art.path:find("trace.json", 1, true) ~= nil, rel .. ": it names the trace file")
+      local art = case and case.artifacts[1]
+      ok(
+        art and art.kind == "trace",
+        rel
+          .. ": the case carries a trace artifact (the cases: "
+          .. vim.inspect(S.statuses(rep))
+          .. ")"
+      )
+      -- a failed check above must not turn into an index error that hides it
+      if art and art.path then
+        ok(art.path:find("trace.json", 1, true) ~= nil, rel .. ": it names the trace file")
+      end
     end
     ok(#S.case_of(rep, "TESTS/ok_spec.lua").artifacts == 0, "a green file has no artifact")
     -- the case the PARENT makes for a dead child says what the ledger could not see as well
@@ -219,23 +232,19 @@ end]==],
       end
     end
     ok(crash_trace ~= nil, "the crash trace says reason = crash")
-    eq(
-      crash_trace.child.exit.code,
-      3,
-      "the trace has the exit code (the run guard ends a quit editor with 3)"
-    )
-    ok(crash_trace.child.file == "TESTS/crash_spec.lua", "the trace names the file")
-    local text = vim.json.encode(crash_trace)
-    ok(not text:find(root, 1, true), "the trace is redacted: the project root is a placeholder")
+    if crash_trace then
+      eq(
+        crash_trace.child.exit.code,
+        3,
+        "the trace has the exit code (the run guard ends a quit editor with 3)"
+      )
+      ok(crash_trace.child.file == "TESTS/crash_spec.lua", "the trace names the file")
+      local text = vim.json.encode(crash_trace)
+      ok(not text:find(root, 1, true), "the trace is redacted: the project root is a placeholder")
+    end
 
     local root2 = S.new_root()
-    local off = run(
-      root2,
-      files,
-      order,
-      { trace = false },
-      { timeouts = { file_ms = 1500 }, grace_ms = 300 }
-    )
+    local off = run(root2, files, order, { trace = false }, limits)
     eq(
       #S.case_of(off, "TESTS/crash_spec.lua").artifacts,
       0,

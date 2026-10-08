@@ -202,10 +202,12 @@ end
   for _, jobs in ipairs({ 1, 4 }) do
     local root = S.new_root()
     local files, o = files_of(mixed)
+    -- the deadline applies to EVERY file, the green ones too (`f1` alone sleeps 720 ms): it has to be far above what
+    -- starting a child editor and running such a file takes on a busy machine, where 1.5 s made `f1` a timeout
     local rep = S.run(root, S.project(root, files, o), {
       options = { jobs = jobs },
-      timeouts = { file_ms = 1500 },
-      grace_ms = 300,
+      timeouts = { file_ms = 8000 },
+      grace_ms = 1000,
     })
     eq(
       S.statuses(rep),
@@ -227,7 +229,7 @@ return function(H)
   local f = assert(io.open("pid_" .. vim.fn.getpid() .. ".txt", "wb"))
   f:write("x")
   f:close()
-  vim.uv.sleep(60000)
+  vim.uv.sleep(600000)
   H.ok(true, "never reached")
 end
 ]==]
@@ -239,11 +241,15 @@ end
       [5] = slow,
       [6] = slow,
     })
+    -- The yardstick is the children's own deadline, far above what the stop can cost: a stop that did not kill
+    -- them would sit out all of it. Killing three process trees takes 10 to 35 s on a busy Windows machine (a
+    -- process-table query and a `taskkill` per tree, one after the other), so no fixed few seconds is a claim.
+    local deadline_s = 120
     local t0 = vim.uv.hrtime()
     local rep = S.run(root, S.project(root, files, o), {
       options = { jobs = 3 },
       maxfail = 1,
-      timeouts = { file_ms = 30000 },
+      timeouts = { file_ms = deadline_s * 1000 },
     })
     local took = (vim.uv.hrtime() - t0) / 1e9
     eq(
@@ -254,8 +260,11 @@ end
     eq(rep.stopped, true, "the run says it stopped")
     eq(rep.files_unrun, 4, "four files were not run")
     ok(
-      took < 20,
-      "the slow children were killed, not waited for (" .. string.format("%.1f", took) .. " s)"
+      took < deadline_s * 0.6,
+      ("the slow children were killed, not waited for (%.1f s of their %d s deadline)"):format(
+        took,
+        deadline_s
+      )
     )
     -- every child that started wrote its pid file; none may still be alive
     local alive = 0
@@ -269,7 +278,12 @@ end
   end
 
   -- ===================================================================
-  -- all sandboxes are gone
+  -- all sandboxes are gone. The children that were killed last are reaped on the event loop (their exit callbacks
+  -- remove the sandbox and, with the last one, the reaper autocmd of the driver): wait for that as a condition, not
+  -- for a time, before looking at what is left.
+  vim.wait(60000, function()
+    return sandboxes() == sandboxes_before and vim.fn.exists("#TestingChildReaper") == 0
+  end, 50)
   eq(sandboxes(), sandboxes_before, "no sandbox directory is left behind")
 
   S.cleanup()
