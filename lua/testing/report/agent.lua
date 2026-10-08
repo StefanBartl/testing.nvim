@@ -323,6 +323,8 @@ end
 ---    typographic U+2018..U+201B,
 ---  * a double quote: Windows PowerShell 5.1 does not escape it for the program it starts, the quote is lost,
 ---  * a control, C1 or bidi character or a newline (it would not stay one line),
+---  * `##[`: the report writes it with an escape in the middle (the legacy workflow command form, see
+---    `util.defuse_command`), so the word in the line would not be the word that was meant,
 ---  * a backslash at the end of a word that holds whitespace: Windows PowerShell 5.1 wraps such a word in double
 ---    quotes, the backslash then escapes the closing one and the rest of the line becomes one argument,
 ---  * nothing at all: Windows PowerShell 5.1 drops an empty argument, and every later word moves up by one.
@@ -333,6 +335,7 @@ function M.shell_quote(s)
   if
     s == ""
     or s:find("[%c'\"]")
+    or s:find("##[", 1, true)
     -- U+2018..U+201B (typographic single quotes): PowerShell reads them as a plain `'`
     or s:find("\226\128[\152-\155]")
     or util.clean(s, { c1 = true, bidi = true }) ~= s
@@ -394,6 +397,12 @@ local function rerun_command(result, c, o)
   parts[#parts + 1] = option_word("--file", c.file or "", file)
   local line = table.concat(parts, " ")
   local name = util.short_name(c)
+  -- `##[` is written with an escape in the report (`util.defuse_command`), a filter with it would select nothing:
+  -- the part in front of it is the filter (a prefix still selects the case)
+  local legacy = name:find("##[", 1, true)
+  if legacy then
+    name = name:sub(1, legacy - 1)
+  end
   if name ~= "" and name ~= (c.file or ""):match("([^/]+)$") then
     name = util.cap(name, MAX_FILTER)
     local filter = M.shell_quote(name)

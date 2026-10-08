@@ -193,7 +193,11 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   no-break space, an ideographic space, U+2028: the runner of GitHub Actions trims all of it before it looks for
   `::`), and for every line the run writes to stderr, a line after a line break inside a message included. The
   legacy form `##[command]` is found by the runner anywhere in a line, so every `##[` is written `#\x23[` (in the
-  `jsonl` form `##[`, a JSON escape: the line stays valid JSON and decodes to the original text).
+  `jsonl` form `##[`, a JSON escape: the line stays valid JSON and decodes to the original text). The same holds
+  for the diagnostics of the run itself (`--list`, the notes about cases without an assertion, the `timings:` line,
+  the findings, the retry notes) and for the IR that `--reporter json` prints on stdout. A `rerun:` command cannot
+  spell a word that holds `##[`: the `--filter` ends in front of it (a prefix still selects the case), and a file
+  name that holds it gets a note instead of a command.
 * **No sentinel.** `GREEN` is printed exactly where the sentinel would be. A script that greps for the sentinel
   uses `--reporter term` (or `TESTING_AGENT=0`).
 

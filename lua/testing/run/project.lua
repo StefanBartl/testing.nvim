@@ -32,7 +32,7 @@ local util = require("testing.report.util")
 ---@param s any
 ---@return string
 local function safe(s)
-  return util.clean(s, { bidi = true, c1 = true })
+  return util.defuse_command(util.clean(s, { bidi = true, c1 = true }))
 end
 
 local M = {}
@@ -1111,7 +1111,9 @@ function M.execute_run(plan, sv, run_opts, err)
     out(line)
   end
   if primary == "json" then
-    out(json_text --[[@as string]])
+    -- one JSON line on a log: a `##[` in a case name or a message is written with the JSON escape, which a
+    -- consumer decodes to the original text (the `--json` file is no log and stays as it is)
+    out(util.defuse_command(json_text --[[@as string]], true))
   end
 
   print_findings(findings, out)
@@ -1161,10 +1163,9 @@ function M.execute_run(plan, sv, run_opts, err)
     end
   end
   if args.timings and not quiet then
-    out(
-      (cache_line and primary == "term") and inproc.timing_line(res)
-        or ("\n" .. inproc.timing_line(res))
-    )
+    -- file names come from the project under test
+    local timing = safe(inproc.timing_line(res))
+    out((cache_line and primary == "term") and timing or ("\n" .. timing))
   end
 
   -- 7. history (a convenience: a failure to write is a note, never the verdict)

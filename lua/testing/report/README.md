@@ -85,7 +85,9 @@ become `%3A`, `%2C`. Other control characters are made visible first, so a test 
 `\n::set-output ...` can never start a second command. The text that other reporters print
 (`term`, `agent`, the run's own diagnostics) is defused by `util.defuse_command`: a leading `::`
 (after any whitespace) becomes `\x3A:`, and every `##[` (the legacy command form, read anywhere in a
-line) becomes `#\x23[`. At most `max_annotations` (default 10, the
+line) becomes `#\x23[`. The IR that `--reporter json` prints on stdout gets the JSON escape (the line stays
+valid JSON and decodes to the original text); the file of `--json <file>` is no log and is left as it is. At
+most `max_annotations` (default 10, the
 GitHub limit per type and step) are emitted, then one warning says how many were left out. Skips are
 annotated with `annotate_skips = true`.
 

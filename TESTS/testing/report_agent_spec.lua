@@ -383,6 +383,49 @@ return function(H)
     end
   end
 
+  -- the rerun line of a case whose name holds `##[`: the report writes the sequence with an escape, so a `--filter` with
+  -- it would select nothing ("no case matched the selection"). The part in front of it is the filter (a prefix still
+  -- selects the case); a name that starts with it, and a file name that holds it, leave the filter out / have no command.
+  do
+    local rr = new_run()
+    failing(rr, "TESTS/b_spec.lua", "suite::failing ##[error]forged-in-fail", { msg = "boom" })
+    for _, format in ipairs({ "text", "jsonl" }) do
+      local out = agent.render(rr, { command = CMD, format = format })
+      local rerun
+      if format == "jsonl" then
+        for _, l in ipairs(out) do
+          local obj = vim.json.decode(l)
+          if obj.kind == "failure" then
+            rerun = obj.rerun
+          end
+        end
+      else
+        rerun = out[#out]
+      end
+      ok(rerun ~= nil, format .. ": a rerun command")
+      has(rerun, "--file TESTS/b_spec.lua", format .. ": the file is named")
+      has(
+        rerun,
+        "--filter 'suite::failing '",
+        format .. ": the filter is the prefix in front of the ##["
+      )
+      ok(not rerun:find("x23", 1, true), format .. ": no escape in the filter: " .. rerun)
+      ok(not rerun:find("forged", 1, true), format .. ": nothing of the hostile rest: " .. rerun)
+    end
+
+    local starts = new_run()
+    failing(starts, "TESTS/c_spec.lua", "##[error]first", { msg = "boom" })
+    local sl = agent.render(starts, { command = CMD })
+    has(sl[#sl], "--file TESTS/c_spec.lua", "a name that starts with ##[: the file still reruns")
+    ok(not sl[#sl]:find("--filter", 1, true), "... without a filter")
+
+    local file_run = new_run()
+    failing(file_run, "TESTS/d##[error]_spec.lua", "n", { msg = "boom" })
+    local fl = agent.render(file_run, { command = CMD })
+    has(fl[#fl], "(no command:", "a file name with ##[: no command, and it says why")
+    eq(agent.shell_quote("a##[b"), nil, "the word has no spelling that survives the report")
+  end
+
   -- guard findings: one line each, grouped -------------------------------------------------------------------------------------------
   local gd = new_run()
   local c1 = F.add(gd, { file = "TESTS/g_spec.lua", name = "leaks" })
