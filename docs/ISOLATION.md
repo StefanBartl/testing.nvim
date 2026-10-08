@@ -57,7 +57,9 @@ run, no `it` body does, exactly like `--list`; `kind = "list"` of the child job)
 spec therefore sees the same sanitized environment and sandbox as in every other child, writes and loops
 stay out of the runner, and a load-time hang is cut off by the file timeout (the file is then one `error`
 case). The listing child runs **without the guard layer** (no case window exists to judge); the process
-boundary is its protection. Selection (`--filter`, `--tags`, `--lf`) is applied in that child. Every
+boundary is its protection. Selection (`--filter`, `--tags`, `--lf`) is applied in that child. The listings of
+several files run side by side, up to `--jobs` of them (each costs an editor start and the load of its file), and
+the cases start once their file is listed. Every
 listed id then gets a
 child that runs only that id. The describe blocks and hooks run again in each child, so a case sees
 exactly what the top of its file gives it, never what an earlier case left behind. The results are

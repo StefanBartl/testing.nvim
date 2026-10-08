@@ -18,9 +18,9 @@
 ---
 --- CASE MODE (`isolated = "case"`, busted files). A fresh child per CASE, exact and slow (about 0.3 s of
 --- process start per case on Windows, 0.05 s on Linux: a 200-case file costs a minute there). The
---- cases of the file are LISTED first, in this editor (the describe blocks run, no `it` body does, the
---- same as `--list`, under a silent soft-isolation restore); each listed id then gets a child that
---- is told to run only that id (the `lf_ids` of the job: the describe blocks and hooks run again in
+--- cases of the file are LISTED first, by a throwaway child (the describe blocks run, no `it` body does, the
+--- same as `--list`; up to `jobs` listings run at a time, started while the run waits for the one before them);
+--- each listed id then gets a child that is told to run only that id (the `lf_ids` of the job: the describe blocks and hooks run again in
 --- the child, so every case sees exactly what the file's own top level gives it). The results of the
 --- cases of a file are merged in listing order, which is source order, whatever order the children
 --- finish in, so the IR is the same for every `jobs`. Honesty rules: an id that was listed but that
@@ -641,10 +641,45 @@ function M.run(opts)
   -- ---- classify every entry --------------------------------------------------------------
   ---@type Testing.Isolated.Slot[]
   local slots = {}
+  -- The cases of a file for `isolated = "case"` are listed by a throwaway child (see the module header). The entries
+  -- are classified in order, each waiting for its listing, but the children of the next `jobs - 1` files are started
+  -- while one is awaited: the start of an editor and the load of a file are the cost, and `--jobs` is for that.
+  ---@type table<integer, Testing.Isolated.Listing>
+  local listings_ahead = {}
+  ---@param entry Testing.Inproc.Entry
+  ---@return string
+  local function mode_of(entry)
+    if entry.missing or entry.dialect == "unknown" then
+      return "none"
+    end
+    return (options_mod.isolation_of(o, entry))
+  end
+  ---@param i integer
+  ---@return table<string, true>|nil
+  local function lf_of(i)
+    return opts.lf and select_mod.lf_ids(entries[i].rel, opts.lf) or nil
+  end
+  ---@param i integer
+  ---@param accept fun(id: string): boolean
+  ---@return string[]|nil ids
+  ---@return string|nil err
+  local function listed(i, accept)
+    if opts.list_cases then
+      return M.list_case_ids(opts, o, root, entries[i], accept, selector, timeouts, lf_of(i))
+    end
+    for k = i, math.min(i + math.max(o.jobs or 1, 1) - 1, #entries) do
+      if not listings_ahead[k] and mode_of(entries[k]) == "case" then
+        listings_ahead[k] = M.begin_listing(opts, o, root, entries[k], timeouts, lf_of(k))
+      end
+    end
+    local job = listings_ahead[i]
+    listings_ahead[i] = nil
+    return M.finish_listing(opts, job)
+  end
   for i, entry in ipairs(entries) do
     local rel = entry.rel
     local slot = { index = i, entry = entry, state = "waiting", kind = "child" } --[[@as Testing.Isolated.Slot]]
-    local lf_ids = opts.lf and select_mod.lf_ids(rel, opts.lf) or nil
+    local lf_ids = lf_of(i)
     local function accept(id)
       if lf_ids ~= nil and not lf_ids[id] then
         return false
@@ -660,7 +695,7 @@ function M.run(opts)
     local case_ids, list_err
     if mode == "case" then
       -- a child per case: the cases are listed here first (see the module header)
-      case_ids, list_err = M.list_case_ids(opts, o, root, entry, accept, selector, timeouts, lf_ids)
+      case_ids, list_err = listed(i, accept)
     end
     if list_err then
       slot.kind, slot.state = "synthetic", "done"
@@ -1517,6 +1552,30 @@ function M.list_case_ids(opts, o, root, entry, accept, _selector, timeouts, lf_i
   if opts.list_cases then
     return opts.list_cases(entry, accept)
   end
+  return M.finish_listing(opts, M.begin_listing(opts, o, root, entry, timeouts, lf_ids))
+end
+
+---A listing child that was started (`M.begin_listing`).
+---@class Testing.Isolated.Listing
+---@field child table
+---@field plan? table
+---@field handle? Testing.Child.Handle
+---@field done boolean The child ended.
+---@field deadline? integer `hrtime` (ns) after which the listing counts as timed out.
+---@field limit? integer The file timeout plus the grace (ms), for the message.
+---@field err? string The listing could not be started.
+
+---Start the throwaway child that lists the cases of one file (see `M.list_case_ids`); `M.finish_listing` waits for it.
+---The run starts the listings of the next files while it waits for one (up to `jobs` at a time), because the start of
+---an editor and the load of a spec file are the cost, not the listing.
+---@param opts Testing.Isolated.Opts
+---@param o Testing.Run.Options
+---@param root string
+---@param entry Testing.Inproc.Entry
+---@param timeouts Testing.Child.Timeouts
+---@param lf_ids table<string, true>|nil
+---@return Testing.Isolated.Listing
+function M.begin_listing(opts, o, root, entry, timeouts, lf_ids)
   local child = opts.child or require("testing.child")
   local lf_list
   if lf_ids then
@@ -1547,29 +1606,47 @@ function M.list_case_ids(opts, o, root, entry, accept, _selector, timeouts, lf_i
   local pok, perr = child.prepare(plan)
   if not pok then
     child.cleanup(plan)
-    return nil, tostring(perr)
+    return { child = child, done = true, err = tostring(perr) }
   end
-  local done = false
+  local job = { child = child, plan = plan, done = false }
   local handle, serr = child.spawn(plan, function()
-    done = true
+    job.done = true
   end)
   if not handle then
     child.cleanup(plan)
-    return nil, tostring(serr)
+    job.done, job.err = true, tostring(serr)
+    return job
   end
-  local limit = (timeouts.file_ms or 60000) + (opts.grace_ms or M.GRACE_MS)
-  if not vim.wait(limit, function()
-    return done
+  job.handle = handle
+  job.limit = (timeouts.file_ms or 60000) + (opts.grace_ms or M.GRACE_MS)
+  job.deadline = vim.uv.hrtime() + job.limit * 1e6
+  return job
+end
+
+---Wait for a listing child that `M.begin_listing` started and read what it listed (see `M.list_case_ids`).
+---@param opts Testing.Isolated.Opts
+---@param job Testing.Isolated.Listing
+---@return string[]|nil ids Nil with an `err` when the file cannot be listed.
+---@return string|nil err
+function M.finish_listing(opts, job)
+  if job.err then
+    return nil, job.err
+  end
+  local child, plan, handle = job.child, job.plan, job.handle
+  -- the time of a listing runs from its start: one that was started ahead has used some of it while another was awaited
+  local remaining = math.max(0, math.ceil((job.deadline - vim.uv.hrtime()) / 1e6))
+  if not vim.wait(remaining, function()
+    return job.done
   end, 10) then
     child.kill_tree(handle)
     -- the process tree is going down; a stubborn process must not keep the run waiting
     if not vim.wait(M.GRACE_MS, function()
-      return done
+      return job.done
     end, 10) then
       child.abandon(handle)
     end
     child.cleanup(plan)
-    return nil, ("listing the cases timed out after %d ms"):format(limit)
+    return nil, ("listing the cases timed out after %d ms"):format(job.limit)
   end
   local frag = require("testing.child.fragment").read(plan.fragment)
   local exit = handle.exit or {}
