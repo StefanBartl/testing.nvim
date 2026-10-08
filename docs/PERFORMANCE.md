@@ -145,6 +145,10 @@ What this says, plainly:
   a message cost about 9 s per field), the JWT rule of the ledger (`eyJeyJ...` without dots: 60 000 bytes took 7 s; the
   scan goes on behind the run that failed instead of trying every `eyJ` of it), and the roots of a lowercase `users`.
   The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for every text.
+* The migration of an init script reads a long run of blanks once, too: the end of the code of a line is found from the
+  last character that is no blank (`%s*%-%-.*$` and `%s+$` were quadratic, 30 000 blanks took 7 s), and the names a
+  `local` statement introduces are read one by one (`local%s+([%a_][%w_%s,]-)%s*=[^=]` tried every length of the list
+  against the blanks behind it, 4 s), `TESTS/testing/scan_hostile_line_spec.lua`.
 * A hit rate counts only what is sound. The earlier version of this section reported 41 - 83 % on four of these
   suites; stale passes found in the review (a module that reads a file next to it, a `package.path` that points outside
   the spec root, `:runtime`, a path above the project, an mtime put back with `touch -r`, a lint spec that reads the

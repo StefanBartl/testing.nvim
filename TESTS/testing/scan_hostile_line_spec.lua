@@ -305,5 +305,77 @@ return function(H)
     )
   end)
 
+  -- ---------------------------------------------------------------- the init script of the old runner
+  section("migrate: the lines of an init script", function()
+    local legacy = require("testing.migrate.legacy_init")
+    ---@param src string
+    ---@return string[] kinds
+    ---@return number ms
+    local function split(src)
+      local blocks, ms = timed(function()
+        return legacy.split(src)
+      end)
+      local kinds = {}
+      for _, b in ipairs(blocks) do
+        kinds[#kinds + 1] = b.kind .. "/" .. #b.lines
+      end
+      return kinds, ms
+    end
+    -- a block that names the old runner is cut statement by statement (`rescue`): every line goes through the check
+    -- of a continuation (`code_part`) and every statement through the list of the names it introduces
+    -- (`defined_names`); both read a run of blanks once
+    local shapes = {
+      ["blanks inside a statement"] = 'vim.opt.rtp:append("plenary.nvim")\nvim.o.swapfile = false'
+        .. PAD
+        .. "\nvim.o.x = 1\n",
+      ["blanks at the end of a line"] = 'vim.opt.rtp:append("plenary.nvim") ,'
+        .. PAD
+        .. "\nvim.o.x = 1\n",
+      ["blanks in front of a comment"] = 'vim.opt.rtp:append("plenary.nvim")\nvim.o.swapfile = false'
+        .. PAD
+        .. "-- c\nvim.o.x = 1\n",
+      ["blanks before the ="] = "local a" .. PAD .. '= require("plenary")\nvim.o.x = 1\n',
+      ["blanks behind local"] = "local"
+        .. PAD
+        .. 'a = require("plenary")\nlocal b = a\nvim.o.x = 1\n',
+      ["a list of names"] = "local "
+        .. ("a, "):rep(BLANKS / 3)
+        .. 'x = require("plenary")\nlocal y = a\n',
+      ["local, local, local"] = 'local x = require("plenary")\n'
+        .. ("local "):rep(BLANKS / 6)
+        .. "\nvim.o.x = 1\n",
+      ["function, function"] = 'local x = require("plenary")\n'
+        .. ("function "):rep(BLANKS / 9)
+        .. "\n",
+    }
+    for what, src in pairs(shapes) do
+      local _, ms = split(src)
+      ok(ms < LIMIT_MS, ("%s (%d bytes) took %.0f ms (limit %d)"):format(what, #src, ms, LIMIT_MS))
+    end
+    -- the cut itself did not change: the statements of the suite are kept, the ones of the old runner go
+    eq(
+      split(
+        'vim.opt.rtp:append("plenary.nvim")   -- find the runner  \nvim.o.swapfile = false   \n'
+      ),
+      { "carry/1" },
+      "blanks and a comment behind a statement"
+    )
+    eq(
+      split("local dir = vim.env.PLENARY_DIR\nvim.opt.rtp:append(dir)\nvim.o.swapfile = false\n"),
+      { "carry/1" },
+      "a statement that uses a name the old runner introduced goes with it"
+    )
+    eq(
+      split('local a,   b  =  require("plenary"), 1\nvim.g.x = b\nvim.o.shada = ""\n'),
+      { "carry/1" },
+      "names behind commas and blanks"
+    )
+    eq(
+      split("local a = vim.env.PLENARY_DIR\nlocal c = 1\nvim.opt.rtp:append(a)\nvim.g.c = c\n"),
+      { "carry/2" },
+      "a name the old runner did not introduce stays used"
+    )
+  end)
+
   ok(#failed == 0, "sections that are red:\n" .. table.concat(failed, "\n"))
 end

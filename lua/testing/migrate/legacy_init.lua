@@ -114,11 +114,18 @@ local function reword(l)
   return l
 end
 
----A line of code without its trailing comment (good enough for the heuristic below).
+---A line of code without its trailing comment (good enough for the heuristic below). Neither step starts a pattern at
+---every blank of a long run (`%s*%-%-.*$` and `%s+$` do: 20 000 blanks in one line took seconds): the comment starts
+---at the first `--`, and the end of the code is found from the last character that is no blank.
 ---@param l string
 ---@return string
 local function code_part(l)
-  return (l:gsub("%s*%-%-.*$", ""):gsub("%s+$", ""))
+  local comment = l:find("--", 1, true)
+  if comment then
+    l = l:sub(1, comment - 1)
+  end
+  local last = l:find("%S%s*$")
+  return last and l:sub(1, last) or ""
 end
 
 ---Operators that end a line before its statement is over, and that start the line after one.
@@ -189,10 +196,32 @@ local function defined_names(text)
   for n in text:gmatch("%f[%w_]function%s+([%a_][%w_]*)") do
     names[#names + 1] = n
   end
-  for list in text:gmatch("%f[%w_]local%s+([%a_][%w_%s,]-)%s*=[^=]") do
-    for n in list:gmatch("[%a_][%w_]*") do
-      names[#names + 1] = n
+  -- `local a, b = ...`: read the names behind each `local` one by one. A pattern for the whole list
+  -- (`local%s+([%a_][%w_%s,]-)%s*=[^=]`) tries every length of it against the blanks that follow: 20 000 blanks took
+  -- seconds. Each byte is read once here: the scan goes on behind the list, whether or not an `=` follows it.
+  local from = 1
+  while true do
+    local _, e = text:find("%f[%w_]local%f[^%w_]", from)
+    if not e then
+      break
     end
+    local list, p = {}, e + 1
+    while true do
+      local name, after = text:match("^%s*([%a_][%w_]*)%s*()", p)
+      if not name then
+        break
+      end
+      list[#list + 1] = name
+      p = after
+      if text:sub(p, p) ~= "," then
+        break
+      end
+      p = p + 1
+    end
+    if #list > 0 and text:find("^=[^=]", p) then
+      vim.list_extend(names, list)
+    end
+    from = p
   end
   return names
 end
