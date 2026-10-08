@@ -292,12 +292,14 @@ end
 ---@param opts? { case_insensitive?: boolean }
 ---@return fun(s: string): string
 function M.redactor(roots, opts)
-  local result = require("testing.core.result")
   local ci = opts ~= nil and opts.case_insensitive == true
+  -- the roots are fixed for this redactor: the path matchers are built once, not for every text
+  local normalize = roots
+    and require("testing.core.result").normalizer(roots, { case_insensitive = ci })
   return function(s)
     s = M.redact_secrets(s)
-    if roots then
-      s = result.normalize(s, roots, { case_insensitive = ci }) --[[@as string]]
+    if normalize then
+      s = normalize(s) --[[@as string]]
     end
     return s
   end

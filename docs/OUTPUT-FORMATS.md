@@ -25,11 +25,12 @@ is never a pass: the run ends with exit code `3`.
 * Paths are normalized: the repository, home, temp and state directories become `<REPO>`,
   `<HOME>`, `<TMP>`, `<STATE>`, so the file is the same on every machine.
 * With `--json` the free text is **redacted** by the kernel: user and host name, environment
-  `NAME=value` pairs, e-mail addresses, and every free-text token that holds a `Users/<name>` path
-  shape (a spec about an anonymizer that asserts about a Windows profile path is no leak: the token
-  becomes `<USER-PATH>`, the text around it stays readable). The validator still refuses a
-  structurally broken IR (exit 3), but a privacy finding it cannot remove (for example a user-home
-  path in a case id) never discards the verdict: the IR keeps every case and gets a top-level
+  `NAME=value` pairs, e-mail addresses, and every `Users/<name>` segment of a path in free text
+  (a spec about an anonymizer that asserts about a Windows profile path is no leak: the segment
+  becomes `<USER-PATH>`, the rest of the path and the text around it stay readable; a lowercase
+  `users` directory, a route such as `/api/users/42` and the `file:line` of an error are left alone).
+  The validator still refuses a structurally broken IR (exit 3), but a privacy finding it cannot
+  remove (for example a user-home path in a case id) never discards the verdict: the IR keeps every case and gets a top-level
   `warnings` list (paths of the findings, never the leaked text), and the terminal prints a note.
   `--junit` and `--github` read the same sanitized IR.
 * `effects` of a case (what the code under test did to the editor and the file system) are filled by the guard

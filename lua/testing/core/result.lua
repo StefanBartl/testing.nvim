@@ -435,11 +435,24 @@ end
 ---@param opts? Testing.Result.NormalizeOpts
 ---@return any
 function M.normalize(value, roots, opts)
+  return M.normalizer(roots, opts)(value)
+end
+
+---`normalize` for one fixed set of roots, for a caller that normalizes many short texts (the ledger
+---redactor does it for every entry): the matchers (one `fs_realpath` per root) are built on the first
+---call and reused, so the cost of a text is the scan of the text.
+---@param roots Testing.Result.PathRoots
+---@param opts? Testing.Result.NormalizeOpts
+---@return fun(value: any): any
+function M.normalizer(roots, opts)
   local ci = opts ~= nil and opts.case_insensitive == true
-  local matchers = build_matchers(roots, ci)
-  return map_strings(value, function(s)
-    return scrub_paths(s, matchers, ci)
-  end, 0)
+  local matchers
+  return function(value)
+    matchers = matchers or build_matchers(roots, ci)
+    return map_strings(value, function(s)
+      return scrub_paths(s, matchers, ci)
+    end, 0)
+  end
 end
 
 -- =========================================================
@@ -521,11 +534,24 @@ local function redact_string(s, r, ci)
   s = s:gsub("%a:[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", M.PLACEHOLDERS.home)
   s = s:gsub("([^%w])[\\/]+[Uu]sers[\\/]+[^\\/%s\"']+", "%1" .. M.PLACEHOLDERS.home)
   s = s:gsub("/home/[^/%s\"']+", M.PLACEHOLDERS.home)
-  -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`, a
-  -- path at the start of the text, a URL path, a synthetic path a spec asserts about): the whole
-  -- token goes, whatever the spec meant by it. A cosmetic check must never need to reject an IR.
-  s = s:gsub("[^%s\"'<>]*[\\/][Uu]sers[\\/][^%s\"'<>]+", M.USER_PATH)
-  s = s:gsub("[%w%.%_%+%-]+@[%w%-]+[%w%.%-]*%.%a%a+", "<EMAIL>")
+  -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`,
+  -- a path at the start of the text, a URL path, a synthetic path a spec asserts about): the
+  -- `Users/<name>` segment goes, whatever the spec meant by it, the rest of the token stays
+  -- (`/mnt/c/<USER-PATH>/y`). A cosmetic check must never need to reject an IR, so this is exactly
+  -- the shape the validator looks for (`abs_path_leak`: a capital `Users` between separators). A
+  -- lowercase `users` directory is no profile folder of this rule (`/api/users/42`,
+  -- `lua/app/users/model.lua:12`); with a drive letter or a non-word character in front the rules
+  -- above take it. The pattern starts at a literal separator, so it is linear.
+  s = s:gsub("([\\/])Users[\\/]+([^\\/%s]?)([^\\/%s\"'<>]*)", function(sep, first, rest)
+    if first == "" then
+      return nil -- `/Users/` followed by a blank or the end: no name, the validator ignores it too
+    end
+    -- the name goes; a quote or bracket right behind the separators is not part of it
+    return sep .. M.USER_PATH .. (first:find("[\"'<>]") and first .. rest or "")
+  end)
+  -- (the frontier lets only the start of a run begin a match: a long token without an `@` is
+  -- read once instead of from every position)
+  s = s:gsub("%f[%w%.%_%+%-][%w%.%_%+%-]+@[%w%-][%w%.%-]*%.%a%a+", "<EMAIL>")
   for _, w in ipairs(r.words or {}) do
     if type(w.text) == "string" and #w.text >= 3 then
       -- always case-insensitive, like the validator's `forbid` scan: what one removes the other

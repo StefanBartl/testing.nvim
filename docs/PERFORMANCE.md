@@ -134,6 +134,13 @@ What this says, plainly:
   line is read up to 16384 bytes. The same shape is gone from the regex fallback of the spec discovery and from the CI
   migration (`TESTS/testing/scan_hostile_line_spec.lua`: 60 000 blanks, a quarter of a second as the limit, about a
   millisecond measured).
+* Redaction is linear in the length of a token. The patterns of `core/ledger.lua` (`name: value`, `name=value`, URL
+  user info) and of `core/result.lua` (e-mail shapes, `Users/<name>`) used to be re-scanned from every position of a long
+  run without a separator (quadratic: 20 000 hex digits in one argument took 17 s per pass, and a spawn goes through
+  several passes). Each starts at a frontier or at a literal now (`TESTS/testing/guard_ledger_argv_spec.lua`,
+  `TESTS/testing/core_result_redact_spec.lua`: 60 000 bytes, a second and a half as the limit, tens of milliseconds
+  measured). The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for
+  every text.
 * A hit rate counts only what is sound. The earlier version of this section reported 41 - 83 % on four of these
   suites; stale passes found in the review (a module that reads a file next to it, a `package.path` that points outside
   the spec root, `:runtime`, a path above the project, an mtime put back with `touch -r`, a lint spec that reads the
