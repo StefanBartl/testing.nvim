@@ -235,6 +235,106 @@ end)
   ok(not carried:lower():find("plenary", 1, true), "nothing carried names the old runner")
   lacks(carried, "add_dep", "the old lookup is not carried")
 
+  -- ---------------------------------------------------------------- a block that names the old runner
+  -- The statements of the suite in such a block are kept, statement by statement: a statement of several lines goes
+  -- whole or not at all (a cut through `vim.opt.rtp:append(` / `)` compiles and raises at runtime), and a statement that
+  -- uses a name the dropped ones introduced goes with them (`dir` is a global nil afterwards).
+
+  ---The text the split carries over, blocks separated by a blank line.
+  ---@param src string
+  ---@return string
+  local function carried_text(src)
+    local out = {}
+    for _, b in ipairs(legacy_init.split(src)) do
+      if b.kind == "carry" then
+        out[#out + 1] = table.concat(b.lines, "\n")
+      end
+    end
+    return table.concat(out, "\n\n")
+  end
+
+  eq(
+    carried_text(table.concat({
+      "vim.opt.rtp:append(vim.fn.getcwd())",
+      'vim.opt.rtp:append(vim.env.PLENARY_DIR or "x/plenary.nvim")',
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "vim.opt.rtp:append(vim.fn.getcwd())\nvim.o.swapfile = false",
+    "a one-line lookup goes, the state below it stays"
+  )
+  eq(
+    carried_text(table.concat({
+      "vim.opt.rtp:append(vim.fn.getcwd())",
+      "vim.opt.rtp:append(",
+      '  vim.env.PLENARY_DIR or (vim.fn.stdpath("data") .. "/lazy/plenary.nvim")',
+      ")",
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "vim.opt.rtp:append(vim.fn.getcwd())\nvim.o.swapfile = false",
+    "a lookup over several lines goes whole: no `vim.opt.rtp:append(` and `)` are left"
+  )
+  eq(
+    carried_text(table.concat({
+      'local dir = vim.env.PLENARY_DIR or "/x/plenary.nvim"',
+      "vim.opt.rtp:append(dir)",
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "vim.o.swapfile = false",
+    "a statement that uses a name of a dropped one goes with it"
+  )
+  eq(
+    carried_text(table.concat({
+      "local base = vim.env.PLENARY_DIR",
+      'local dir = base .. "/lua"',
+      "vim.opt.rtp:append(dir)",
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "vim.o.swapfile = false",
+    "and so does the one that uses a name of that one"
+  )
+  eq(
+    carried_text(table.concat({
+      'local p = vim.fn.stdpath("data")',
+      '  .. "/lazy/plenary.nvim"',
+      "vim.opt.rtp:append(p)",
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "vim.o.swapfile = false",
+    "a statement continued on the next line (an operator) is one statement"
+  )
+  eq(
+    carried_text(table.concat({
+      "local rtp = vim.opt.rtp",
+      "rtp",
+      '  :append(vim.env.PLENARY_DIR or "x")',
+      "vim.o.swapfile = false",
+      "",
+    }, "\n")),
+    "local rtp = vim.opt.rtp\nvim.o.swapfile = false",
+    "and so is a method chain"
+  )
+  eq(
+    carried_text('vim.opt.rtp:append(vim.env.PLENARY_DIR)\nvim.cmd("runtime plugin/plenary.vim")\n'),
+    "",
+    "nothing but the old runner's lines: the block is dropped"
+  )
+  eq(
+    carried_text("-- find plenary\nvim.opt.rtp:append(vim.env.PLENARY_DIR)\n-- keep this\n"),
+    "",
+    "comments alone are no reason to carry a block"
+  )
+  -- a blank line inside a long string is text, not the end of the block
+  eq(
+    carried_text("vim.g.notes = [[\none\n\ntwo\n]]\nvim.o.swapfile = false\n"),
+    "vim.g.notes = [[\none\n\ntwo\n]]\nvim.o.swapfile = false",
+    "a long string with a blank line is one block"
+  )
+
   -- ---------------------------------------------------------------- the plan of a ui.nvim-like repository
 
   local root = make_repo("ui2.nvim", { width = 100 })
