@@ -139,6 +139,25 @@ return function(H)
         return true
       end, { grace_ms = 500, timeout_ms = 2500, poll_ms = 5 })
       ok(took_it, "a refusal that ends within the grace is waited out")
+
+      -- the default grace is long enough for a delete that a virus scanner or an indexer holds up on a busy machine
+      -- (300 ms ended such a wait with a note and a state file that was not updated)
+      ok(lock.GRACE_MS >= 1000, "the default grace is a second, got " .. tostring(lock.GRACE_MS))
+      local began = uv.hrtime()
+      uv.fs_open = function(p, ...)
+        if
+          type(p) == "string"
+          and p:find(".lock", 1, true)
+          and (uv.hrtime() - began) / 1e6 < 500
+        then
+          return nil, "EBUSY: resource busy or locked"
+        end
+        return real_open(p, ...)
+      end
+      local slow = lock.with(target, function()
+        return true
+      end, { timeout_ms = 2500, poll_ms = 5 })
+      ok(slow, "a refusal of half a second is waited out with the default grace")
     end)
     uv.fs_open = real_open
     ok(guarded_ok, tostring(guarded_err))

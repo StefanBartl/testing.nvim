@@ -14,7 +14,7 @@
 ---   the caller prints it. State is a hint, never part of the verdict, so a write that did not happen is better
 ---   than a write that overwrites somebody else's.
 --- * A lock file that cannot be created for a reason other than "it exists" (a directory that is not writable:
----   EACCES / EPERM) is waited for only `grace_ms` (default 300) and then reported as it is, `cannot lock <path>:
+---   EACCES / EPERM) is waited for only `grace_ms` (default 1000) and then reported as it is, `cannot lock <path>:
 ---   <error>`: nobody holds it, and waiting the full timeout once per state file would only delay the end of a run
 ---   and put a wrong cause in the note.
 --- * A lock older than `stale_ms` (default 10000; the critical section takes milliseconds) was left by a crashed
@@ -34,9 +34,11 @@ M.STALE_MS = 10000
 ---@type integer
 M.POLL_MS = 15
 ---How long a refusal without a lock file in sight (EPERM / EACCES / EBUSY) may last before it is reported as an
----error: on Windows a lock whose delete is still pending refuses the next create for a few milliseconds.
+---error: on Windows a lock whose delete is still pending refuses the next create for a few milliseconds, and for
+---longer while a virus scanner or an indexer holds the handle on a machine under load (a second of waiting costs
+---a note that is not written, a state file that is not updated, otherwise).
 ---@type integer
-M.GRACE_MS = 300
+M.GRACE_MS = 1000
 
 local uv = vim.uv or vim.loop
 

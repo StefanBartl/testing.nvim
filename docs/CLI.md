@@ -348,8 +348,8 @@ of both runs survive (for `keys.json` that is what keeps a key that gave `pass` 
 visible as a flip), and `last_green.json` keeps the record of the run that was green later (a record dated more than ten
 minutes ahead of the clock was written by a wrong clock and does not count as later). A run that cannot get the lock
 within 3 s prints a note (`... is locked by another run: not updated`) and leaves the file alone; a state directory that
-cannot be written at all is reported as it is (`cannot lock <file>: EACCES ...`) after a third of a second, not after the
-full wait; the state is a convenience, never part of the verdict, so the exit code does not change. A lock older than 10 s was left by a run that
+cannot be written at all is reported as it is (`cannot lock <file>: EACCES ...`) after a second (long enough for a lock
+whose delete a virus scanner still holds up on a busy Windows machine), not after the full wait; the state is a convenience, never part of the verdict, so the exit code does not change. A lock older than 10 s was left by a run that
 died and is taken over.
 
 ### Retry and flaky
