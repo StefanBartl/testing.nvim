@@ -17,6 +17,12 @@
 --- cap before decoding, decode under `pcall`, every field validated, whatever fails is dropped and counted; nothing
 --- from the file is used as a path, executed or interpolated into a pattern. A convenience, never part of a verdict:
 --- a failing read or write is a note.
+---
+--- Two runs of one project at the same time (a CI matrix on one machine, `watch` next to a manual run) both load the
+--- file when they start and save it when they end, so the window between the two is the length of a run. `save` does
+--- not write what it loaded: under `testing.statelock` it reads the file again and replays the observations of THIS
+--- run onto it (the same read-modify-write rule as for `runs.jsonl`, `order.json`, ...), so a key that gave `pass` in
+--- one run and `fail` in the other shows up as a flip in the next one.
 
 local M = {}
 
@@ -44,6 +50,13 @@ M.CLASSES = { pass = true, fail = true, skip = true, flaky = true }
 ---@field run string
 ---@field ts integer
 
+---@class Testing.KeyLog.Pending
+---@field file string
+---@field key string
+---@field class "pass"|"fail"|"flaky"|"skip"
+---@field run string
+---@field ts integer
+
 ---@class Testing.KeyLog.Flip
 ---@field classes string[] The different results the key has given (sorted).
 ---@field runs string[] The run ids that gave them.
@@ -53,6 +66,8 @@ M.CLASSES = { pass = true, fail = true, skip = true, flaky = true }
 ---@field files table<string, Testing.KeyLog.Obs[]>
 ---@field notes string[] What was dropped or ignored while reading.
 ---@field dirty boolean
+---@field pending Testing.KeyLog.Pending[] The observations of this run, in order (replayed onto the file by `save`).
+---@field known? table<string, true> The set of the last `retain`.
 local Log = {}
 Log.__index = Log
 
@@ -141,14 +156,11 @@ function M.sweep_tmp(dir, now)
   return n
 end
 
----Read the key log of a project (an absent or unusable file is an empty log, with a note when it is unusable).
----@param root string
----@param opts? Testing.KeyLog.Opts
----@return Testing.KeyLog
-function M.load(root, opts)
-  local path = M.path(root, opts)
-  local log = setmetatable({ path = path, files = {}, notes = {}, dirty = false }, Log)
-  M.sweep_tmp(vim.fs.dirname(path), os.time())
+---Fill `log.files` (and `log.notes`) from the file of `log.path`: an absent or unusable file is an empty log.
+---@param log Testing.KeyLog
+---@return Testing.KeyLog log
+local function read(log)
+  local path = log.path
   local st = vim.uv.fs_stat(path)
   if not st then
     return log
@@ -196,6 +208,22 @@ function M.load(root, opts)
     log.notes[#log.notes + 1] = ("key log %s: %d unusable record(s) ignored"):format(path, dropped)
   end
   return log
+end
+
+---@param path string
+---@return Testing.KeyLog
+local function new_log(path)
+  return setmetatable({ path = path, files = {}, notes = {}, dirty = false, pending = {} }, Log)
+end
+
+---Read the key log of a project (an absent or unusable file is an empty log, with a note when it is unusable).
+---@param root string
+---@param opts? Testing.KeyLog.Opts
+---@return Testing.KeyLog
+function M.load(root, opts)
+  local path = M.path(root, opts)
+  M.sweep_tmp(vim.fs.dirname(path), os.time())
+  return read(new_log(path))
 end
 
 ---The results `key` has given for `file` when they differ.
@@ -253,6 +281,8 @@ function Log:observe(file, key, class, run, ts)
     end
   end
   self.dirty = true
+  self.pending = self.pending or {}
+  self.pending[#self.pending + 1] = { file = file, key = key, class = class, run = run, ts = ts }
   return self:flipped(file, key)
 end
 
@@ -262,6 +292,7 @@ function Log:retain(known)
   if not known then
     return
   end
+  self.known = known
   for file in pairs(self.files) do
     if not known[file] then
       self.files[file] = nil
@@ -270,19 +301,16 @@ function Log:retain(known)
   end
 end
 
----Write the log (bounded, atomic) when it changed.
----@return boolean ok
+---The JSON text of `files`, cut to `MAX_FILES` files and `MAX_BYTES` (the files whose newest record is oldest go first).
+---@param files table<string, Testing.KeyLog.Obs[]>
+---@return string|nil text
 ---@return string|nil err
-function Log:save()
-  if not self.dirty then
-    return true
-  end
+local function encode_bounded(files)
   local json = require("lib.nvim.json")
-  local names = vim.tbl_keys(self.files)
-  -- bounded in files: the ones whose newest record is oldest go first
+  local names = vim.tbl_keys(files)
   local function newest(file)
     local t = 0
-    for _, o in ipairs(self.files[file]) do
+    for _, o in ipairs(files[file]) do
       t = math.max(t, o.ts)
     end
     return t
@@ -296,24 +324,55 @@ function Log:save()
   end)
   local keep = {}
   for i = 1, math.min(#names, M.MAX_FILES) do
-    keep[names[i]] = self.files[names[i]]
+    keep[names[i]] = files[names[i]]
   end
   local enc, err = json.encode({ v = M.VERSION, files = keep })
   if not enc then
-    return false, "cannot encode the key log: " .. tostring(err)
+    return nil, "cannot encode the key log: " .. tostring(err)
   end
   while #enc > M.MAX_BYTES and #names > 1 do
     keep[table.remove(names)] = nil
     enc, err = json.encode({ v = M.VERSION, files = keep })
     if not enc then
-      return false, "cannot encode the key log: " .. tostring(err)
+      return nil, "cannot encode the key log: " .. tostring(err)
     end
   end
-  local ok, werr = require("lib.nvim.fs.write.atomic")(self.path, enc, { mkdirp = true })
+  return enc, nil
+end
+
+---Write the log (bounded, atomic) when it changed. Under the lock of `keys.json` the file is read again and the
+---observations of this run are replayed onto what is there now, so a run that ended in between keeps its records.
+---@return boolean ok
+---@return string|nil err
+function Log:save()
+  if not self.dirty then
+    return true
+  end
+  local locked, ok, err = require("testing.statelock").with(self.path, function()
+    local fresh = read(new_log(self.path))
+    for _, o in ipairs(self.pending or {}) do
+      fresh:observe(o.file, o.key, o.class, o.run, o.ts)
+    end
+    fresh:retain(self.known)
+    local enc, eerr = encode_bounded(fresh.files)
+    if not enc then
+      return false, eerr
+    end
+    local wok, werr = require("lib.nvim.fs.write.atomic")(self.path, enc, { mkdirp = true })
+    if not wok then
+      return false, ("cannot write %s: %s"):format(self.path, tostring(werr))
+    end
+    self.files = fresh.files
+    return true, nil
+  end)
+  if not locked then
+    return false, tostring(ok)
+  end
   if not ok then
-    return false, ("cannot write %s: %s"):format(self.path, tostring(werr))
+    return false, tostring(err)
   end
   self.dirty = false
+  self.pending = {}
   return true
 end
 
