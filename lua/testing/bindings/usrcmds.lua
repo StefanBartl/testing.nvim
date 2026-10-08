@@ -79,20 +79,70 @@ function M.spec_files(root)
   return out
 end
 
+---`--rtp`, shared by every command that starts specs. The `desc` of each flag is the line of lib.nvim's
+---option float; `TESTS/testing/usrcmds_help_spec.lua` fails for a flag that has none.
+---@return table
+local function rtp_flag()
+  return {
+    name = "rtp",
+    type = "DIR",
+    repeatable = true,
+    desc = "Add a directory to the runtimepath of the specs",
+  }
+end
+
 ---The flags of the commands that run or list specs.
 ---@return table[]
 local function run_flags()
   return {
-    { name = "file", type = M.TYPE_SPEC, repeatable = true },
-    { name = "filter", type = "STRING", repeatable = true },
-    { name = "reporter", type = M.TYPE_REPORTER },
-    { name = "rtp", type = "DIR", repeatable = true },
-    { name = "config", type = "FILE" },
-    { name = "cached", bool = true },
-    { name = "no-cache", bool = true },
-    { name = "changed", bool = true },
-    { name = "since", type = "STRING" },
-    { name = "shard", type = "STRING" },
+    {
+      name = "file",
+      type = M.TYPE_SPEC,
+      repeatable = true,
+      desc = "Only spec files whose relative path contains the text",
+    },
+    {
+      name = "filter",
+      type = "STRING",
+      repeatable = true,
+      desc = "Only cases whose id contains the text (file::describe::it)",
+    },
+    {
+      name = "reporter",
+      type = M.TYPE_REPORTER,
+      desc = "Reporter that formats what the test process prints",
+    },
+    rtp_flag(),
+    {
+      name = "config",
+      type = "FILE",
+      desc = "Load this config file (inside the root) instead of .testing.lua",
+    },
+    {
+      name = "cached",
+      bool = true,
+      desc = "Skip spec files unchanged since an earlier green run",
+    },
+    {
+      name = "no-cache",
+      bool = true,
+      desc = "Never read or write the result cache (wins over --cached)",
+    },
+    {
+      name = "changed",
+      bool = true,
+      desc = "Only specs reachable from uncommitted changes (vs HEAD)",
+    },
+    {
+      name = "since",
+      type = "STRING",
+      desc = "Only specs reachable from changes since a git revision",
+    },
+    {
+      name = "shard",
+      type = "STRING",
+      desc = "Run only shard i/n of the spec files (e.g. 2/4)",
+    },
   }
 end
 
@@ -261,7 +311,7 @@ function M.routes()
       path = { "file" },
       desc = "Run the spec file of the current buffer",
       args = { { name = "spec", type = "FILE", optional = true } },
-      flags = { { name = "rtp", type = "DIR", repeatable = true } },
+      flags = { rtp_flag() },
       run = function(ctx)
         local root, rel, err = M.current_spec(ctx.args.spec)
         if not root then
@@ -297,9 +347,21 @@ function M.routes()
       desc = "Generate .testing.lua, TESTS/minimal_init.lua, scripts/test.sh and a CI job (never overwrites)",
       args = { { name = "root", type = "DIR", optional = true } },
       flags = {
-        { name = "force", bool = true },
-        { name = "plugin", type = "STRING" },
-        { name = "hooks", bool = true },
+        {
+          name = "force",
+          bool = true,
+          desc = "Replace existing files instead of keeping them (not hooks)",
+        },
+        {
+          name = "plugin",
+          type = "STRING",
+          desc = "Plugin name for the generated files (default: detected)",
+        },
+        {
+          name = "hooks",
+          bool = true,
+          desc = "Generate the git and agent hook scripts instead of the setup",
+        },
       },
       run = function(ctx)
         local root = ctx.args.root and abs(ctx.args.root) or abs(vim.fn.getcwd())
@@ -345,7 +407,13 @@ function M.routes()
         { name = "mode", type = M.TYPE_MIGRATE, optional = true },
         { name = "root", type = "DIR", optional = true },
       },
-      flags = { { name = "fleet-root", type = "DIR" } },
+      flags = {
+        {
+          name = "fleet-root",
+          type = "DIR",
+          desc = "Folder of the *.nvim repos to resolve requires against",
+        },
+      },
       run = M.migrate,
     },
     {
@@ -353,11 +421,31 @@ function M.routes()
       desc = "Run the conformance checks K1..K15 on the project (report only unless --gate)",
       args = { { name = "root", type = "DIR", optional = true } },
       flags = {
-        { name = "gate", bool = true },
-        { name = "only", type = "STRING" },
-        { name = "skip", type = "STRING" },
-        { name = "bridge", bool = true },
-        { name = "markdown", bool = true },
+        {
+          name = "gate",
+          bool = true,
+          desc = "Exit 1 when a check fails instead of only reporting",
+        },
+        {
+          name = "only",
+          type = "STRING",
+          desc = "Run only these checks (ids like K1,K3)",
+        },
+        {
+          name = "skip",
+          type = "STRING",
+          desc = "Leave out these checks (ids like K10)",
+        },
+        {
+          name = "bridge",
+          bool = true,
+          desc = "Also compare with rules.nvim's own rule check, if installed",
+        },
+        {
+          name = "markdown",
+          bool = true,
+          desc = "Print the report as Markdown instead of terminal lines",
+        },
       },
       run = function(ctx)
         start("conformance", {
@@ -376,9 +464,21 @@ function M.routes()
       desc = "List the plugin's keymaps, commands and autocmds and how much the specs exercised",
       args = { { name = "root", type = "DIR", optional = true } },
       flags = {
-        { name = "from", type = "FILE" },
-        { name = "threshold", type = "STRING" },
-        { name = "markdown", bool = true },
+        {
+          name = "from",
+          type = "FILE",
+          desc = "Read what the specs exercised from this Result-IR file",
+        },
+        {
+          name = "threshold",
+          type = "STRING",
+          desc = "Fail when the exercised ratio is below 0..1 (or kind=0..1)",
+        },
+        {
+          name = "markdown",
+          bool = true,
+          desc = "Print the report as Markdown instead of a text table",
+        },
       },
       run = function(ctx)
         start("surface", {
@@ -397,9 +497,21 @@ function M.routes()
       desc = "Measure the performance budgets and compare them with the baseline",
       args = { { name = "root", type = "DIR", optional = true } },
       flags = {
-        { name = "update", bool = true },
-        { name = "allow-new", bool = true },
-        { name = "factor", type = "STRING" },
+        {
+          name = "update",
+          bool = true,
+          desc = "Write the measured values as the new baseline",
+        },
+        {
+          name = "allow-new",
+          bool = true,
+          desc = "Accept measured cases that have no baseline entry yet",
+        },
+        {
+          name = "factor",
+          type = "STRING",
+          desc = "Allowed slowdown against the baseline as a factor (1-1000)",
+        },
       },
       run = function(ctx)
         start("budget", {

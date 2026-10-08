@@ -47,6 +47,11 @@ offers the spec files that exist below the project root now. The command is
 registered when the plugin loads (`plugin/testing.lua`) and again, harmlessly,
 by `setup()`.
 
+Every flag carries a one-line `desc`: the text next to it in lib.nvim's option
+cheatsheet (opt-in there: `composer.setup({ help = { enable = true, keymap = ... } })`,
+then press the key on the command line).
+`TESTS/testing/usrcmds_help_spec.lua` fails for a flag without one.
+
 Runs never happen in the editor's own process. The driver
 (`scripts/testing.lua`) is started as a child with an argument list (no shell,
 every value its own argument) and the project root as its working directory. The
