@@ -144,9 +144,13 @@ the child's sandbox directory from being deleted.
 `KILL_ON_JOB_CLOSE` would also forbid the `CREATE_BREAKAWAY_FROM_JOB` that `detached` spawns of a spec
 use, and could not be verified on Linux/macOS CI; it was not built). Instead the kill reads the process
 table FIRST (one `powershell.exe` call, constant argv, no shell; `wmic` is gone from current Windows;
-about a second, on the timeout path only), takes the tree with `taskkill /PID <pid> /T /F`, **checks its
-exit code** (a failure kills the root at once instead of "on a later call"), and then ends every
-descendant that was in the snapshot pid by pid. **Remaining limit:** a process whose parent already
+about a second, on the timeout path only; it lists the creation time of every process, and a process whose
+recorded parent is YOUNGER than it is not counted as a descendant: that number went to a new process), takes the
+tree with `taskkill /PID <pid> /T /F`, **checks its exit code** (a failure kills the root at once instead of "on a
+later call"), and then looks at the descendants of the snapshot: those that have ended are left alone (no process
+start for them), and those that still exist are ended in ONE `taskkill /F /PID a /PID b ...` call, but only when a
+fresh table names the same process (same creation time) under that number, because Windows hands a number out
+again soon after its process ended. **Remaining limit:** a process whose parent already
 died before the snapshot (a double hop: the spec starts A detached, A starts B detached and exits) is
 reparented to nobody and escapes, on Windows and on POSIX alike; so does a descendant started after the
 snapshot by a process that survives the kill. Such an orphan holds the inherited stdout of the runner

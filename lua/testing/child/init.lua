@@ -535,9 +535,9 @@ function M.abandon(h)
   end
 end
 
----The command that prints one `<pid> <ppid>` pair per line for every process. Constant argv, no
----shell, no user text. Windows has no `ps`: one PowerShell call (about a second; `wmic` is gone from
----current Windows), used on the timeout path only.
+---The command that prints one `<pid> <ppid> <created>` line for every process (`created`: milliseconds since the epoch,
+---Windows only). Constant argv, no shell, no user text. Windows has no `ps`: one PowerShell call (about a second,
+---`wmic` is gone from current Windows), used on the timeout path only.
 ---@return string[]
 local function process_table_argv()
   if M.platform.windows then
@@ -547,47 +547,84 @@ local function process_table_argv()
       "-NonInteractive",
       "-NoLogo",
       "-Command",
-      "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId"
-        .. " | ForEach-Object { '{0} {1}' -f $_.ProcessId,$_.ParentProcessId }",
+      "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,CreationDate"
+        .. " | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId,$_.ParentProcessId,"
+        .. "$(if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() } else { 0 }) }",
     }
   end
   return { "ps", "-A", "-o", "pid=", "-o", "ppid=" }
 end
 
----The pids of everything below `pid` (children, grandchildren, ...) whatever their process group,
----read from the process table. POSIX: `jobstart` puts every job in a session of its own (measured on
----Linux: its PGID and SID are its own pid), so a spec's `jobstart`ed helper is NOT in the child's
----group and the group kill misses it. Windows: the tree is read BEFORE anything is killed, so the
----descendants can be ended one by one even when `taskkill /T` cannot find them. An empty list when
----the table cannot be read (then only the group / `taskkill /T` acts, as before).
----@param pid integer
----@return integer[]
-local function descendants(pid)
+---@class Testing.Child.Proc
+---@field ppid integer
+---@field created integer Creation time (milliseconds since the epoch); 0 when the table does not say (POSIX).
+
+---The process table: pid -> parent and creation time. nil when it cannot be read.
+---@return table<integer, Testing.Child.Proc>|nil
+local function process_table()
   local ok, res = pcall(function()
     return vim
       .system(process_table_argv(), { text = true })
       :wait(M.platform.windows and 8000 or 3000)
   end)
   if not ok or type(res) ~= "table" or res.code ~= 0 or type(res.stdout) ~= "string" then
-    return {}
+    return nil
   end
+  local procs = {}
+  for line in res.stdout:gmatch("[^\r\n]+") do
+    local p, pp, created = line:match("^%s*(%d+)%s+(%d+)%s*(%d*)%s*$")
+    if p and pp then
+      procs[tonumber(p)] = { ppid = tonumber(pp) or 0, created = tonumber(created) or 0 }
+    end
+  end
+  return procs
+end
+
+---Everything below `pid` in a process table (children, grandchildren, ...) whatever the process group.
+---The parent id of a process can name a process that has ended and whose number went to a new one, so an edge counts
+---only when the child is not older than its parent (where both creation times are known).
+---@param procs table<integer, Testing.Child.Proc>
+---@param pid integer
+---@return { pid: integer, created: integer }[]
+local function below_of(procs, pid)
   local kids = {}
-  for p, pp in res.stdout:gmatch("(%d+)%s+(%d+)") do
-    local parent = tonumber(pp) or 0
-    local list = kids[parent] or {}
-    kids[parent] = list
-    list[#list + 1] = tonumber(p)
+  for p, e in pairs(procs) do
+    local list = kids[e.ppid] or {}
+    kids[e.ppid] = list
+    list[#list + 1] = p
+  end
+  for _, list in pairs(kids) do
+    table.sort(list)
   end
   local out, queue, seen = {}, { pid }, { [pid] = true }
   while #queue > 0 do
     local cur = table.remove(queue)
+    local born = procs[cur] and procs[cur].created or 0
     for _, k in ipairs(kids[cur] or {}) do
-      if not seen[k] then
+      local created = procs[k].created
+      if not seen[k] and (born == 0 or created == 0 or created >= born) then
         seen[k] = true
-        out[#out + 1] = k
+        out[#out + 1] = { pid = k, created = created }
         queue[#queue + 1] = k
       end
     end
+  end
+  return out
+end
+
+---The pids of everything below `pid` (children, grandchildren, ...) whatever their process group,
+---read from the process table. POSIX: `jobstart` puts every job in a session of its own (measured on
+---Linux: its PGID and SID are its own pid), so a spec's `jobstart`ed helper is NOT in the child's
+---group and the group kill misses it. Windows: the tree is read BEFORE anything is killed, so the
+---descendants that `taskkill /T` cannot find can still be ended afterwards. An empty list when
+---the table cannot be read (then only the group / `taskkill /T` acts, as before).
+---@param pid integer
+---@return integer[]
+local function descendants(pid)
+  local procs = process_table()
+  local out = {}
+  for _, d in ipairs(procs and below_of(procs, pid) or {}) do
+    out[#out + 1] = d.pid
   end
   return out
 end
@@ -608,8 +645,9 @@ function M.kill_tree(h)
   if M.platform.windows then
     if first then
       -- the tree is read first (a descendant whose parent dies with the root would be invisible to
-      -- `/T`), then `taskkill /T` takes the tree and what it left is ended pid by pid
-      local below = descendants(h.pid)
+      -- `/T`), then `taskkill /T` takes the tree
+      local procs = process_table()
+      local below = procs and below_of(procs, h.pid) or {}
       local ok, res = pcall(function()
         return vim
           .system({ "taskkill", "/PID", tostring(h.pid), "/T", "/F" }, { text = true })
@@ -619,10 +657,38 @@ function M.kill_tree(h)
         -- access denied, no such process, a timeout: do not wait for a later call
         root_kill()
       end
-      for _, pid in ipairs(below) do
-        pcall(function()
-          vim.system({ "taskkill", "/PID", tostring(pid), "/F" }, { text = true }):wait(3000)
-        end)
+      -- What `/T` could not reach is still there. A process that has ended is not looked at again (a
+      -- `taskkill` start per descendant took a second each, one after the other, with the editor waiting). A
+      -- number is handed out again soon after its process ended, so a survivor is ended only when a fresh table
+      -- names the same process (same creation time), and all of them in ONE call.
+      local left = {}
+      for _, d in ipairs(below) do
+        if M.alive(d.pid) then
+          left[#left + 1] = d
+        end
+      end
+      if #left > 0 then
+        -- (a process that /T ended can read as alive for a few milliseconds more)
+        vim.wait(50)
+        left = vim.tbl_filter(function(d)
+          return M.alive(d.pid)
+        end, left)
+      end
+      if #left > 0 then
+        local now = process_table()
+        local argv = { "taskkill", "/F" }
+        for _, d in ipairs(left) do
+          local cur = now and now[d.pid]
+          if cur and cur.created == d.created then
+            argv[#argv + 1] = "/PID"
+            argv[#argv + 1] = tostring(d.pid)
+          end
+        end
+        if #argv > 2 then
+          pcall(function()
+            vim.system(argv, { text = true }):wait(5000)
+          end)
+        end
       end
       return
     end

@@ -246,7 +246,10 @@ exist; LuaJIT's `jit.p` per case does not.
    descendants and then runs `taskkill /T /F`. A warm pool pays it once per member at shutdown and once per member
    that is discarded; a run with several timeouts pays it per timeout. The numbers belong to
    `testing.child.kill_tree`; a task for its owner: ask for the descendants with something cheaper than a
-   PowerShell start (or only when the root kill leaves something behind).
+   PowerShell start (or only when the root kill leaves something behind). What came after `/T` is gone since: a
+   `taskkill` start for every descendant of the snapshot (a second each, one after the other, even when `/T` had ended
+   it) became a check whether the process still exists and, for a survivor only, one call for all of them (measured
+   on a loaded Windows 11 machine, a child with one helper: 5.0 - 5.4 s before, 3.2 s after).
 2. **The two lib.nvim budgets are not reachable on this machine** (table above), because five spec files that
    start `git` and `curl` take more time than the whole budget. Either the budget is adjusted for Windows, or
    those specs change (fewer larger git fixtures, a fake `git` where git is not the subject). Not adjusted here.
