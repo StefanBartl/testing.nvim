@@ -280,7 +280,8 @@ function M.cleanup(plan)
 end
 
 ---@class Testing.Child.Buffer
----@field chunks string[]
+---@field chunks string[] The live chunks are `chunks[first .. #chunks]`; a slot before `first` is `false` (dropped).
+---@field first integer Index of the oldest live chunk (the read cursor: dropping from the front must not shift the array).
 ---@field bytes integer
 ---@field truncated boolean Older output was dropped (the cap).
 
@@ -309,27 +310,53 @@ end
 ---Cap of the captured output per stream and child (bytes); the newest output is kept.
 M.OUTPUT_CAP = 256 * 1024
 
+---Dead slots at the front of `chunks` before they are compacted away (a smaller buffer is not worth the move).
+local COMPACT_MIN = 64
+
+---An empty capture buffer.
 ---@return Testing.Child.Buffer
-local function new_buffer()
-  return { chunks = {}, bytes = 0, truncated = false }
+function M.new_buffer()
+  return { chunks = {}, first = 1, bytes = 0, truncated = false }
 end
 
+---Append a chunk the child wrote and drop the OLDEST chunks until the buffer is within `OUTPUT_CAP`
+---(a single chunk is never dropped). A pipe read can hand over a few bytes at a time, so the number of
+---chunks is not bounded by the cap: dropping from the front must not shift the array (`table.remove(chunks, 1)` moved
+---every live chunk for every dropped one, 349 s for 1.5 MB written one byte at a time). The read cursor `first`
+---moves instead, and the array is compacted once the dead front is at least as long as the live part (amortized O(1)).
 ---@param buf Testing.Child.Buffer
 ---@param chunk string
-local function keep(buf, chunk)
-  buf.chunks[#buf.chunks + 1] = chunk
+function M.keep(buf, chunk)
+  local chunks = buf.chunks
+  local last = #chunks + 1
+  chunks[last] = chunk
   buf.bytes = buf.bytes + #chunk
-  while buf.bytes > M.OUTPUT_CAP and #buf.chunks > 1 do
-    buf.bytes = buf.bytes - #table.remove(buf.chunks, 1)
+  local first = buf.first
+  local cap = M.OUTPUT_CAP
+  while buf.bytes > cap and first < last do
+    buf.bytes = buf.bytes - #chunks[first]
+    chunks[first] = false -- not nil: `#chunks` must keep counting the dead slots
+    first = first + 1
     buf.truncated = true
   end
+  if first > COMPACT_MIN and first * 2 > last then
+    local live = last - first + 1
+    for i = 1, live do
+      chunks[i] = chunks[first + i - 1]
+    end
+    for i = live + 1, last do
+      chunks[i] = nil
+    end
+    first = 1
+  end
+  buf.first = first
 end
 
 ---The captured text of a buffer (CRLF folded to LF).
 ---@param buf Testing.Child.Buffer
 ---@return string
 function M.text(buf)
-  return (table.concat(buf.chunks):gsub("\r\n", "\n"))
+  return (table.concat(buf.chunks, "", buf.first or 1, #buf.chunks):gsub("\r\n", "\n"))
 end
 
 ---Children that are running, by pid; the editor quitting kills what is left (`VimLeavePre`).
@@ -392,9 +419,9 @@ function M.spawn(plan, on_exit, popts)
     pid = 0,
     started_ms = uv.hrtime() / 1e6,
     exited = false,
-    out = new_buffer(),
-    stdout = new_buffer(),
-    err = new_buffer(),
+    out = M.new_buffer(),
+    stdout = M.new_buffer(),
+    err = M.new_buffer(),
   } --[[@as Testing.Child.Handle]]
 
   local out_pipe, err_pipe = uv.new_pipe(false), uv.new_pipe(false)
@@ -497,7 +524,7 @@ function M.spawn(plan, on_exit, popts)
           stream(data)
         end
         for _, sink in ipairs(sinks) do
-          keep(sink, data)
+          M.keep(sink, data)
         end
       else
         eof = eof + 1

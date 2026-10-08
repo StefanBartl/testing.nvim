@@ -183,7 +183,12 @@ order of first appearance. Attributes are comparable, not resolvable to a highli
   stuck one, so it does not stay around. `kill_on_timeout = false` leaves it (and `kill()` is yours).
 * An embedded nvim forwards **no stderr** (measured on Windows and Linux): the driver reads what is
   there anyway (its pipe), the reason of a failed start (`rpc_init` writes it to a file) and the tail
-  of the editor's own log in the sandbox. A stuck `input()` is a timeout.
+  of the editor's own log in the sandbox. A stuck `input()` is a timeout. On Windows the reason is that
+  Neovim gives an embedded editor a private console for stdout and stderr (`vim.uv.guess_handle(2)` is
+  `tty` in the child, and only that process is attached to it): a lot of output there is paid to
+  `conhost.exe` (1.5 MB took 10 to 75 s on a busy machine), not to the driver. A per-file child
+  (`testing.child`, not embedded) has real pipes: the parent reads them as the data arrives, keeps the
+  newest `OUTPUT_CAP` (256 KiB) per stream and never lets a noisy child block on a full pipe.
 * The driver never serves a request FROM the child (it answers with an error): a spec cannot make the
   child call into the editor that runs the tests, which `jobstart({ rpc = true })` would allow. This is
   the reason for the own msgpack-rpc client, plus: `vim.rpcrequest` blocks without a timeout.
