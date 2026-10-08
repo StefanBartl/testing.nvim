@@ -403,7 +403,6 @@ against the current directory, which is the project root when the runner is star
 | open, fileops | `powershell` | | A security spec of reveal-in-fm (`echo sec34`), the recycle bin |
 | lsp | `lua-language-server` | | `probe_live_spec.lua:248` |
 | reposcope, sessions, language, recommender, insights | | `TESTS` (or the fixture directories) | Fixtures below `TESTS/.fixture-*` that the specs create and remove in the repository |
-| color_my_ascii | | `doc` | `helptags` of the plugin loader spec writes `doc/tags` (better: copy the plugin into a temp directory) |
 | documentation | | `.deps` | `.deps/generate-all-*` fixtures |
 | diff, casedesk | | | `Z:/definitely/not/writable` and `/no/such/file.txt` are deliberate negative probes: allow them or give the spec a path below `tempname()` |
 
