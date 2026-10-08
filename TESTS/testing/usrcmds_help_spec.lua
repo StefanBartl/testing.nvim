@@ -1,7 +1,9 @@
--- Every flag of `:Testing` has a line in lib.nvim's option float.
+-- Every flag and positional argument of `:Testing` has a line in lib.nvim's option float.
 --
--- The text comes from the `desc` of each FlagSpec in `testing.bindings.usrcmds`. A new flag without
--- one shows up as a bare row in the cheatsheet, so this fails until it is described.
+-- The text comes from the `desc` of each FlagSpec in `testing.bindings.usrcmds`, and for the
+-- positional arguments from the text of their type (`TESTING_MIGRATE`; `DIR` / `FILE` explain
+-- themselves). A new flag or argument without one shows up as a bare row in the cheatsheet, so
+-- this fails until it is described.
 ---@diagnostic disable: duplicate-set-field, param-type-mismatch, missing-parameter, undefined-field, missing-fields, need-check-nil
 
 return function(H)
@@ -21,6 +23,24 @@ return function(H)
     0,
     "every :Testing option has a help text, missing: " .. table.concat(missing, ", ")
   )
+
+  -- the positional arguments too (`migrate [mode] [root]`, `run [root]`, `file [spec]`, ...)
+  local missing_args = {}
+  for _, m in ipairs(composer.help.undocumented("Testing", { args = true })) do
+    missing_args[#missing_args + 1] = ("%s %s %s"):format(m.kind, m.route, m.name)
+  end
+  H.eq(
+    #missing_args,
+    0,
+    "every :Testing flag and argument has a help text, missing: "
+      .. table.concat(missing_args, ", ")
+  )
+  local migrate_text =
+    require("lib.nvim.bindings.usercmd.composer.argtypes").get(usrcmds.TYPE_MIGRATE).desc
+  ok(type(migrate_text) == "string" and migrate_text ~= "", "TESTING_MIGRATE has a type text")
+  ok(not migrate_text:find("[\r\n]"), "TESTING_MIGRATE: the text is one line")
+  ok(not migrate_text:find("%.$"), "TESTING_MIGRATE: the text has no closing full stop")
+  ok(#migrate_text <= 80, "TESTING_MIGRATE: the text is " .. #migrate_text .. " characters long")
 
   -- the float shows one line per option: no line break, no closing full stop, nothing absurdly long
   local seen = 0

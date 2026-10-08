@@ -594,6 +594,7 @@ local function register_types(composer)
     end,
   })
   composer.register_type(M.TYPE_MIGRATE, {
+    desc = "dry-run (default) or apply; any other word is read as the root",
     validate = function(raw)
       if raw == "" then
         return false, nil, "expected dry-run, apply or a directory"

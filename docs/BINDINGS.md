@@ -49,8 +49,10 @@ by `setup()`.
 
 Every flag carries a one-line `desc`: the text next to it in lib.nvim's option
 cheatsheet (opt-in there: `composer.setup({ help = { enable = true, keymap = ... } })`,
-then press the key on the command line).
-`TESTS/testing/usrcmds_help_spec.lua` fails for a flag without one.
+then press the key on the command line). A positional argument says what it is
+for too: `DIR` and `FILE` explain themselves, `migrate`'s `[mode]` carries the
+text of its argument type.
+`TESTS/testing/usrcmds_help_spec.lua` fails for a flag or an argument without one.
 
 Runs never happen in the editor's own process. The driver
 (`scripts/testing.lua`) is started as a child with an argument list (no shell,
