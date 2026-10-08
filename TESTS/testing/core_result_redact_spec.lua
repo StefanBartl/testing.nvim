@@ -78,10 +78,11 @@ return function(H)
   ok(msg_of("/api/users/42") ~= msg_of("/api/users/43"), "expected and actual stay distinguishable")
 
   -- ---------------------------------------------------------------- a profile path loses its segment
-  ---Does the validator (`abs_path_leak`) refuse `text` as free text of a note?
+  ---Does the validator report `what` (a part of its finding) for `text` as free text of a note?
   ---@param text string
+  ---@param what string
   ---@return boolean
-  local function leaks(text)
+  local function reports(text, what)
     local c = result.new_case({ file = "a_spec.lua", name = "x" })
     c.assertions[1] = { ok = true, kind = "eq" }
     c.notes = { text }
@@ -93,11 +94,25 @@ return function(H)
     local valid = result.validate(ir, { leak_warnings = sink })
     ok(valid, "the fixture of the validator is a valid IR")
     for _, finding in ipairs(sink) do
-      if finding:find("user home path", 1, true) then
+      if finding:find(what, 1, true) then
         return true
       end
     end
     return false
+  end
+
+  ---Does the validator (`abs_path_leak`) refuse `text` as a user home path?
+  ---@param text string
+  ---@return boolean
+  local function leaks(text)
+    return reports(text, "user home path")
+  end
+
+  ---Does the validator refuse `text` as an e-mail address?
+  ---@param text string
+  ---@return boolean
+  local function mails(text)
+    return reports(text, "e-mail address")
   end
 
   -- Which `users` is a profile folder: `Users` with a capital U wherever it stands; any other spelling only as the
@@ -174,7 +189,64 @@ return function(H)
   -- ---------------------------------------------------------------- e-mail shapes
   eq(msg_of("mail bob@example.com now"), "mail <EMAIL> now", "an address is replaced")
   eq(msg_of("a.b+c@d-e.example.org"), "<EMAIL>", "the whole address, dots and plus included")
+  eq(msg_of("a@b.co"), "<EMAIL>", "a local part of one letter at the start of the text")
+  ok(mails("a@b.co"), "the validator finds it, too")
   eq(msg_of("no at sign here"), "no at sign here", "text without an address")
+  for _, text in ipairs({
+    "bob@localhost",
+    "bob@x",
+    "bob@x.c",
+    "bob@.com",
+    "@example.com",
+    "bob @example.com",
+    "bob@ example.com",
+    "bob@, example.com",
+    "a@@b.com",
+    "user@<EMAIL>",
+  }) do
+    eq(msg_of(text), text, "no address, nothing to remove: " .. text)
+    ok(not mails(text), "the validator leaves it alone, too: " .. text)
+  end
+
+  -- An `@` right behind an address has no local part of its own: the characters in front of it belong to the domain
+  -- that was just read.
+  eq(msg_of("a@b.com@c.org"), "<EMAIL>@c.org", "an @ behind an address has no local part")
+  ok(
+    mails("a@b.com@c.org") and not mails("<EMAIL>@c.org"),
+    "and the validator reads it the same way"
+  )
+
+  -- Addresses that follow each other without a separator: the next one begins inside the run of characters the last one
+  -- ended in (`.com1alice` is the end of one domain and the start of the next local part), and it is the local part
+  -- that must go: a name left in front of a placeholder is the leak. However many there are; the validator finds the
+  -- text before and nothing after, so the redaction changes a text exactly when the validator refuses it.
+  for _, case in ipairs({
+    { "a@b.com1@c.org", "<EMAIL><EMAIL>", {} },
+    { "bob@x.com1alice@y.org1carol@z.org", "<EMAIL><EMAIL><EMAIL>", { "bob", "alice", "carol" } },
+    { "x@y.com_alice@z.org_carol@w.org", "<EMAIL><EMAIL><EMAIL>", { "alice", "carol" } },
+    {
+      "report-bob@x.com-alice@y.org-carol@w.org.pdf",
+      "<EMAIL><EMAIL><EMAIL>",
+      { "bob", "alice", "carol" },
+    },
+    { "a@b.com1c@d.org1e@f.org1g@h.org1i@j.org", ("<EMAIL>"):rep(5), { "1c", "1e", "1g", "1i" } },
+    { ("a@b.co1"):rep(8), ("<EMAIL>"):rep(8) .. "1", {} },
+    {
+      "mail bob@x.com1alice@y.org, carol@z.org.",
+      "mail <EMAIL><EMAIL>, <EMAIL>.",
+      { "alice", "carol" },
+    },
+  }) do
+    local text, want, names = case[1], case[2], case[3]
+    local got = msg_of(text)
+    eq(got, want, "every address goes: " .. text)
+    ok(mails(text), "the validator refuses the text before: " .. text)
+    ok(not mails(got), "and finds nothing in " .. got)
+    ok(not got:find("@", 1, true), "no half of an address is left in " .. got)
+    for _, name in ipairs(names) do
+      ok(not got:find(name, 1, true), name .. " is gone from " .. got)
+    end
+  end
 
   -- ---------------------------------------------------------------- linear in the length of a token
   -- One token without a blank was re-scanned from every position by the patterns of the redaction (quadratic:
@@ -187,6 +259,12 @@ return function(H)
     at_then_run = "a@" .. ("a"):rep(SIZE),
     profile_chain = ("/Users/x"):rep(SIZE / 8),
     address_like = ("a.b@"):rep(SIZE / 4),
+    -- the e-mail scan: a long local part without a domain, an `@` after every character, a domain of dots, and
+    -- addresses written one after the other without a separator
+    local_then_at = ("a"):rep(SIZE) .. "@",
+    at_pairs = ("a@"):rep(SIZE / 2),
+    at_then_dots = "a@" .. ("a."):rep(SIZE / 2),
+    glued_addresses = ("a@b.co1"):rep(SIZE / 7),
     -- runs of separators: the prefix of a rule that is itself a separator re-reads the run from every position
     slashes = ("/"):rep(SIZE),
     backslashes = ("\\"):rep(SIZE),

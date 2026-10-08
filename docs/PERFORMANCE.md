@@ -139,7 +139,11 @@ What this says, plainly:
   run without a separator (quadratic: 20 000 hex digits in one argument took 17 s per pass, and a spawn goes through
   several passes). Each starts at a frontier or at a literal now (`TESTS/testing/guard_ledger_argv_spec.lua`,
   `TESTS/testing/core_result_redact_spec.lua`: 60 000 bytes, a second and a half as the limit, tens of milliseconds
-  measured). The shapes in the specs include what the first version of the fix left out: runs of separators (a prefix
+  measured). The e-mail scan is driven by the `@` itself (one plain find per address, the local part is the run in front
+  of it, the domain the text behind it), and the redaction and the validator share it. A pattern with a frontier in
+  front of the local part could not read an address that begins inside the run the last one ended in
+  (`a@b.com1c@d.org1e@f.org`), and the passes that were added for that stopped after a few neighbours.
+  The shapes in the specs include what the first version of the fix left out: runs of separators (a prefix
   that is itself a separator is read again from every position of the run: 30 000 slashes took 8 s), the e-mail pattern
   of the **validator** (`inproc.sanitize` runs it after every redaction over every free-text field, so a 40 KB token in
   a message cost about 9 s per field), the JWT rule of the ledger (`eyJeyJ...` without dots: 60 000 bytes took 7 s; the

@@ -500,10 +500,75 @@ local function replace_word(s, word, repl, ci)
   return table.concat(out)
 end
 
----E-mail shape `local@domain.tld`, for the redaction and for the validator. The frontier lets only the start of a run
----of local-part characters begin a match (a long run without an `@` is read once, not from every position of it), and
----the domain starts with exactly one `[%w%-]` (with a `+` there the run behind an `@` was tried from several lengths).
-local EMAIL = "%f[%w%.%_%+%-][%w%.%_%+%-]+@[%w%-][%w%.%-]*%.%a%a+"
+-- E-mail shape `local@domain.tld`, for the redaction and for the validator (one scan serves both, so what the one
+-- removes is exactly what the other finds). The scan is driven by the `@`: a plain find jumps from one `@` to the next,
+-- and each one reads the run of local-part characters in front of it and the domain behind it. An `@` is neither a
+-- local-part nor a domain character, so the runs of two `@`s never overlap and every character is read a bounded number
+-- of times. A `gsub` pattern cannot do this: one that may start at every character of a run of local-part characters is
+-- quadratic in a long run without an `@`, and one with a frontier in front of the local part cannot start inside such a
+-- run, where an address begins when the one before it ended there (`a@b.com1@c.org`, `a@b.com1c@d.org1e@f.org`). Such a
+-- run is split at the end of the domain that `EMAIL_DOMAIN` reads; the characters behind it are the next local part.
+
+---The characters of a local part, by byte.
+---@type table<integer, boolean>
+local LOCAL_CHAR = {}
+for byte = 0, 255 do
+  LOCAL_CHAR[byte] = string.char(byte):find("^[%w%.%_%+%-]") ~= nil
+end
+
+---The domain behind the `@`, anchored at it: a letter, a digit or a `-`, then letters, digits, dots and `-`, and a last dot
+---with two letters or more behind it. It ends at the last such dot of the run; what follows the top-level domain is the
+---next local part.
+local EMAIL_DOMAIN = "^[%w%-][%w%.%-]*%.%a%a+"
+
+---The first e-mail address of `s` at or after `init`, as `string.find` returns a match: where it starts and where it
+---ends. The local part does not reach back before `init`, so a scan that goes on behind an address finds the next one
+---even when it begins inside the same run of characters.
+---@param s string
+---@param init integer
+---@return integer|nil from
+---@return integer|nil to
+local function find_email(s, init)
+  local at = init
+  while true do
+    at = s:find("@", at, true)
+    if not at then
+      return nil
+    end
+    local from = at
+    while from > init and LOCAL_CHAR[s:byte(from - 1)] do
+      from = from - 1
+    end
+    if from < at then
+      local _, to = s:find(EMAIL_DOMAIN, at + 1)
+      if to then
+        return from, to
+      end
+    end
+    at = at + 1
+  end
+end
+
+---`s` with every e-mail address (see `find_email`) replaced by `<EMAIL>`.
+---@param s string
+---@return string
+local function replace_emails(s)
+  local out, pos, from = {}, 1, 1
+  while true do
+    local i, j = find_email(s, from)
+    if not i or not j then
+      break
+    end
+    out[#out + 1] = s:sub(pos, i - 1)
+    out[#out + 1] = "<EMAIL>"
+    pos, from = j + 1, j + 1
+  end
+  if pos == 1 then
+    return s
+  end
+  out[#out + 1] = s:sub(pos)
+  return table.concat(out)
+end
 
 -- The profile folder of a user (`Users/<name>`) in a text. The rule is private first (SEC-45) and keeps a `users`
 -- directory of a project readable (`GET /users/42`, `lua/app/users/model.lua:12`):
@@ -652,15 +717,8 @@ local function redact_string(s, r, ci)
       s = table.concat(out)
     end
   end
-  -- (an address that starts right behind the end of another one - `a@b.com1@c.org` - is not at the start of a run
-  -- of the first pass, so a second pass reads it; more than a few such neighbours are no text)
-  for _ = 1, 3 do
-    local replaced
-    s, replaced = s:gsub(EMAIL, "<EMAIL>")
-    if replaced == 0 then
-      break
-    end
-  end
+  -- (one scan, whatever the number of addresses that follow each other without a separator, see `find_email`)
+  s = replace_emails(s)
   for _, w in ipairs(r.words or {}) do
     if type(w.text) == "string" and #w.text >= 3 then
       -- always case-insensitive, like the validator's `forbid` scan: what one removes the other
@@ -822,7 +880,7 @@ local function scan_leaks(value, path, opts, problems, depth)
     if
       not opts.allow_emails
       and (free_text or not opts.forbid_free_text_only)
-      and value:find(EMAIL)
+      and find_email(value, 1)
     then
       problems[#problems + 1] = ("%s: contains an e-mail address"):format(path)
     end

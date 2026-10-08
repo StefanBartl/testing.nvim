@@ -25,7 +25,8 @@ is never a pass: the run ends with exit code `3`.
 * Paths are normalized: the repository, home, temp and state directories become `<REPO>`,
   `<HOME>`, `<TMP>`, `<STATE>`, so the file is the same on every machine.
 * With `--json` the free text is **redacted** by the kernel: user and host name, environment
-  `NAME=value` pairs, e-mail addresses, and every `Users/<name>` segment of a path in free text
+  `NAME=value` pairs, e-mail addresses (also several that follow each other without a separator,
+  `a@b.com1c@d.org`, each one goes whole), and every `Users/<name>` segment of a path in free text
   (a spec about an anonymizer that asserts about a Windows profile path is no leak: the segment
   becomes `<USER-PATH>`, the rest of the path and the text around it stay readable). Which `users` is
   a profile folder is decided on the side of privacy, but a project must stay readable:
