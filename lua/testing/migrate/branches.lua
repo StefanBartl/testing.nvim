@@ -16,7 +16,9 @@
 --- and says so in a note. An answer is cached per repository for the process. The editor waits for each
 --- question (`:Testing migrate` asks once per dependency, one after the other), so after the first TIMEOUT
 --- the others are not asked at all: a network that drops packets would otherwise cost the full timeout per
---- dependency.
+--- dependency. That holds for one run of the migration: `:Testing migrate` lives in the editor for hours,
+--- so `begin_run` (called by `migrate.run`) forgets the timeout and every answer that was none, and the next
+--- run asks again once the network is back.
 
 local M = {}
 
@@ -82,6 +84,17 @@ function M.exists(owner, repo, branch)
   end
   cache[key] = { exists, err }
   return exists, err
+end
+
+---A new run of the migration starts: the timeout that ended the asking and the answers that were none ("unknown")
+---are forgotten, the ones that say that the branch is there or not stay (the process may know them for good).
+function M.begin_run()
+  gave_up = nil
+  for key, hit in pairs(cache) do
+    if hit[1] == nil then
+      cache[key] = nil
+    end
+  end
 end
 
 ---Forget every cached answer (specs).

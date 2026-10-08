@@ -70,6 +70,8 @@ end
 ---@return Testing.Migrate.Plan plan
 ---@return Testing.Migrate.Report report
 function M.run(root, opts)
+  -- the editor outlives a run: a timeout of the last one (no network then) must not silence this one
+  require("testing.migrate.branches").begin_run()
   local report = M.analyze(root, opts)
   return M.plan(report, {
     owner = opts and opts.owner,

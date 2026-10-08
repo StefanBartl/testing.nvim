@@ -308,6 +308,47 @@ jobs:
   vim.system = real_system
   branches.reset()
 
+  -- The timeout ends the asking for ONE run: `:Testing migrate` runs in an editor that stays open for hours, and a
+  -- run without network (every dependency unknown, the first one a timeout) must not silence the runs after it,
+  -- not even for the dependency that was asked about and gave no answer. An answer that says "there / not there"
+  -- stays for the process.
+  do
+    local git_runs = 0
+    local silent = true
+    vim.system = function()
+      git_runs = git_runs + 1
+      return {
+        wait = function()
+          if silent then
+            return nil
+          end
+          return { code = 2, stdout = "", stderr = "" }
+        end,
+      }
+    end
+    local first = migrate.run(repo, { fleet_root = fleet_dir, branch_exists = branches.exists })
+    eq(first.error, nil, "the run without network plans")
+    has(notes_of(first), "could not check whether", "its notes say that the check was not possible")
+    local before = git_runs
+    ok(before >= 1, "git was asked in the first run")
+    silent = false
+    local second = migrate.run(repo, { fleet_root = fleet_dir, branch_exists = branches.exists })
+    ok(git_runs > before, "the next run asks again")
+    lacks(notes_of(second), "not asking again", "and is not told that the asking has stopped")
+    lacks(notes_of(second), "did not answer within", "nor that the last run got no answer")
+    has(
+      notes_of(second),
+      "has no ci-verified branch: pinned to main",
+      "the answer of the second run is the one that counts"
+    )
+    -- a definite answer stays for the process: the third run does not ask again
+    local asked_once = git_runs
+    migrate.run(repo, { fleet_root = fleet_dir, branch_exists = branches.exists })
+    eq(git_runs, asked_once, "answers of 'there' and 'not there' are kept")
+    vim.system = real_system
+    branches.reset()
+  end
+
   -- ---------------------------------------------------------------- CI edits
 
   has(ci_text, "    name: tests (${{ matrix.os }})", "the job name no longer says plenary")
