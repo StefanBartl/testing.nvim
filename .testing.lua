@@ -20,8 +20,9 @@ return {
   -- on a CI runner with another checkout path is found (docs/CI-CACHE.md). It is a name only: every entry still
   -- carries its full spec key.
   cache = { project_key = "testing-nvim" },
-  -- pool_run_spec runs real warm-pool children for about a minute on a loaded machine (59.5 s of the default 60 s
-  -- file deadline measured on Windows): the deadline is a safety net against a hang, not a performance gate.
+  -- The pool_run_*_spec files run real warm-pool children, about a minute each on a loaded machine (one file did
+  -- all of it and used 171 s of this deadline there; Windows is the slow system): the deadline is a safety net
+  -- against a hang, not a performance gate.
   timeouts = { file_ms = 180000 },
   -- Dogfood: every guard is an ERROR here. A spec of this repository that leaves an autocmd, a buffer,
   -- a stub in package.preload or a runtimepath entry behind fails its own case, named precisely.
