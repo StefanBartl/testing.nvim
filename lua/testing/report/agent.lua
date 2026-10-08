@@ -386,13 +386,13 @@ local function rerun_command(result, c, o)
   for _, a in ipairs(require("testing.args").repeat_argv(argv)) do
     local q = M.shell_quote(a)
     if not q then
-      return "(no command: an argument of the run has no spelling that is safe in bash and PowerShell (a quote, a control character, an empty word, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
+      return "(no command: an argument of the run has no spelling that is safe in bash and PowerShell (a quote, a control character, ##[, an empty word, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
     end
     parts[#parts + 1] = q
   end
   local file = M.shell_quote(c.file or "")
   if not file then
-    return "(no command: the file name has no spelling that is safe in bash and PowerShell (a quote, a control character, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
+    return "(no command: the file name has no spelling that is safe in bash and PowerShell (a quote, a control character, ##[, a backslash at the end of a word with a space); use --file <file> with the options of the run)"
   end
   parts[#parts + 1] = option_word("--file", c.file or "", file)
   local line = table.concat(parts, " ")

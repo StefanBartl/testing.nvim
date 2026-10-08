@@ -350,7 +350,7 @@ return function(H)
     for _, format in ipairs({ "text", "jsonl" }) do
       local out = agent.render(lg, { command = CMD, format = format })
       local all = table.concat(out, "\n")
-      ok(not all:find("##[", 1, true), format .. ": no `##[` is left: " .. vim.inspect(out))
+      ok(not all:find("#\x23[", 1, true), format .. ": no `##[` is left: " .. vim.inspect(out))
       if format == "jsonl" then
         -- a jsonl line is JSON: the escape is the JSON one (`\x23` would be no valid JSON), and a consumer that
         -- decodes the line gets the original text back
@@ -423,6 +423,11 @@ return function(H)
     failing(file_run, "TESTS/d##[error]_spec.lua", "n", { msg = "boom" })
     local fl = agent.render(file_run, { command = CMD })
     has(fl[#fl], "(no command:", "a file name with ##[: no command, and it says why")
+    has(
+      fl[#fl],
+      "#\\x23[",
+      "and the reasons it lists name the ##[ (written with the escape of the report)"
+    )
     eq(agent.shell_quote("a##[b"), nil, "the word has no spelling that survives the report")
   end
 
@@ -644,6 +649,7 @@ return function(H)
     local unspellable = {
       ["a path with a space and a trailing backslash"] = { "C:\\my dir\\", "--reporter", "agent" },
       ["an empty word"] = { ".", "--reporter", "agent", "--sentinel", "" },
+      ["an argument with ##["] = { ".", "--reporter", "agent", "--sentinel", "a##[b" },
     }
     for what, argv in pairs(unspellable) do
       local sb = new_run({ argv = argv })
@@ -651,6 +657,9 @@ return function(H)
       rerun = agent.render(sb, { command = CMD })
       has(rerun[#rerun], "(no command:", what .. ": no command")
       has(rerun[#rerun], "no spelling that is safe", what .. ": and it says why")
+      if what:find("##[", 1, true) then
+        has(rerun[#rerun], "#\\x23[", what .. ": and the reasons it lists name it")
+      end
     end
     local fine = new_run({ argv = { "C:\\mydir\\", "--reporter", "agent" } })
     failing(fine, "TESTS/b_spec.lua", "n", { msg = "boom" })
