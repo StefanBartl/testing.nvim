@@ -85,18 +85,18 @@ return function(H)
     "--shard",
     "--since",
   }, "run offers its flags")
+  -- nothing runs on `list`: no result cache to skip files with and no output to format, so `--cached`
+  -- and `--reporter` are not offered there (they would be accepted and do nothing)
   eq(sorted(complete("Testing list --")), {
-    "--cached",
     "--changed",
     "--config",
     "--file",
     "--filter",
     "--no-cache",
-    "--reporter",
     "--rtp",
     "--shard",
     "--since",
-  }, "list offers its flags")
+  }, "list offers the flags that do something on it")
   eq(
     sorted(complete("Testing init --")),
     { "--force", "--hooks", "--plugin" },

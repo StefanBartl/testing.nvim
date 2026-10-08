@@ -58,6 +58,31 @@ return function(H)
   -- the check above must not pass for the wrong reason (a route table without flags)
   ok(seen >= 30, "the route tree carries the flags of all subcommands, saw " .. seen)
 
+  -- the texts must be true on the route they are shown on: `list` runs nothing, so it has no result cache
+  -- to skip files with and no output to format (`--list` ignores `--cached` and `--reporter`)
+  local by_route = {}
+  for _, route in ipairs(usrcmds.routes()) do
+    local flags = {}
+    for _, flag in ipairs(route.flags or {}) do
+      flags[flag.name] = flag.desc
+    end
+    by_route[table.concat(route.path, " ")] = flags
+  end
+  ok(
+    by_route.run.cached ~= nil and by_route.run.reporter ~= nil,
+    "run offers --cached and --reporter"
+  )
+  ok(by_route.list.cached == nil, "list does not offer --cached: it would skip nothing")
+  ok(by_route.list.reporter == nil, "list does not offer --reporter: it would format nothing")
+  ok(
+    by_route.list["no-cache"] ~= nil and not by_route.list["no-cache"]:find("--cached", 1, true),
+    "list keeps --no-cache (the analysis index of --changed/--since), without a word about --cached"
+  )
+  ok(
+    by_route.list["no-cache"] ~= by_route.run["no-cache"],
+    "--no-cache has a text of its own on list"
+  )
+
   -- `register()` made :Testing in this editor: leave it as found
   pcall(vim.api.nvim_del_user_command, "Testing")
 end

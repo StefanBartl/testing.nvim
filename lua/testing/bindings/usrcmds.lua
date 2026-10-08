@@ -6,7 +6,7 @@
 ---   :Testing [run] [<root>] [--file=..] [--filter=..] [--reporter=..] [--rtp=..] [--config=..]
 ---   :Testing file [<spec>]       run the spec of the current buffer (mapping a source file to its spec is M3)
 ---   :Testing last                repeat the last run
----   :Testing list [<root>] ...   list what would run
+---   :Testing list [<root>] ...   list what would run (the flags of `run` without --cached and --reporter)
 ---   :Testing init [<root>] [--force] [--plugin=<name>] [--hooks]   generate the test setup of a plugin repo (--hooks: the git and agent hook recipes instead, never over an existing file)
 ---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
 ---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
@@ -144,6 +144,27 @@ local function run_flags()
       desc = "Run only shard i/n of the spec files (e.g. 2/4)",
     },
   }
+end
+
+---The run flags that `list` does nothing with: nothing runs there, so there is no result cache to read
+---(`execute_run` returns the list before `cached.prepare`) and no output to format. Offering them would
+---promise a skip or a report that never happens, and the child would accept them silently.
+local LIST_UNUSED = { cached = true, reporter = true }
+
+---The flags of `:Testing list`: `run_flags()` without `LIST_UNUSED`. `--no-cache` stays, with a text of
+---its own: on `list` it only decides whether `--changed` and `--since` read the stored analysis index.
+---@return table[]
+local function list_flags()
+  local flags = {}
+  for _, flag in ipairs(run_flags()) do
+    if not LIST_UNUSED[flag.name] then
+      if flag.name == "no-cache" then
+        flag.desc = "Analyse every file again for --changed and --since"
+      end
+      flags[#flags + 1] = flag
+    end
+  end
+  return flags
 end
 
 ---The verbatim arguments of a subcommand with its own grammar.
@@ -337,7 +358,7 @@ function M.routes()
       path = { "list" },
       desc = "List the spec files that would run, run nothing",
       args = { { name = "root", type = "DIR", optional = true } },
-      flags = run_flags(),
+      flags = list_flags(),
       run = function(ctx)
         start("list", { root = M.resolve_root(ctx.args.root), flags = M.child_flags(ctx.flags) })
       end,
