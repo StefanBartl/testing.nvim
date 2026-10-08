@@ -151,7 +151,9 @@ end
 local function redact_command_flags(s)
   local low = s:lower()
   if has_word(low, "curl") then
-    s = mask_flags(s, { "-u", "--user", "-U", "--proxy-user", "-b", "--cookie" })
+    s = mask_flags(s, { "--user", "--proxy-user", "--cookie" })
+    -- the one-letter flags also take their value attached (`-uadmin:pw`, `-bsid=abc`)
+    s = mask_flags(s, { "-u", "-U", "-b" }, true)
   end
   if has_word(low, "sshpass") then
     s = mask_flags(s, { "-p" }, true)
@@ -177,7 +179,11 @@ function M.redact_secrets(s)
   end
   s = redact_command_flags(s)
   -- headers whose value is secret as a whole: the rest of the quoted / of the line
-  s = s:gsub("([%w%-]+)(:[ \t]*)([^\"'\r\n]*)", function(name, sep, value)
+  -- The name patterns below start with a frontier on their own character set: only the start of a
+  -- run can match (a start inside a run ends at the same `:` / `=`). Without it a long run without
+  -- a separator is re-scanned from every position (quadratic: 20 000 hex digits in one argument
+  -- took seconds).
+  s = s:gsub("%f[%w%-]([%w%-]+)(:[ \t]*)([^\"'\r\n]*)", function(name, sep, value)
     if value == "" or value:find(MASK, 1, true) or not secret_header(name) then
       return nil
     end
@@ -207,15 +213,19 @@ function M.redact_secrets(s)
       return #token >= 8 and head .. MASK or nil
     end)
   end
-  -- URL user info: scheme://user:pass@host
-  s = s:gsub("(%a[%w+.-]*://)[^/%s@]+@", "%1" .. MASK .. "@")
+  -- URL user info: scheme://user:pass@host (the scheme is the run before `://`; it needs a letter)
+  s = s:gsub("%f[%w+.-]([%w+.-]*://)[^/%s@]+@", function(scheme)
+    if scheme:find("%a") then
+      return scheme .. MASK .. "@"
+    end
+  end)
   -- name=value / name: value where the name looks secret (flag, env pair, query key)
-  s = s:gsub("([%w_%-%.]+)(=)([^%s&\"']+)", function(name, eq, value)
+  s = s:gsub("%f[%w_%-%.]([%w_%-%.]+)(=)([^%s&\"']+)", function(name, eq, value)
     if value ~= MASK and secret_name(name) then
       return name .. eq .. MASK
     end
   end)
-  s = s:gsub("([%w_%-]+)(:%s*)([^%s\"']+)", function(name, sep, value)
+  s = s:gsub("%f[%w_%-]([%w_%-]+)(:%s*)([^%s\"']+)", function(name, sep, value)
     if
       value ~= MASK
       and name:lower():find("^x?%-?api") == nil

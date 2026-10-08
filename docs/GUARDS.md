@@ -270,7 +270,8 @@ them). A command given as a **shell string** is judged by its first word only.
 
 Redaction (SEC-10 / SEC-22): `--token abc`, `--password=...`, `Authorization: <scheme> ...`, `Cookie:` /
 `X-*-Token` / `X-*-Key` headers, URL user info and secret query keys (`?key=`, `&sig=`), JSON members
-(`"password": "..."`), the credential flags of `curl` (`-u`, `--user`, `-b`, `--cookie`), `sshpass -p`,
+(`"password": "..."`), the credential flags of `curl` (`-u`, `--user`, `-U`, `-b`, `--cookie`; the
+one-letter ones also with the value attached, `-uadmin:pw`), `sshpass -p`,
 `docker login -p`, `mysql -pSECRET`, and token shapes (GitHub, Slack, JWT, OpenAI-style, AWS) never reach
 the ledger or a finding; the program is shown by file name, so the ledger reads the same on every
 machine. This is **best effort**: a secret in a position no rule knows (a bare positional password of an

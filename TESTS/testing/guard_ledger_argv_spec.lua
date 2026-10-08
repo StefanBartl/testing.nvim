@@ -19,6 +19,10 @@ return function(H)
   gone("curl -u admin:hunter2 https://h.example/x", "hunter2")
   gone("curl --user admin:hunter2 https://h.example/x", "hunter2")
   gone("curl --user=admin:hunter2 https://h.example/x", "hunter2")
+  -- the one-letter flags of curl also take their value attached
+  gone("curl -uadmin:hunter2 https://h.example/x", "hunter2")
+  gone("curl -Uproxyuser:hunter2 https://h.example/x", "hunter2")
+  gone("curl -bsid=abcdef https://h.example", "abcdef")
   gone('curl -H "X-Api-Token: abcdef123456" https://h.example/x', "abcdef123456")
   gone('curl -H "X-Auth-Key: abcdef123456" https://h.example/x', "abcdef123456")
   gone('curl -H "Authorization: token abcdef" https://h.example', "abcdef")
@@ -52,7 +56,44 @@ return function(H)
     "make -j4 key",
     "git commit -m 'passed: 5 tests'",
     "wget -b https://h.example/f",
+    "curl -sS --user-agent nvim-test https://h.example/x",
+    "curl -fsSL -o out.txt https://h.example/x",
   }) do
     eq(ledger.redact_secrets(line), line, "unchanged: " .. line)
+  end
+
+  -- URL user info keeps working for every scheme shape the rule knows
+  eq(
+    ledger.redact_secrets("git clone https://me:pw@h.example/r.git"),
+    "git clone https://<REDACTED>@h.example/r.git",
+    "url user info"
+  )
+  eq(
+    ledger.redact_secrets("git+ssh://me@h.example/r.git x1.y-z://u:p@h"),
+    "git+ssh://<REDACTED>@h.example/r.git x1.y-z://<REDACTED>@h",
+    "scheme with + . - and digits"
+  )
+  eq(ledger.redact_secrets("9://me@h.example"), "9://me@h.example", "a scheme needs a letter")
+
+  -- A long run of name characters without a separator must not stall the run (the name patterns were
+  -- re-scanned from every position of the run: 20 000 hex digits in one argument took tens of seconds).
+  -- A linear pass over 60 000 bytes takes a few milliseconds, the quadratic one tens of seconds.
+  local SIZE, LIMIT_MS = 60000, 1500
+  local shapes = {
+    run = ("a"):rep(SIZE),
+    run_after_curl = "curl " .. ("a"):rep(SIZE),
+    hex = ("deadbeef"):rep(SIZE / 8),
+    dotted = ("a."):rep(SIZE / 2),
+    dashed = ("a-"):rep(SIZE / 2),
+    equals = ("a="):rep(SIZE / 2),
+    colons = ("a:"):rep(SIZE / 2),
+    schemes = ("a1."):rep(SIZE / 3) .. "://x",
+    attached_flags = "curl" .. (" -u"):rep(SIZE / 3),
+  }
+  for name, text in pairs(shapes) do
+    local t0 = vim.uv.hrtime()
+    ledger.redact_secrets(text)
+    local ms = (vim.uv.hrtime() - t0) / 1e6
+    ok(ms < LIMIT_MS, ("redacting %s (%d bytes) took %.0f ms"):format(name, #text, ms))
   end
 end
