@@ -137,6 +137,49 @@ return function(H)
     end)
   end
 
+  -- ---------------------------------------------------------------- one walk per directory and key
+  -- The members of a runtime directory (its Lua files) and its digest come from the same listing, also for the raw
+  -- pass of a spec whose closure looks at line endings: each directory is walked once, not once per use.
+  for _, eol in ipairs({ false, true }) do
+    section(
+      "each runtime directory is listed once per key" .. (eol and " (raw pass)" or ""),
+      function()
+        local module = eol and 'return { sep = "\\r\\n" }\n' or "return { sep = 1 }\n"
+        local root = S.project({
+          [SPEC] = "return function(H) H.ok(require('proj.b'), 'p') end\n",
+          ["lua/proj/b.lua"] = module,
+          ["ftplugin/mylang.lua"] = "vim.b.my_ft = 1\n",
+          ["indent/mylang.lua"] = "vim.b.my_indent = 1\n",
+          ["queries/mylang/highlights.scm"] = "(identifier) @variable\n",
+        })
+        local walks = {}
+        local real = hash.list_files
+        hash.list_files = function(d, ...)
+          walks[d] = (walks[d] or 0) + 1
+          return real(d, ...)
+        end
+        local good, err = pcall(function()
+          local _, _, parts = key_of(root, SPEC)
+          eq(
+            has_line(parts, "eol raw"),
+            eol,
+            "the key is made from the raw hashes only for the module that says so"
+          )
+          ok(has_line(parts, "runtime ftplugin/="), "and has the runtime lines")
+        end)
+        hash.list_files = real
+        ok(good, tostring(err))
+        local dirs_walked = 0
+        for d, n in pairs(walks) do
+          dirs_walked = dirs_walked + 1
+          eq(n, 1, "walked once: " .. d)
+        end
+        ok(dirs_walked >= 3, "the runtime directories were walked: " .. vim.inspect(walks))
+        S.remove(root)
+      end
+    )
+  end
+
   -- ---------------------------------------------------------------- the files of the root are inputs as well
   -- A child editor loads these from the root by itself (`filetype.lua`, `ftplugin.vim`, ... by `filetype plugin indent
   -- on` and the detection of a buffer; `.editorconfig` by the built-in editorconfig plugin for every file below the

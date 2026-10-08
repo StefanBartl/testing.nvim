@@ -664,6 +664,22 @@ local PROJECT_IGNORE = {
   ["node_modules"] = true,
 }
 
+---`hash.list_files(dir, PROJECT_IGNORE)` once per directory and run: the members of a runtime directory (`runtime_lua`)
+---and its digest (`runtime_lines`) are made from the same walk, which is also the same for the raw pass.
+---@param ctx Testing.Cache.Ctx
+---@param dir string
+---@return Testing.Cache.Listing
+local function project_listing(ctx, dir)
+  local t = memo_table(ctx, "#files")
+  local hit = t[dir]
+  if not hit then
+    local files, links, real_dir = hash.list_files(dir, PROJECT_IGNORE)
+    hit = { files = files, links = links, real_dir = real_dir }
+    t[dir] = hit
+  end
+  return hit
+end
+
 ---The Lua files below the runtime directories of the project root (`M.RUNTIME_DIRS`) that an editor loads by itself
 ---(`ftplugin/`, `indent/`, `after/ftplugin/`, `colors/`, ...) and the Lua files of `M.RUNTIME_FILES` in the root
 ---(`filetype.lua`, `scripts.lua`), absolute and sorted, once per run. Not `plugin/` and `after/plugin/`: a child
@@ -689,7 +705,8 @@ local function runtime_lua(ctx, root)
   for _, name in ipairs(M.RUNTIME_DIRS) do
     local dir = root .. "/" .. name
     if name ~= "plugin" and vim.fn.isdirectory(dir) == 1 then
-      local paths, why = hash.list_files(dir, PROJECT_IGNORE)
+      local listing = project_listing(ctx, dir)
+      local paths, why = listing.files, listing.links
       if not paths then
         unreadable = unreadable or tostring(why)
       else
@@ -948,7 +965,10 @@ local function runtime_lines(ctx, hasher, root)
   for _, name in ipairs(M.RUNTIME_DIRS) do
     local dir = root .. "/" .. name
     if vim.fn.isdirectory(dir) == 1 then
-      local dig, err = tree_of(ctx, hasher, dir, "runtime", { ignore_dirs = PROJECT_IGNORE })
+      local dig, err = tree_of(ctx, hasher, dir, "runtime", {
+        ignore_dirs = PROJECT_IGNORE,
+        listing = project_listing(ctx, dir),
+      })
       if not dig then
         lines, why = nil, ("runtime directory %s/: %s"):format(name, tostring(err))
         break
@@ -1551,10 +1571,11 @@ function M.key(file_info, ctx)
     -- the raw pass has its own memo (a hash is remembered per file and mode) and reads everything else from `ctx`.
     -- It lives INSIDE `ctx.memo`: whoever replaces the memo to look at the files again (the check after a run for an
     -- input that changed while it went) starts the raw pass from nothing, too, and not from the hashes of the start
-    local raw_ctx = setmetatable(
-      { raw_eol = true, memo = memo_table(ctx, "#raw") },
-      { __index = ctx }
-    )
+    local raw_memo = memo_table(ctx, "#raw")
+    -- (what is listed does not depend on how the bytes are hashed: the raw pass reads the same listings)
+    raw_memo["#listings"] = memo_table(ctx, "#listings")
+    raw_memo["#files"] = memo_table(ctx, "#files")
+    local raw_ctx = setmetatable({ raw_eol = true, memo = raw_memo }, { __index = ctx })
     return M.key(file_info, raw_ctx)
   end
   return res[2], res[3], res[4], res[5]

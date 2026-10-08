@@ -298,6 +298,12 @@ end
 ---@field raw? boolean The hashes of the bytes as they are (no CRLF read as LF).
 ---@field skip? fun(rel: string): boolean
 ---@field ignore_dirs? table<string, boolean> Directory NAMES that are not entered (`.git`).
+---@field listing? Testing.Cache.Listing The result of `M.list_files(dir, ignore_dirs)` for this very directory, made by the caller who needs it elsewhere too (one walk, not two).
+
+---@class Testing.Cache.Listing
+---@field files string[]|nil `nil` when the walk failed (then `links` is the reason).
+---@field links string[]|string
+---@field real_dir? string
 
 ---Every file below a directory, symlinked directories FOLLOWED: the ONE list of files that a digest of a tree
 ---(`Hasher:tree`) and a reader of the same tree (the members of the cache key) agree on, so that a file that is part
@@ -377,7 +383,12 @@ function Hasher:tree(dir, opts)
   -- The traversal is deduplicated (`M.list_files`), the digest is not: every link is a line of its own
   -- (`link <rel> -> <target>`), so two links to one directory are two lines, and removing one of them changes the
   -- digest.
-  local files, all_links, real_dir = M.list_files(dir, ignore_dirs)
+  local files, all_links, real_dir
+  if opts and opts.listing then
+    files, all_links, real_dir = opts.listing.files, opts.listing.links, opts.listing.real_dir
+  else
+    files, all_links, real_dir = M.list_files(dir, ignore_dirs)
+  end
   if not files then
     return nil, all_links
   end
