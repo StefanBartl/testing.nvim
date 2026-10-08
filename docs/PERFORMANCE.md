@@ -148,6 +148,9 @@ What this says, plainly:
   of the **validator** (`inproc.sanitize` runs it after every redaction over every free-text field, so a 40 KB token in
   a message cost about 9 s per field), the JWT rule of the ledger (`eyJeyJ...` without dots: 60 000 bytes took 7 s; the
   scan goes on behind the run that failed instead of trying every `eyJ` of it), and the roots of a lowercase `users`.
+  The rules of a profile path run only on a text that holds a `Users/` segment in some spelling, so the separator shapes
+  end in one (a match, a nameless one, and one inside a word that lets the text through while no rule matches): a run
+  of slashes without it never reached them.
   The path matchers of the ledger redactor (one `fs_realpath` per root) are built once per redactor, not for every text.
 * The migration of an init script reads a long run of blanks once, too: the end of the code of a line is found from the
   last character that is no blank (`%s*%-%-.*$` and `%s+$` were quadratic, 30 000 blanks took 7 s), and the names a

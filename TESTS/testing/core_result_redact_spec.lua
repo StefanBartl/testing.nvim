@@ -266,6 +266,7 @@ return function(H)
     at_then_dots = "a@" .. ("a."):rep(SIZE / 2),
     glued_addresses = ("a@b.co1"):rep(SIZE / 7),
     -- runs of separators: the prefix of a rule that is itself a separator re-reads the run from every position
+    -- (only a text that holds a `Users/` segment reaches the rules of a profile path, see `separator_shapes`)
     slashes = ("/"):rep(SIZE),
     backslashes = ("\\"):rep(SIZE),
     drive_slashes = "a:" .. ("/"):rep(SIZE),
@@ -278,22 +279,84 @@ return function(H)
     unc_roots = ("//h/users"):rep(SIZE / 9),
     lowercase_chain = ("/users/x"):rep(SIZE / 8),
   }
-  for name, text in pairs(shapes) do
-    local t0 = vim.uv.hrtime()
-    redacted(text)
-    local ms = (vim.uv.hrtime() - t0) / 1e6
-    ok(ms < LIMIT_MS, ("redacting %s (%d bytes) took %.0f ms"):format(name, #text, ms))
+
+  -- The rules of a profile path run only on a text that holds a `Users/` segment in some spelling (`redact_string` and
+  -- `abs_path_leak` look for it first), so a run of separators is read by them only with such a segment behind it. The
+  -- segment is the end of the text, in the forms a rule matches below a root (`users/x`) and anywhere (`Users/x`), in
+  -- one without a name (`Users/`, nothing to remove) and in one inside a word (`xusers/y`, which lets the text through
+  -- to the rules while none of them matches). A rule that starts at a separator reads the run from every position of
+  -- it (30 000 slashes and `Users/` took five seconds). The run stands in front of the segment (below a root, too) or
+  -- behind the word `Users`, where the rules look for a name and find the end of the text.
+  local RUN = 30000
+  local separator_shapes = {}
+  for sep_name, sep in pairs({ slash = "/", backslash = "\\" }) do
+    local run = sep:rep(RUN)
+    local before = {
+      bare = run,
+      drive = "a:" .. run,
+      mount = "/mnt/c" .. run,
+      cygdrive = "/cygdrive/c" .. run,
+      share = "x" .. sep .. sep .. "h" .. run,
+    }
+    local segments = {
+      lower = "users" .. sep .. "x",
+      upper = "Users" .. sep .. "x",
+      nameless = "Users" .. sep,
+      inside_word = "xusers" .. sep .. "y",
+    }
+    for before_name, head in pairs(before) do
+      for segment_name, segment in pairs(segments) do
+        separator_shapes[("%s_%s_%s"):format(sep_name, before_name, segment_name)] = head .. segment
+      end
+    end
+    local words = {
+      drive = "c:" .. sep .. "Users",
+      lowercase_drive = "c:" .. sep .. "users",
+      blank = " " .. sep .. "Users",
+      mount = "/mnt/c" .. sep .. "users",
+    }
+    for word_name, word in pairs(words) do
+      separator_shapes[("%s_%s_then_run"):format(sep_name, word_name)] = word .. run
+    end
   end
+
+  ---Run `fn` on every shape of `set` (in name order) and require it to be fast. A rule that is quadratic in a run costs
+  ---seconds per shape, so after the third shape that is too slow the rest is not tried: the spec is red either way.
+  ---@param what string
+  ---@param set table<string, string>
+  ---@param fn fun(text: string)
+  local function within_limit(what, set, fn)
+    local names = vim.tbl_keys(set)
+    table.sort(names)
+    local slow = 0
+    for _, name in ipairs(names) do
+      local text = set[name]
+      local t0 = vim.uv.hrtime()
+      fn(text)
+      local ms = (vim.uv.hrtime() - t0) / 1e6
+      ok(ms < LIMIT_MS, ("%s %s (%d bytes) took %.0f ms"):format(what, name, #text, ms))
+      slow = slow + (ms < LIMIT_MS and 0 or 1)
+      if slow >= 3 then
+        ok(false, what .. ": stopped after three shapes that were too slow")
+        break
+      end
+    end
+  end
+
+  within_limit("redacting", shapes, redacted)
+  within_limit("redacting", separator_shapes, function(text)
+    local encoded = result.encode(
+      { cases = { { id = "a_spec.lua::x", notes = { text } } } },
+      { redact = REDACT }
+    )
+    assert(encoded)
+  end)
 
   -- The validator reads the same texts (`inproc.sanitize` runs it after every redaction, over every free-text field):
   -- its e-mail pattern started a read at every position of a run (30 000 bytes without an `@` took five seconds, `a@`
   -- and 30 000 more ten), and a message with a long token costs that per field.
-  for name, text in pairs(shapes) do
-    local t0 = vim.uv.hrtime()
-    leaks(text)
-    local ms = (vim.uv.hrtime() - t0) / 1e6
-    ok(ms < LIMIT_MS, ("validating %s (%d bytes) took %.0f ms"):format(name, #text, ms))
-  end
+  within_limit("validating", shapes, leaks)
+  within_limit("validating", separator_shapes, leaks)
   do
     local inproc = require("testing.run.inproc")
     local SANITIZED = 40000 -- four fields of this size go through the redaction and the validator
