@@ -111,6 +111,34 @@ return function(H)
   eq(failed[1].line, line_of(pfixture, "p1"), "pcall fixture: the failure keeps the spec's line")
   has(failed[1].msg, "recorded", "pcall fixture: and the harness' text")
 
+  -- a protected call of the PLUGIN under test swallows the error: the check inside its callback is recorded
+  -- (a raise would make it vanish); a pcall of the spec inside that callback still answers
+  local lfixture = here .. "/fixtures/h/h_pcall_lib.fixture.lua"
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = lfixture,
+    rel = "TESTS/h_pcall_lib_spec.lua",
+    harness = here .. "/fixtures/h/harness.lua",
+  })
+  case = cases[1]
+  eq(case.error, nil, "plugin pcall fixture: the file ran to its end")
+  eq(
+    case.status,
+    "fail",
+    "plugin pcall fixture: the failed check inside the plugin's pcall is not lost"
+  )
+  passed, failed = 0, {}
+  for _, rec in ipairs(case.assertions) do
+    if rec.ok then
+      passed = passed + 1
+    else
+      failed[#failed + 1] = rec
+    end
+  end
+  eq(#failed, 1, "plugin pcall fixture: one check failed")
+  eq(passed, 2, "plugin pcall fixture: the two checks that hold")
+  eq(failed[1].line, line_of(lfixture, "p2"), "plugin pcall fixture: it keeps the spec's line")
+  has(failed[1].msg, "swallowed by the plugin", "plugin pcall fixture: and its message")
+
   eq(
     project.find_harness(fixture, here .. "/fixtures/h/"),
     vim.fs.normalize(here .. "/fixtures/h/harness.lua"),

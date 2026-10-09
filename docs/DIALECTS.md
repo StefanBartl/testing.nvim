@@ -9,10 +9,18 @@ the open case and the file goes on, so every failure of a file is visible. The r
 is the spec's own `file:line`. One exception, because it is the only way a spec can ask "does this
 assertion fail?": a failed check inside a `pcall` / `xpcall` **that the spec wrote**
 (`pcall(function() H.eq(1, 2) end)`, `pcall(H.with_patched, t, k, v, function() H.eq(1, 2) end)`) is
-not recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. Protected
-calls of a harness (`with_patched`) and of the runner do not count, and checks that pass are recorded
-everywhere. A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at
-its first failed check, as it did on the old runner. A case without a single assertion is a failure, a file that raises
+not recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. What
+decides is the protected call that would **catch** the raise, the innermost one between the check and
+the start of the case: it must be written in the spec's own file. Protected calls of a harness
+(`with_patched` pcalls its callback and re-raises) and of the runner are passed over, since the error
+goes on to the next one. A protected call of anything else — the plugin under test protecting a callback
+(`pcall(cb)` in an event emitter, `safe_call`), a helper file of the specs — would catch the raise, and
+whether it passes it on is not known: if it kept the error, the failed check would vanish and the case
+would pass. So there the check is recorded as usual. Checks that pass are recorded everywhere. A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at
+its first failed check, as it did on the old runner; the file then ends as an `error` case carrying that
+check's message. Limit: LuaJIT cannot tell a `pcall` in tail position (`return pcall(cb)`) from a call of
+the code that called the function, so write `local ok = pcall(cb); return ok` in a helper that must not
+swallow a failed check. A case without a single assertion is a failure, a file that raises
 while loading is an `error` case, and a file whose dialect is unknown is a `skip` (reported with
 the reason, never green; red under `--strict`). Nothing is a quiet pass.
 

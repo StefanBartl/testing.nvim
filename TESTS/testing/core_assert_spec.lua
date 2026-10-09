@@ -302,6 +302,52 @@ return function(H)
   end)
   eq(plain, false, "a failed eq in a plain body (only the runner's pcalls below) is recorded")
 
+  -- a protected call of CODE UNDER TEST (another chunk than the spec) swallows the error: a raise there
+  -- would make the failed check vanish and the case pass, so it is recorded. `load` gives the library a
+  -- chunk name of its own, as a file of the plugin would have.
+  local emitter = assert(load("local cb = ...; local ok = pcall(cb); return ok", "=plugin_emitter"))
+  local lctx = new_ctx()
+  local emitted
+  local lcase = run(lctx, function()
+    emitted = emitter(function()
+      lctx.eq(1, 2, "in a callback the plugin protects")
+    end)
+    lctx.eq(1, 1, "holds")
+  end)
+  eq(emitted, true, "the plugin's pcall saw no error: the check did not raise")
+  eq(lcase.status, "fail", "the failed check inside a plugin's pcall is not lost")
+  eq(#lcase.assertions, 2, "it is recorded next to the check that holds")
+  eq(lcase.assertions[1].ok, false, "as a failure")
+  -- the protected call that CATCHES the raise decides, not any protected call of the spec on the stack:
+  -- the plugin's pcall inside the spec's pcall would swallow the error and the check would vanish
+  local nested_ok
+  local ncase = run(new_ctx(), function(c)
+    nested_ok = pcall(function()
+      emitter(function()
+        c.eq(1, 2, "the plugin's pcall is between the check and the spec's")
+      end)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(
+    nested_ok,
+    true,
+    "the spec's pcall saw no error: the plugin's pcall is the one that would catch it"
+  )
+  eq(ncase.status, "fail", "so the check was recorded, not lost")
+  -- and a spec's pcall INSIDE the plugin's callback is the one that answers
+  local inner_ok
+  local icase = run(new_ctx(), function(c)
+    emitter(function()
+      inner_ok = pcall(function()
+        c.eq(1, 2, "asked inside the callback")
+      end)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(inner_ok, false, "a spec's pcall inside a plugin's protected call is asked, and answers")
+  eq(icase.status, "pass", "nothing is recorded for the check that was asked")
+
   -- inspect and deep_equal, the pure helpers
   local t1 = { b = 1, a = 2, 10, 20 }
   local t2 = { 10, 20, a = 2, b = 1 }
