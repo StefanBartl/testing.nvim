@@ -281,7 +281,7 @@ Output ~
   --format {text|jsonl}  Shape of `agent` (jsonl: one object per line).
   --json {file}      Write the Result-IR (schema_version 1), validated.
   --junit {file}     Write a JUnit XML report.
-  --events {file}    Write the events of the run (NDJSON) while it goes.
+  --events {file}    Write the events of the run (NDJSON) while it goes; `-` is stdout.
   --github           GitHub Actions annotations and step summary.
   --durations {n}    Name the {n} slowest cases.
   --sentinel {name}  Last line of a complete green run (default TESTING_OK).

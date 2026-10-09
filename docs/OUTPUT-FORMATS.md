@@ -31,8 +31,16 @@ process: `--watch` makes 1, 2, ...). The first run of a process truncates the fi
 | --- | --- |
 | `run_start` | `project` (directory name, never a path), `files_total`, `files_selected` |
 | `case` | `file`, `id`, `status` (the Result-IR statuses), `duration_ms`, `cached` (`true`: not executed, from the result cache; cached cases are announced after the run's cache step) |
-| `run_done` | always after a `run_start` (an empty one when the run ended before it began); `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise) |
+| `run_done` | always after a `run_start` (an empty one when the run ended before it began); `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise), `aborted` (`true` when the editor was quit during the run) |
 | `watch_change` | `--watch` only, between two runs and only when a run follows (a change that runs nothing is not announced): `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
+
+`--events -` writes the stream to **stdout**, one flushed line per event, for a supervisor that spawns the run and
+reads the pipe. Stdout then belongs to the stream alone: the reporter's text and the `--watch` status lines go to
+stderr. The editor being quit while a run is going (`:qa`, Ctrl-C that reaches the exit guard) ends every open
+stream with `run_done` carrying `exit_code = 3` and `aborted = true`. A process killed hard cannot write anything: a
+stream that ends without `run_done` was aborted, and whoever kills the process must kill its tree (child editors
+are not told). A reader skips lines that are not JSON: a spec that runs in the runner's own editor and writes to
+stdout itself can still reach the pipe.
 
 It never carries assertion text, error messages, notes, program output or absolute paths. Case ids and file names
 come from the code under test: control characters, bidi overrides and invalid UTF-8 are defused and every string is

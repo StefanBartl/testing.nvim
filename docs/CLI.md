@@ -112,7 +112,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--agent-budget <n>`, `--format <text\|jsonl>` | Only with the `agent` reporter (otherwise exit `2`): the character budget of the failure part (default 4000, at least 200; what does not fit is counted in a `more:` line) and the shape (`text`, or `jsonl`: one JSON object per line). |
 | `--json <file>` | Write the Result-IR (`schema_version = 1`) and validate it again. |
 | `--junit <file>` | Write a JUnit XML report. |
-| `--events <file>` | Write the events of the run while it goes (NDJSON: `run_start`, `case`, `run_done`; with `--watch` also `watch_change`), for a supervisor that wants to show a run live. See [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream). |
+| `--events <file\|->` | Write the events of the run while it goes (NDJSON: `run_start`, `case`, `run_done`; with `--watch` also `watch_change`), for a supervisor that wants to show a run live. `-` is stdout (the reporter then prints to stderr). See [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream). |
 | `--github` | Emit GitHub Actions annotations and the step summary. |
 | `--durations <n>` | Name the `<n>` slowest cases (`0` = all). |
 | `--profile` | Where the time went: phases, slowest files and cases, histogram, child start cost, pool use. Text on **stderr** (so the sentinel stays the last line of stdout) and `run.profile` in the `--json` IR. See [Profile](#profile). |

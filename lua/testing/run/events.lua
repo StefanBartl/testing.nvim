@@ -22,6 +22,15 @@
 --- and the run goes on; a write that fails switches the stream off for the rest of the run, with one note. An
 --- event that cannot be encoded is dropped. Nothing here raises into the runner.
 ---
+--- STDOUT. `--events -` writes the stream to stdout, one line per event, flushed at once, so a supervisor that
+--- spawns the run reads it from the pipe (no file to tail; end of file = the process is gone). Stdout then belongs
+--- to the stream alone: what the run would print there (the reporter, the watch status lines) goes to stderr.
+---
+--- ABORT. When the editor is quit while a run is going (`:qa`, Ctrl-C that reaches the exit guard) every open stream
+--- gets `run_done` with `exit_code = 3` and `aborted = true` before the process ends (`M.abort`). A process that is
+--- killed hard (TerminateProcess, SIGKILL) cannot write anything: a stream that ends without `run_done` was
+--- aborted, and the supervisor that killed the process must also kill its tree (child editors are not told).
+---
 --- ONE FILE, MANY RUNS. The first run of this process truncates the file, a later one (`--watch`) appends.
 --- `M.reset()` forgets that (specs).
 
@@ -36,13 +45,32 @@ M.MAX_STRING = 500
 ---Most paths in one `watch_change`.
 M.MAX_FILES = 20
 
+---Path that means "the stream goes to the standard output sink".
+M.STDOUT = "-"
+
 ---Runs that wrote to a path in this process: path -> count.
 ---@type table<string, integer>
 local runs_by_path = {}
 
----Forget which files this process already truncated (specs).
+---Streams that are open (a run is going): `M.abort` ends them.
+---@type table<Testing.Events.Emitter, true>
+local live = {}
+
+---Forget which files this process already truncated and the streams that are open (specs).
 function M.reset()
   runs_by_path = {}
+  live = {}
+end
+
+---A line sink for `--events -` over the line writer of the process (`sv.out`): every line is flushed at once.
+---@param out fun(s: string)
+---@return fun(line: string): boolean
+function M.stdout_sink(out)
+  return function(line)
+    out(line)
+    pcall(io.stdout.flush, io.stdout)
+    return true
+  end
 end
 
 ---@param s any
@@ -87,6 +115,7 @@ end
 ---@field run integer
 ---@field alive boolean
 ---@field started? boolean A `run_start` was written.
+---@field finished? boolean A `run_done` was written.
 ---@field emit fun(self: Testing.Events.Emitter, kind: string, fields?: table)
 ---@field case fun(self: Testing.Events.Emitter, case: Testing.Result.Case, cached?: boolean)
 ---@field done fun(self: Testing.Events.Emitter, exit_code: integer, res?: Testing.Result)
@@ -145,10 +174,15 @@ function Emitter:case(case, cached)
   })
 end
 
----`run_done` from the exit code and, when the run got that far, its result.
+---`run_done` from the exit code and, when the run got that far, its result. Once per stream.
 ---@param exit_code integer
 ---@param res? Testing.Result
-function Emitter:done(exit_code, res)
+---@param extra? table Further fields (`aborted`).
+function Emitter:done(exit_code, res, extra)
+  if self.finished then
+    return
+  end
+  self.finished = true
   if not self.started then
     -- the run ended before it began (a usage error): a consumer still sees a pair
     self:emit("run_start", {})
@@ -158,10 +192,12 @@ function Emitter:done(exit_code, res)
     exit_code = exit_code,
     verdict = verdict and verdict.kind or nil,
     summary = res and res.summary or nil,
+    aborted = extra and extra.aborted or nil,
   })
 end
 
 function Emitter:close()
+  live[self] = nil
   self.alive = false
   if self._close then
     pcall(self._close)
@@ -174,12 +210,19 @@ end
 ---@param path string
 ---@param kind string
 ---@param fields? table
-function M.note(path, kind, fields)
+---@param sink? fun(line: string) The writer of `M.STDOUT` (`M.stdout_sink`).
+function M.note(path, kind, fields, sink)
   if not runs_by_path[path] then
     return
   end
   local line = M.line(kind, fields, { run = runs_by_path[path] + 1 })
   if not line then
+    return
+  end
+  if path == M.STDOUT then
+    if sink then
+      pcall(sink, line)
+    end
     return
   end
   local f = io.open(path, "a")
@@ -191,33 +234,48 @@ function M.note(path, kind, fields)
 end
 
 ---Open the stream `path` for one run: the first run of this process truncates, a later one appends.
----@param path string
+---@param path string A file, or `M.STDOUT`.
 ---@param on_error? fun(msg: string)
+---@param sink? fun(line: string): boolean|nil The writer of `M.STDOUT` (`M.stdout_sink`).
 ---@return Testing.Events.Emitter|nil emitter
 ---@return string|nil err
-function M.open(path, on_error)
+function M.open(path, on_error, sink)
   local previous = runs_by_path[path]
-  local f, err = io.open(path, previous and "a" or "w")
-  if not f then
-    return nil, ("--events: cannot open %s: %s"):format(path, tostring(err))
-  end
-  runs_by_path[path] = (previous or 0) + 1
-  local function write(line)
-    local ok, werr = f:write(line, "\n")
-    if not ok then
-      return false, werr
+  local write, close
+  if path == M.STDOUT then
+    if not sink then
+      return nil, "--events -: there is no standard output to write to"
     end
-    f:flush()
-    return true
-  end
-  local emitter = M.new(write, {
-    run = runs_by_path[path],
-    on_error = on_error,
+    write = sink
+  else
+    local f, err = io.open(path, previous and "a" or "w")
+    if not f then
+      return nil, ("--events: cannot open %s: %s"):format(path, tostring(err))
+    end
+    write = function(line)
+      local ok, werr = f:write(line, "\n")
+      if not ok then
+        return false, werr
+      end
+      f:flush()
+      return true
+    end
     close = function()
       f:close()
-    end,
-  })
+    end
+  end
+  runs_by_path[path] = (previous or 0) + 1
+  local emitter = M.new(write, { run = runs_by_path[path], on_error = on_error, close = close })
+  live[emitter] = true
   return emitter, nil
+end
+
+---The editor is being quit while streams are open: every stream that has no `run_done` yet gets one that says
+---`aborted`. Never raises (it runs in an exit handler).
+function M.abort()
+  for em in pairs(live) do
+    pcall(em.done, em, 3, nil, { aborted = true })
+  end
 end
 
 return M

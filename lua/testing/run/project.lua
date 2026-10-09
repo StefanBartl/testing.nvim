@@ -44,6 +44,7 @@ M.EXIT_INFRA = 3
 
 ---@class Testing.Run.Services
 ---@field out fun(s: string) stdout line sink
+---@field events_out? fun(line: string): boolean|nil Writer of `--events -` (the real stdout); `out` is then the stderr writer
 ---@field err fun(s: string) stderr line sink
 ---@field inproc? table `testing.run.inproc` (seam for specs)
 ---@field isolated? table `testing.run.isolated` (seam for specs)
@@ -87,6 +88,9 @@ function M.guard_exit()
       io.stderr:write(
         "testing: run did not complete: the editor was quit while specs were running\n"
       )
+      pcall(function()
+        require("testing.run.events").abort()
+      end)
       real_exit(M.EXIT_INFRA)
     end,
   })
@@ -483,7 +487,7 @@ function M.execute(plan, sv)
   if plan.args.events and not plan.args.list then
     local e, eerr = require("testing.run.events").open(plan.args.events, function(msg)
       err("testing: note: --events stopped: " .. msg)
-    end)
+    end, sv.events_out)
     if e then
       ev = e
     else

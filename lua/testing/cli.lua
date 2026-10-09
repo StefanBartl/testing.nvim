@@ -651,6 +651,12 @@ local function execute(argv, sv)
   if args.command == "verify" then
     return require("testing.stamp.verify").main(plan, sv, stamp_own)
   end
+  if args.events == "-" then
+    -- `--events -`: stdout belongs to the event stream alone; what the run prints there goes to stderr
+    local events = require("testing.run.events")
+    sv.events_out = events.stdout_sink(sv.out)
+    sv.out = sv.err
+  end
   if stamp_own and stamp_own.command == "stamp" then
     plan.stamp = stamp_own
   end

@@ -173,7 +173,7 @@ local OPTIONS = {
     kind = "value",
     field = "events",
     arg = "<file>",
-    help = "write the events of the run (NDJSON: run_start, case, run_done; with --watch also watch_change) to <file> while it goes",
+    help = "write the events of the run (NDJSON: run_start, case, run_done; with --watch also watch_change) to <file> while it goes; - is stdout (the reporter then prints to stderr)",
   },
   {
     name = "junit",

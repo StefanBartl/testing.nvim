@@ -155,6 +155,74 @@ return function(H)
     ok(tostring(err):find("--events", 1, true) ~= nil, "and says which option it was")
   end
 
+  -- stdout: `-` needs a sink; the lines go to it (flushed by the sink), a note joins the next run
+  do
+    events.reset()
+    local bad, err = events.open("-")
+    eq(bad, nil, "`-` without a sink gives no stream")
+    ok(tostring(err):find("standard output", 1, true) ~= nil, "and says why")
+    local lines = {}
+    local sink = function(line)
+      lines[#lines + 1] = line
+      return true
+    end
+    local first = assert(events.open("-", nil, sink))
+    first:emit("run_start", {})
+    first:close()
+    events.note("-", "watch_change", { files = { "lua/a.lua" }, count = 1 }, sink)
+    local second = assert(events.open("-", nil, sink))
+    second:emit("run_start", {})
+    second:close()
+    eq(#lines, 3, "two runs and the change between them reached the sink")
+    eq(json.decode(lines[2]).run, 2, "the change is tagged with the run it leads to")
+    eq(json.decode(lines[3]).run, 2, "and the second run counts on")
+    local seen = {}
+    local out_sink = events.stdout_sink(function(s)
+      seen[#seen + 1] = s
+    end)
+    eq(out_sink("x"), true, "the stdout sink reports success")
+    eq(seen, { "x" }, "and passes the line on")
+  end
+
+  -- abort: a stream that is open gets one `run_done` that says aborted; a finished or closed one does not
+  do
+    events.reset()
+    local lines = {}
+    local sink = function(line)
+      lines[#lines + 1] = line
+      return true
+    end
+    local running = assert(events.open("-", nil, sink))
+    running:emit("run_start", { files_total = 1 })
+    events.abort()
+    events.abort()
+    eq(#lines, 2, "run_start and ONE run_done, however often abort runs")
+    local last = json.decode(lines[2])
+    eq(last.event, "run_done", "the stream is ended")
+    eq(last.aborted, true, "as aborted")
+    eq(last.exit_code, 3, "with the infrastructure exit code")
+    running:close()
+
+    events.reset()
+    lines = {}
+    local finished = assert(events.open("-", nil, sink))
+    finished:emit("run_start", {})
+    finished:done(0, nil)
+    events.abort()
+    eq(#lines, 2, "a stream that already has its run_done is left alone")
+    finished:close()
+    events.abort()
+    eq(#lines, 2, "and a closed stream is not in the registry any more")
+
+    events.reset()
+    lines = {}
+    local early = assert(events.open("-", nil, sink))
+    events.abort()
+    eq(#lines, 2, "a run aborted before it began still gets a pair")
+    eq(json.decode(lines[1]).event, "run_start", "run_start first")
+    early:close()
+  end
+
   -- one real run end to end (through `cli.main`, real discovery and driver): run_start, one case per spec, run_done
   do
     events.reset()

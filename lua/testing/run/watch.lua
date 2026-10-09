@@ -942,7 +942,7 @@ function M.run_cli(plan, sv, seams)
           if type(fields.files) == "table" and #fields.files > events.MAX_FILES then
             fields.files = vim.list_slice(fields.files, 1, events.MAX_FILES)
           end
-          events.note(args.events, kind, fields)
+          events.note(args.events, kind, fields, sv.events_out)
         end
       or nil,
     is_spec = is_spec,
@@ -993,6 +993,9 @@ function M.run_cli(plan, sv, seams)
       if vim.v.exiting == vim.NIL or not w then
         return
       end
+      pcall(function()
+        require("testing.run.events").abort()
+      end)
       real_exit(w:stop_and_say())
     end,
   })
