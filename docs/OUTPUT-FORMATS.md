@@ -31,8 +31,8 @@ process: `--watch` makes 1, 2, ...). The first run of a process truncates the fi
 | --- | --- |
 | `run_start` | `project` (directory name, never a path), `files_total`, `files_selected` |
 | `case` | `file`, `id`, `status` (the Result-IR statuses), `duration_ms`, `cached` (`true`: not executed, from the result cache; cached cases are announced after the run's cache step) |
-| `run_done` | `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise) |
-| `watch_change` | `--watch` only, between two runs: `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
+| `run_done` | always after a `run_start` (an empty one when the run ended before it began); `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise) |
+| `watch_change` | `--watch` only, between two runs and only when a run follows (a change that runs nothing is not announced): `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
 
 It never carries assertion text, error messages, notes, program output or absolute paths. Case ids and file names
 come from the code under test: control characters, bidi overrides and invalid UTF-8 are defused and every string is

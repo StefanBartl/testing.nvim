@@ -9,9 +9,9 @@
 --- that wrote to this file in this process, so `--watch` produces run 1, 2, ...)):
 ---   * `run_start`   `project`, `files_total`, `files_selected`
 ---   * `case`        `file`, `id`, `status`, `duration_ms`, `cached` (true: not executed, from the result cache)
----   * `run_done`    `exit_code`, `verdict` (`green`|`green-partial`|`red`, absent when the run ended before one
+---   * `run_done`    (always preceded by a `run_start`, an empty one when the run ended before it began) `exit_code`, `verdict` (`green`|`green-partial`|`red`, absent when the run ended before one
 ---                   existed), `summary` (a counter per status, absent likewise)
----   * `watch_change` (only with `--watch`) `files` (at most `M.MAX_FILES` project-relative paths), `count`
+---   * `watch_change` (only with `--watch`, only when a run follows) `files` (at most `M.MAX_FILES` project-relative paths), `count`
 ---
 --- WHAT IT NEVER CARRIES: assertion text, error messages, notes, output of the code under test or absolute
 --- paths. Case ids and file names come from the code under test and are treated as hostile: control characters,
@@ -86,6 +86,7 @@ end
 ---@class Testing.Events.Emitter
 ---@field run integer
 ---@field alive boolean
+---@field started? boolean A `run_start` was written.
 ---@field emit fun(self: Testing.Events.Emitter, kind: string, fields?: table)
 ---@field case fun(self: Testing.Events.Emitter, case: Testing.Result.Case, cached?: boolean)
 ---@field done fun(self: Testing.Events.Emitter, exit_code: integer, res?: Testing.Result)
@@ -116,6 +117,9 @@ function Emitter:emit(kind, fields)
   if not self.alive then
     return
   end
+  if kind == "run_start" then
+    self.started = true
+  end
   local line = M.line(kind, fields, { run = self.run })
   if not line then
     return
@@ -145,6 +149,10 @@ end
 ---@param exit_code integer
 ---@param res? Testing.Result
 function Emitter:done(exit_code, res)
+  if not self.started then
+    -- the run ended before it began (a usage error): a consumer still sees a pair
+    self:emit("run_start", {})
+  end
   local verdict = res and res.run and res.run.verdict
   self:emit("run_done", {
     exit_code = exit_code,

@@ -81,7 +81,7 @@ M.EXIT_NO_RUN = 3
 ---@field clock? fun(): number Milliseconds (default `vim.uv.hrtime() / 1e6`).
 ---@field debounce_ms? integer
 ---@field max_wait_ms? integer Longest a pending change waits (0/nil = off): a run starts after this long even if files keep changing.
----@field event? fun(kind: string, fields: table) Machine-readable events (`--events`); never raises into the loop.
+---@field event? fun(kind: string, fields: table) Machine-readable events (`--events`): `watch_change` with every changed file (the seam caps the list), only when a run follows. Errors are contained.
 ---@field say fun(line: string)
 ---@field scan fun(): table<string, string> Snapshot of the watched trees: absolute path -> `mtime:size`.
 ---@field source fun(on_event: fun(), opts: table): Testing.Watch.Source|nil, string|nil
@@ -169,10 +169,11 @@ function Watch:due(now)
   end
   -- the cooldown: a debounce alone never fires while someone keeps saving
   local max_wait = self.opts.max_wait_ms
-  return max_wait ~= nil
-    and max_wait > 0
-    and self.first_event ~= nil
-    and now - self.first_event >= max_wait
+  if max_wait == nil or max_wait <= 0 or self.first_event == nil then
+    return false
+  end
+  -- a cooldown shorter than the debounce would switch the debounce off: it is the longest wait, never the shortest
+  return now - self.first_event >= math.max(max_wait, self.opts.debounce_ms)
 end
 
 ---Paths whose signature differs between two snapshots (added, changed, removed), sorted.
@@ -396,17 +397,14 @@ function Watch:cycle()
   for i, p in ipairs(changed) do
     rels[i] = M.rel_of(o.root, p)
   end
-  if o.event then
-    local shown = {}
-    for i = 1, math.min(#rels, require("testing.run.events").MAX_FILES) do
-      shown[i] = rels[i]
-    end
-    pcall(o.event, "watch_change", { files = shown, count = #rels })
-  end
   local files, note = self:plan(changed)
   if files ~= nil and #files == 0 then
     o.say(("watch: %s changed: nothing to run"):format(named(rels)))
     return false
+  end
+  -- only when a run follows: a consumer pairs every `watch_change` with the `run_start` that comes next
+  if o.event then
+    pcall(o.event, "watch_change", { files = rels, count = #rels })
   end
   o.say(
     ("watch: %d change(s) (%s) -> running %s%s"):format(
@@ -938,9 +936,15 @@ function M.run_cli(plan, sv, seams)
     source = function(on_event)
       return M.fs_source(on_event, { dirs = dirs, flat_dirs = { root } })
     end,
-    event = args.events and function(kind, fields)
-      require("testing.run.events").note(args.events, kind, fields)
-    end or nil,
+    event = args.events
+        and function(kind, fields)
+          local events = require("testing.run.events")
+          if type(fields.files) == "table" and #fields.files > events.MAX_FILES then
+            fields.files = vim.list_slice(fields.files, 1, events.MAX_FILES)
+          end
+          events.note(args.events, kind, fields)
+        end
+      or nil,
     is_spec = is_spec,
     select = function(changed)
       return M.select_affected(root, cfg, changed, { no_cache = args.no_cache })

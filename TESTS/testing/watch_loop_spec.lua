@@ -670,6 +670,38 @@ return function(H)
     eq(seen[1].fields, { files = { "TESTS/a_spec.lua" }, count = 1 }, "its files")
   end
 
+  -- a cooldown shorter than the debounce does not switch the debounce off
+  do
+    local h = harness({ max_wait_ms = 10, debounce_ms = 100 })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    touch(h, "TESTS/a_spec.lua")
+    h.now = 0
+    h.on_event()
+    h.now = 50
+    eq(h.w:due(), false, "max_wait_ms 10 < debounce 100: still waiting at 50 ms")
+    h.now = 100
+    eq(h.w:due(), true, "and due at the debounce")
+  end
+
+  -- `watch_change` only announces a run that follows
+  do
+    local seen = {}
+    local h = harness({
+      event = function(kind, fields)
+        seen[#seen + 1] = { kind = kind, fields = fields }
+      end,
+    })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    h.fs["/proj/TESTS/a_spec.lua"] = nil
+    h.gone = { ["TESTS/a_spec.lua"] = true }
+    h.on_event()
+    h.now = 500
+    eq(h.w:cycle(), false, "a deleted spec runs nothing")
+    eq(seen, {}, "and announces no change: no run_start would follow")
+  end
+
   -- module purge: what the run loaded is forgotten, the runner's own and the baseline are not
   do
     local baseline = watch.loaded_set()

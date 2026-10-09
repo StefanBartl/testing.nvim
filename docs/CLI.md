@@ -436,6 +436,7 @@ watch: run 2 finished (exit 0). Waiting for changes (Ctrl-C quits).
 **Cooldown.** The debounce waits for quiet, so a person (or a tool) that saves every few hundred milliseconds never
 gets a run. `watch.max_wait_ms` / `--watch-max-wait <ms>` (default `0` = off) caps the wait: once the first pending
 change is that old, the run starts however fresh the last event is, and the next wait begins with the next change.
+A value below the debounce is raised to it: the cooldown is the longest wait, never the shortest.
 With `--events` the watcher also writes a `watch_change` event (the changed files) before every re-run.
 
 The watched trees are the spec roots and `lua/`. Events come from `lib.nvim.fs.watch`; a change is decided by a

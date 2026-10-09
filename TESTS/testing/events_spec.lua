@@ -114,6 +114,15 @@ return function(H)
     local d = json.decode(lines[#lines])
     eq(d.exit_code, 3, "a run that ended before its result still says how")
     eq(d.verdict, nil, "without a verdict")
+    eq(json.decode(lines[#lines - 1]).event, "run_start", "and a run_start before it")
+    nodone:done(3, nil)
+    local starts = 0
+    for _, l in ipairs(lines) do
+      if json.decode(l).event == "run_start" then
+        starts = starts + 1
+      end
+    end
+    ok(starts >= 1, "the pairing run_start is written once per stream")
   end
 
   -- files: the first run truncates, a later one appends, a note joins the run it leads to

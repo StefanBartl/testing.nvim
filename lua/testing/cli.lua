@@ -165,10 +165,11 @@ local function doctor(plan, loaded, say)
   )
 
   say(
-    ("shard: balance=%s durations=%s; watch: debounce=%d ms poll=%d ms; budget: factor=%g baseline=%s"):format(
+    ("shard: balance=%s durations=%s; watch: debounce=%d ms max_wait=%d ms poll=%d ms; budget: factor=%g baseline=%s"):format(
       plan.project.shard.balance,
       plan.project.shard.durations or "-",
       plan.project.watch.debounce_ms,
+      plan.project.watch.max_wait_ms,
       plan.project.watch.poll_ms,
       plan.project.budget.factor,
       plan.project.budget.baseline
