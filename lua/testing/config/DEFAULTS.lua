@@ -114,7 +114,7 @@ local DEFAULTS = {
     affected = {},
     -- `--watch`: quiet time after the last change before a re-run (a editor save fires several events), and
     -- the polling interval of the fallback when the file system cannot deliver events.
-    watch = { debounce_ms = 150, poll_ms = 1000 },
+    watch = { debounce_ms = 150, poll_ms = 1000, max_wait_ms = 0 },
     -- `testing budget`: a measurement may be `factor` times its baseline before the check fails; the
     -- baseline file (JSON written by `testing budget --update`) lives in the project.
     budget = { factor = 2.0, baseline = "TESTS/bench/baseline.json" },

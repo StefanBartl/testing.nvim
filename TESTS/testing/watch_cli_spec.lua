@@ -127,21 +127,30 @@ return function(H)
     end,
   }
 
-  local code = cli.main(
-    { root, "--watch", "--watch-poll", "--watch-debounce", "20", "--no-timings" },
-    {
-      out = function(s)
-        out[#out + 1] = s
-      end,
-      err = function(s)
-        err[#err + 1] = s
-      end,
-      state_dir = state,
-      color = false,
-      inproc = driver(),
-      watch = seams,
-    }
-  )
+  local stream = vim.fs.normalize(vim.fn.tempname()) .. "-events.ndjson"
+  local code = cli.main({
+    root,
+    "--watch",
+    "--watch-poll",
+    "--watch-debounce",
+    "20",
+    "--watch-max-wait",
+    "5000",
+    "--events",
+    stream,
+    "--no-timings",
+  }, {
+    out = function(s)
+      out[#out + 1] = s
+    end,
+    err = function(s)
+      err[#err + 1] = s
+    end,
+    state_dir = state,
+    color = false,
+    inproc = driver(),
+    watch = seams,
+  })
   local all = text()
   eq(stage, 3, "the script went through every stage (" .. all:sub(-500) .. ")")
   eq(code, 0, "the last completed run was green, so is the exit code")
@@ -173,6 +182,34 @@ return function(H)
     "while watching, ONE VimLeavePre handler answers for a Ctrl-C that kills the run"
   )
   eq(leave_handlers(), 0, "and it is removed again when the watch ends")
+
+  -- `--events` with `--watch`: one stream, run numbers 1..4, a `watch_change` before every re-run
+  do
+    local json = require("lib.nvim.json")
+    local kinds, changes = {}, {}
+    for line in io.lines(stream) do
+      local obj = json.decode(line)
+      kinds[#kinds + 1] = ("%s:%d"):format(obj.event, obj.run)
+      if obj.event == "watch_change" then
+        changes[#changes + 1] = obj.files
+      end
+    end
+    eq(kinds, {
+      "run_start:1",
+      "run_done:1",
+      "watch_change:2",
+      "run_start:2",
+      "run_done:2",
+      "watch_change:3",
+      "run_start:3",
+      "run_done:3",
+      "watch_change:4",
+      "run_start:4",
+      "run_done:4",
+    }, "the stream tells the whole watch session in order, one file, run numbers counting up")
+    eq(changes[1], { "TESTS/a_spec.lua" }, "the first change names the rewritten spec")
+    vim.fn.delete(stream)
+  end
 
   -- plugin modules loaded by a run are forgotten before the next run (in-process runs see edits)
   -- (the purge itself is specified in watch_loop_spec; here: the loop restored what it must)

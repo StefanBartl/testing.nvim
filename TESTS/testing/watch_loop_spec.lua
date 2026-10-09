@@ -583,6 +583,93 @@ return function(H)
     src.stop() -- idempotent
   end
 
+  -- the cooldown (`max_wait_ms`): a debounce alone never fires while someone keeps saving; with a maximum wait the
+  -- run comes once the FIRST pending change is that old, however fresh the last one is
+  do
+    local h = harness({ max_wait_ms = 1000 })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    for t = 0, 900, 50 do
+      h.now = t
+      touch(h, "TESTS/a_spec.lua")
+      h.on_event()
+    end
+    h.now = 950
+    eq(
+      h.w:due(),
+      false,
+      "saving every 50 ms keeps the debounce from firing, and 1000 ms are not over"
+    )
+    h.now = 1000
+    eq(h.w:due(), true, "due once the first pending change waited max_wait_ms")
+    eq(h.w:cycle(), true, "the cooldown run happens")
+    eq(#h.runs, 2, "one run for the whole burst")
+    eq(h.w:due(), false, "nothing pending afterwards")
+    -- the next wait starts with the next change, not with the old one
+    for t = 1100, 2050, 50 do
+      h.now = t
+      touch(h, "TESTS/a_spec.lua")
+      h.on_event()
+    end
+    h.now = 2099
+    eq(h.w:due(), false, "the clock of max_wait_ms restarted with the new first change")
+    h.now = 2100
+    eq(h.w:due(), true, "and fires a full max_wait_ms after it")
+  end
+
+  -- without `max_wait_ms` (or with 0) nothing changes: only the quiet time decides
+  for _, off in ipairs({ 0, false }) do
+    local h = harness({ max_wait_ms = off or nil })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    for t = 0, 5000, 50 do
+      h.now = t
+      touch(h, "TESTS/a_spec.lua")
+      h.on_event()
+    end
+    eq(h.w:due(), false, "max_wait_ms " .. tostring(off) .. ": continuous saving never fires")
+  end
+
+  -- an event DURING a run starts its own wait, so the next run is not due at once
+  do
+    local h = harness({ max_wait_ms = 1000 })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    h.on_run = function()
+      h.now = h.now + 3000
+      touch(h, "TESTS/a_spec.lua")
+      h.on_event()
+    end
+    h.now = 10
+    touch(h, "TESTS/a_spec.lua")
+    h.on_event()
+    h.now = 200
+    h.w:cycle()
+    h.on_run = nil
+    eq(h.w:due(), false, "the event of the run is fresh: not due the moment the run ends")
+    h.now = h.now + 100
+    eq(h.w:due(), true, "due after the quiet time")
+  end
+
+  -- the machine-readable side: `watch_change` goes to the event seam with the project-relative files
+  do
+    local seen = {}
+    local h = harness({
+      event = function(kind, fields)
+        seen[#seen + 1] = { kind = kind, fields = fields }
+      end,
+    })
+    h.fs["/proj/TESTS/a_spec.lua"] = "1"
+    h.w:start()
+    touch(h, "TESTS/a_spec.lua")
+    h.on_event()
+    h.now = 500
+    h.w:cycle()
+    eq(#seen, 1, "one event for one cycle")
+    eq(seen[1].kind, "watch_change", "its kind")
+    eq(seen[1].fields, { files = { "TESTS/a_spec.lua" }, count = 1 }, "its files")
+  end
+
   -- module purge: what the run loaded is forgotten, the runner's own and the baseline are not
   do
     local baseline = watch.loaded_set()

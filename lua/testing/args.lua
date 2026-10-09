@@ -52,6 +52,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field config? string `--config <file>`
 ---@field json? string `--json <file>`
 ---@field junit? string `--junit <file>`
+---@field events? string `--events <file>`
 ---@field github boolean `--github`
 ---@field reporter? string `--reporter <name>` (one of `REPORTERS`)
 ---@field agent_budget? integer `--agent-budget <n>`: character budget of the `agent` reporter
@@ -88,6 +89,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field shard? { index: integer, count: integer } `--shard i/n`, validated (1 <= i <= n)
 ---@field watch boolean `--watch`: re-run the affected spec files when something changes
 ---@field watch_debounce_ms? integer `--watch-debounce <ms>`
+---@field watch_max_wait_ms? integer `--watch-max-wait <ms>`
 ---@field watch_poll boolean `--watch-poll`: poll the file system instead of using fs events
 ---@field profile boolean `--profile`: per-phase timing, slowest files and cases, histogram (`run.profile` in the IR)
 ---@field baseline? string `--baseline <file>` (`budget`)
@@ -164,6 +166,14 @@ local OPTIONS = {
     field = "json",
     arg = "<file>",
     help = "write the Result-IR (schema_version 1) to <file>",
+  },
+  {
+    name = "events",
+    long = "events",
+    kind = "value",
+    field = "events",
+    arg = "<file>",
+    help = "write the events of the run (NDJSON: run_start, case, run_done; with --watch also watch_change) to <file> while it goes",
   },
   {
     name = "junit",
@@ -542,6 +552,15 @@ local OPTIONS = {
     help = "quiet time after the last change before --watch re-runs (default from .testing.lua watch.debounce_ms)",
   },
   {
+    name = "watch_max_wait",
+    long = "watch-max-wait",
+    kind = "int",
+    field = "watch_max_wait_ms",
+    arg = "<ms>",
+    min = 1,
+    help = "longest a change waits before --watch re-runs, however often files keep changing (default from .testing.lua watch.max_wait_ms; 0 = off there)",
+  },
+  {
     name = "watch_poll",
     long = "watch-poll",
     kind = "flag",
@@ -804,6 +823,9 @@ function M.check_combination(args)
   else
     if given.watch_debounce then
       return "--watch-debounce needs --watch"
+    end
+    if given.watch_max_wait then
+      return "--watch-max-wait needs --watch"
     end
     if args.watch_poll then
       return "--watch-poll needs --watch"
@@ -1128,6 +1150,7 @@ M.REPEAT_DROP = {
   agent_budget = true,
   format = true,
   json = true,
+  events = true,
   junit = true,
   github = true,
   filter = true,
@@ -1155,6 +1178,7 @@ M.REPEAT_DROP = {
   order = true,
   watch = true,
   watch_debounce = true,
+  watch_max_wait = true,
   watch_poll = true,
 }
 

@@ -81,7 +81,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--guard <name>=<mode>`, `--allow-fs <path>`, `--allow-spawn <exe>`, `--allow-network <host>` | The guards and what they let through ([ISOLATION.md](ISOLATION.md#guards)); repeatable. |
 | `--no-determinism`, `--no-trace` | A child keeps the parent's `LANG`/`LC_ALL`/`TZ` / leaves no trace artifact when it dies. |
 | `--jobs <n\|auto>` | Child editors running at once (default 1, `.testing.lua` `jobs`); `auto` is cores minus one (at least 1). The permits are a `lib.nvim.async.Semaphore`; the report, the printed child output and the exit code are the same for any `n`: results are merged in file order. See [Worker pool](#worker-pool). |
-| `--watch`, `--watch-debounce <ms>`, `--watch-poll` | Run, then re-run on every change, see [Watch](#watch). |
+| `--watch`, `--watch-debounce <ms>`, `--watch-max-wait <ms>`, `--watch-poll` | Run, then re-run on every change, see [Watch](#watch). |
 | `--host <c\|l>` | How a child starts. `c` (default): like plenary's host, the spec runs from a `-c` command (`v:vim_did_enter` is 0, `expand('<cword>')` works). `l`: `nvim -l`. A `script` prefers `l` unless this is given. |
 | `--env-allow <name>` | An environment variable (or `PREFIX*`) a child may inherit, on top of the allowlist; repeatable. See [child editors](../lua/testing/child/README.md). |
 | `--first-run` | Keep lib.nvim's one-time "missing tools" float enabled. By default the runner switches it off in every editor it starts (`disable_first_run`); lib.nvim's own suite tests that float and needs this flag. |
@@ -112,6 +112,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--agent-budget <n>`, `--format <text\|jsonl>` | Only with the `agent` reporter (otherwise exit `2`): the character budget of the failure part (default 4000, at least 200; what does not fit is counted in a `more:` line) and the shape (`text`, or `jsonl`: one JSON object per line). |
 | `--json <file>` | Write the Result-IR (`schema_version = 1`) and validate it again. |
 | `--junit <file>` | Write a JUnit XML report. |
+| `--events <file>` | Write the events of the run while it goes (NDJSON: `run_start`, `case`, `run_done`; with `--watch` also `watch_change`), for a supervisor that wants to show a run live. See [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream). |
 | `--github` | Emit GitHub Actions annotations and the step summary. |
 | `--durations <n>` | Name the `<n>` slowest cases (`0` = all). |
 | `--profile` | Where the time went: phases, slowest files and cases, histogram, child start cost, pool use. Text on **stderr** (so the sentinel stays the last line of stdout) and `run.profile` in the `--json` IR. See [Profile](#profile). |
@@ -431,6 +432,11 @@ watch: run 1 finished (exit 1, failing: TESTS/a_spec.lua). Waiting for changes (
 watch: 1 change(s) (lua/x.lua) -> running 2 file(s)
 watch: run 2 finished (exit 0). Waiting for changes (Ctrl-C quits).
 ```
+
+**Cooldown.** The debounce waits for quiet, so a person (or a tool) that saves every few hundred milliseconds never
+gets a run. `watch.max_wait_ms` / `--watch-max-wait <ms>` (default `0` = off) caps the wait: once the first pending
+change is that old, the run starts however fresh the last event is, and the next wait begins with the next change.
+With `--events` the watcher also writes a `watch_change` event (the changed files) before every re-run.
 
 The watched trees are the spec roots and `lua/`. Events come from `lib.nvim.fs.watch`; a change is decided by a
 snapshot diff (path, mtime, size), so a burst of saves is one run with every changed file, and an event without a

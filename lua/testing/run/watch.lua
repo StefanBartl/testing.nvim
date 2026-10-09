@@ -9,8 +9,9 @@
 ---   1. The source (`fs_event` handles, or polling) only says "something changed": `W:event()` sets a flag
 ---      and a timestamp and bumps the generation counter (ERR-32: state versions, not timers, decide). It
 ---      runs in a luv callback and touches no editor API.
----   2. The main loop waits for quiet: when `debounce_ms` have passed since the LAST event and no run is
----      active, a cycle starts. A cycle first takes a snapshot of the watched trees (path ->
+---   2. The main loop waits for quiet: when `debounce_ms` have passed since the LAST event (or, with
+---      `max_wait_ms`, since the FIRST pending one: the cooldown that keeps a run coming while someone saves
+---      all the time) and no run is active, a cycle starts. A cycle first takes a snapshot of the watched trees (path ->
 ---      `mtime:size`) and diffs it with the previous one, so a burst of events whose file names the
 ---      debounce kept only the last of still yields every changed path, and noise (an event with no
 ---      content change, a poll tick) yields no run at all.
@@ -79,6 +80,8 @@ M.EXIT_NO_RUN = 3
 ---@field root string Absolute project root (no trailing slash).
 ---@field clock? fun(): number Milliseconds (default `vim.uv.hrtime() / 1e6`).
 ---@field debounce_ms? integer
+---@field max_wait_ms? integer Longest a pending change waits (0/nil = off): a run starts after this long even if files keep changing.
+---@field event? fun(kind: string, fields: table) Machine-readable events (`--events`); never raises into the loop.
 ---@field say fun(line: string)
 ---@field scan fun(): table<string, string> Snapshot of the watched trees: absolute path -> `mtime:size`.
 ---@field source fun(on_event: fun(), opts: table): Testing.Watch.Source|nil, string|nil
@@ -103,6 +106,7 @@ M.EXIT_NO_RUN = 3
 ---@field gen integer Generation counter: bumped by every event.
 ---@field dirty boolean
 ---@field last_event number Clock reading of the last event.
+---@field first_event? number Clock reading of the first event since the last cycle (nil = nothing pending).
 ---@field running boolean
 ---@field stopped boolean
 ---@field runs integer
@@ -144,8 +148,12 @@ end
 ---A change was seen (called by the source). Safe in a luv callback: no editor API.
 function Watch:event()
   self.gen = self.gen + 1
+  local now = self.opts.clock()
+  if not self.dirty then
+    self.first_event = now
+  end
   self.dirty = true
-  self.last_event = self.opts.clock()
+  self.last_event = now
 end
 
 ---Has the quiet time passed for a pending change?
@@ -155,7 +163,16 @@ function Watch:due(now)
   if self.stopped or self.running or not self.dirty then
     return false
   end
-  return (now or self.opts.clock()) - self.last_event >= self.opts.debounce_ms
+  now = now or self.opts.clock()
+  if now - self.last_event >= self.opts.debounce_ms then
+    return true
+  end
+  -- the cooldown: a debounce alone never fires while someone keeps saving
+  local max_wait = self.opts.max_wait_ms
+  return max_wait ~= nil
+    and max_wait > 0
+    and self.first_event ~= nil
+    and now - self.first_event >= max_wait
 end
 
 ---Paths whose signature differs between two snapshots (added, changed, removed), sorted.
@@ -359,6 +376,7 @@ end
 function Watch:cycle()
   local o = self.opts
   self.dirty = false
+  self.first_event = nil
   local gen_at_start = self.gen
   local new = o.scan()
   local changed = M.diff(self.snapshot, new)
@@ -377,6 +395,13 @@ function Watch:cycle()
   local rels = {}
   for i, p in ipairs(changed) do
     rels[i] = M.rel_of(o.root, p)
+  end
+  if o.event then
+    local shown = {}
+    for i = 1, math.min(#rels, require("testing.run.events").MAX_FILES) do
+      shown[i] = rels[i]
+    end
+    pcall(o.event, "watch_change", { files = shown, count = #rels })
   end
   local files, note = self:plan(changed)
   if files ~= nil and #files == 0 then
@@ -900,6 +925,7 @@ function M.run_cli(plan, sv, seams)
     debounce_ms = args.watch_debounce_ms
       or (cfg.watch and cfg.watch.debounce_ms)
       or M.DEFAULT_DEBOUNCE_MS,
+    max_wait_ms = args.watch_max_wait_ms or (cfg.watch and cfg.watch.max_wait_ms) or 0,
     poll = args.watch_poll,
     poll_ms = cfg.watch and cfg.watch.poll_ms or M.DEFAULT_POLL_MS,
     say = function(line)
@@ -912,6 +938,9 @@ function M.run_cli(plan, sv, seams)
     source = function(on_event)
       return M.fs_source(on_event, { dirs = dirs, flat_dirs = { root } })
     end,
+    event = args.events and function(kind, fields)
+      require("testing.run.events").note(args.events, kind, fields)
+    end or nil,
     is_spec = is_spec,
     select = function(changed)
       return M.select_affected(root, cfg, changed, { no_cache = args.no_cache })
@@ -923,6 +952,7 @@ function M.run_cli(plan, sv, seams)
       local cycle_args = vim.deepcopy(args)
       cycle_args.watch = false
       cycle_args.watch_debounce_ms = nil
+      cycle_args.watch_max_wait_ms = nil
       cycle_args.watch_poll = false
       if files then
         cycle_args.paths = files

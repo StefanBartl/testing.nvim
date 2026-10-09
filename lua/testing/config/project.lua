@@ -44,7 +44,7 @@
 ---   jobs          integer >= 1 or "auto" (cores minus one), parallel child processes of an isolated run
 ---   shard         { balance = "size"|"count"|"hash"|"history", durations = <relative json path> }: `--shard i/n`
 ---   affected      { consumers = <directory> }: the checkouts of the projects that use this one (`--consumers`)
----   watch         { debounce_ms, poll_ms }: `--watch`
+---   watch         { debounce_ms, poll_ms, max_wait_ms }: `--watch`
 ---   budget        { factor = number >= 1, baseline = <relative json path> }: `testing budget`
 ---   host          "c" (default: the child starts like plenary's host, `--cmd`/`-c` based, so
 ---                 `vim.v.vim_did_enter` is 0 while the specs run) or "l" (`nvim -l`)
@@ -587,6 +587,12 @@ local SCHEMA = {
   watch = {
     debounce_ms = { check = is_int_gt0, expect = "a positive integer (milliseconds)" },
     poll_ms = { check = is_int_gt0, expect = "a positive integer (milliseconds)" },
+    max_wait_ms = {
+      check = function(v)
+        return v == 0 or is_int_gt0(v)
+      end,
+      expect = "0 (off) or a positive integer (milliseconds)",
+    },
   },
   budget = {
     factor = {

@@ -17,6 +17,28 @@ overrides, invalid UTF-8, strings that look like workflow commands or XML).
 A reporter that fails (unknown name, throws, cannot write its file) does not stop the others and
 is never a pass: the run ends with exit code `3`.
 
+## Events stream
+
+`--events <file>` writes what a run is doing while it goes, one JSON object per line (NDJSON, flushed after every
+line, keys sorted), for a supervisor that shows a run live (a dashboard, a statusline). It is a convenience beside
+the reporters, never part of the verdict: a file that cannot be opened is a note on stderr and the run goes on, a
+write that fails switches the stream off with one note, and the exit code never depends on it.
+
+Every line has `v` (`1`), `event`, `ts` (unix seconds) and `run` (counts the runs that wrote to this file in this
+process: `--watch` makes 1, 2, ...). The first run of a process truncates the file, a later one appends.
+
+| `event` | Fields |
+| --- | --- |
+| `run_start` | `project` (directory name, never a path), `files_total`, `files_selected` |
+| `case` | `file`, `id`, `status` (the Result-IR statuses), `duration_ms`, `cached` (`true`: not executed, from the result cache; cached cases are announced after the run's cache step) |
+| `run_done` | `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise) |
+| `watch_change` | `--watch` only, between two runs: `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
+
+It never carries assertion text, error messages, notes, program output or absolute paths. Case ids and file names
+come from the code under test: control characters, bidi overrides and invalid UTF-8 are defused and every string is
+capped at 500 bytes. A reader ignores fields and events it does not know; the details of a finished run are in the
+[Result-IR](#result-ir) of `--json`. With `--list` nothing is written.
+
 ## Result-IR
 
 * Statuses: `pass`, `fail`, `error`, `skip`, `xfail`, `xpass`, `timeout`, `crash`.

@@ -71,6 +71,7 @@
 ---@class Testing.ProjectConfig.Watch
 ---@field debounce_ms integer > 0. Quiet time after the last change before `--watch` re-runs.
 ---@field poll_ms integer > 0. Interval of the polling fallback.
+---@field max_wait_ms integer 0 = off. A pending change starts a re-run after at most this long, however often files keep changing (the debounce alone never fires while someone keeps saving).
 
 ---@class Testing.ProjectConfig.Budget
 ---@field factor number 1..1000. A measurement may be this many times its baseline.

@@ -74,6 +74,17 @@ return function(H)
     "debounce without watch"
   )
   has(refused({ "root", "--watch-poll" }), "--watch-poll needs --watch", "poll without watch")
+  a = assert(parse({ "root", "--watch", "--watch-max-wait", "8000" }))
+  eq(a.watch_max_wait_ms, 8000, "--watch-max-wait")
+  has(
+    refused({ "root", "--watch-max-wait", "8000" }),
+    "--watch-max-wait needs --watch",
+    "max wait without watch"
+  )
+  has(refused({ "root", "--watch", "--watch-max-wait", "0" }), "--watch-max-wait", "max wait 0")
+  a = assert(parse({ "root", "--events", "out.ndjson" }))
+  eq(a.events, "out.ndjson", "--events")
+  has(refused({ "root", "--events" }), "needs a value", "--events without a value")
   has(refused({ "root", "--watch", "--list" }), "--list", "watch with list")
   has(refused({ "root", "--watch", "--shard", "1/2" }), "--shard", "watch with shard")
   has(refused({ "root", "--watch", "--profile" }), "--profile", "watch with profile")

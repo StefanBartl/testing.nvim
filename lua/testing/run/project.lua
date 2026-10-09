@@ -478,7 +478,23 @@ function M.execute(plan, sv)
       end
     end
   end
-  local ok, code = pcall(M.execute_run, plan, sv, run_opts, err)
+  -- `--events`: the stream is a convenience, never part of the verdict (`testing.run.events`)
+  local ev
+  if plan.args.events and not plan.args.list then
+    local e, eerr = require("testing.run.events").open(plan.args.events, function(msg)
+      err("testing: note: --events stopped: " .. msg)
+    end)
+    if e then
+      ev = e
+    else
+      err("testing: note: " .. tostring(eerr))
+    end
+  end
+  local ok, code = pcall(M.execute_run, plan, sv, run_opts, err, ev)
+  if ev then
+    ev:done(ok and code or M.EXIT_INFRA, ev.result)
+    ev:close()
+  end
   if tracker then
     local left = tracker:uninstall()
     if type(left) == "table" and #left > 0 then
@@ -497,8 +513,9 @@ end
 ---@param sv Testing.Run.Services
 ---@param run_opts Testing.Run.Options
 ---@param err fun(s: string)
+---@param ev? Testing.Events.Emitter The `--events` stream of this run.
 ---@return integer exit_code
-function M.execute_run(plan, sv, run_opts, err)
+function M.execute_run(plan, sv, run_opts, err, ev)
   local out = sv.out
   local args, root, cfg = plan.args, plan.root, plan.project
   local inproc = sv.inproc or require("testing.run.inproc")
@@ -750,6 +767,13 @@ function M.execute_run(plan, sv, run_opts, err)
 
   -- 5. run: in this editor, or (per file, see `testing.run.options`) in a child editor of its own
   local release = M.guard_exit()
+  if ev then
+    ev:emit("run_start", {
+      project = vim.fs.basename(root),
+      files_total = total,
+      files_selected = #files,
+    })
+  end
   local common = {
     root = root,
     files = files,
@@ -766,6 +790,11 @@ function M.execute_run(plan, sv, run_opts, err)
     -- the runner measures nothing and says so in the notes of the cases
     guard_cfg = options_mod.guard_config(run_opts, { root = root, seed = seed }),
   }
+  if ev then
+    common.on_case = function(case)
+      ev:case(case)
+    end
+  end
   local soft
   if options_mod.is_soft(run_opts) then
     -- `isolated = "soft"`: what a file changed is restored before the next one; `guards.state` decides
@@ -917,6 +946,14 @@ function M.execute_run(plan, sv, run_opts, err)
       return M.EXIT_INFRA
     end
   end
+  if ev then
+    -- a file that came from the cache ran no case: its cases are announced here
+    for _, c in ipairs(report.result.cases) do
+      if c.cached then
+        ev:case(c, true)
+      end
+    end
+  end
   for _, note in ipairs(report.notes or {}) do
     err("testing: note: " .. note)
   end
@@ -968,6 +1005,9 @@ function M.execute_run(plan, sv, run_opts, err)
     err = err,
   })
   res.run.verdict = verdict
+  if ev then
+    ev.result = res
+  end
   local quiet = primary == "agent"
 
   ---@param outputs Testing.Report.Output[]
