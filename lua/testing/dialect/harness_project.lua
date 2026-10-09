@@ -36,6 +36,7 @@
 
 local conventions = require("testing.dialect.harness_conventions")
 local policy = require("testing.policy")
+local protected = require("testing.core.protected")
 
 local M = {}
 
@@ -345,7 +346,11 @@ local function wrap(state, key, original)
     end
 
     local err = res[2]
-    if not is_collector and entered_in_assert == 0 then
+    if
+      not is_collector
+      and entered_in_assert == 0
+      and not protected.inside(state.a.entry_height, state.file)
+    then
       local failure = resolved.classify(err)
       if failure then
         state.assertions[key] = true

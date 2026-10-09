@@ -9,12 +9,15 @@
 --- Rules enforced together with `testing.core.result`:
 ---   * zero assertions in a case is a failure (`finish_case`, P4);
 ---   * an assertion with no case bound is a programming error and raises (a silent drop would hide
----     failures).
+---     failures);
+---   * a failed check inside a protected call that the SPEC wrote (`pcall(function() H.eq(1, 2) end)`)
+---     is not recorded but raised, so the spec can ask whether an assertion fails (`testing.core.protected`).
 ---
 --- Pure Lua: no editor API. The clock defaults to `vim.uv.hrtime` when it exists and `os.clock`
 --- otherwise; tests inject their own. Argument order is `(actual, expected, msg)`, the order of
 --- the `H.eq` of dialect A, so the dialect shim maps one to one.
 
+local protected = require("testing.core.protected")
 local result = require("testing.core.result")
 
 local M = {}
@@ -272,6 +275,10 @@ function M.new(opts)
   ---@param actual string
   ---@return boolean ok always false
   local function fail(file, line, kind, msg, fmt, expected, actual)
+    if protected.inside(a.entry_height) then
+      -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
+      error(("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual)), 0)
+    end
     return append({
       ok = false,
       kind = kind,
@@ -480,7 +487,12 @@ function M.new(opts)
     local safe_call = require("lib.lua.error").safe_call
     -- Defensive: should safe_call ever raise itself (its `error.new` insists on a string message),
     -- the case still ends as an error instead of taking the runner down.
-    local guarded, called, err = pcall(safe_call, body, a)
+    local function entered(...)
+      a.entry_height = protected.entry_height()
+      return body(...)
+    end
+    local guarded, called, err = pcall(safe_call, entered, a)
+    a.entry_height = nil
     if not guarded or not called then
       local traceback = guarded and tostring(type(err) == "table" and err.message or err)
         or tostring(called)

@@ -6,7 +6,13 @@ text decides; a configured name forces one dialect for every file.
 
 All dialects share the rule that makes a verdict trustworthy: a failed check is **recorded** on
 the open case and the file goes on, so every failure of a file is visible. The recorded call site
-is the spec's own `file:line`. A case without a single assertion is a failure, a file that raises
+is the spec's own `file:line`. One exception, because it is the only way a spec can ask "does this
+assertion fail?": a failed check inside a `pcall` / `xpcall` **that the spec wrote**
+(`pcall(function() H.eq(1, 2) end)`, `pcall(H.with_patched, t, k, v, function() H.eq(1, 2) end)`) is
+not recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. Protected
+calls of a harness (`with_patched`) and of the runner do not count, and checks that pass are recorded
+everywhere. A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at
+its first failed check, as it did on the old runner. A case without a single assertion is a failure, a file that raises
 while loading is an `error` case, and a file whose dialect is unknown is a `skip` (reported with
 the reason, never green; red under `--strict`). Nothing is a quiet pass.
 
@@ -46,8 +52,8 @@ The project's `harness.lua` is loaded and every function of its table is wrapped
 own state stays one coherent object. The rule is **never greener than the project's own harness**:
 
 * An error that reads `[file:line: ]FAIL ...` is a failed assertion: it is recorded and the call
-  returns `false`. Functions whose body mentions `FAIL` are assertions and count as passes when they
-  return.
+  returns `false` (inside a `pcall` the spec wrote it is raised instead, see the top of this page). Functions
+  whose body mentions `FAIL` are assertions and count as passes when they return.
 * A helper that only **runs a callback** (`H.notifications(fn)`, `H.notices(fn)`) is not an assertion even though the assertions inside the callback raise the project's counter (`H.checks`): the callback's assertions are recorded one by one, the helper is counted only when the counter grew by more than the assertions recorded inside the call. The IR therefore follows the project's counter (fileops 52 of 52, emojis 929 of 929).
 * A collector (`H.check(name, fn)`: it catches the callback's error itself and appends to
   `H.failures`) is recorded as one assertion, failed when the harness collected a failure.

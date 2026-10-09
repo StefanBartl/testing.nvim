@@ -31,6 +31,14 @@ function H.id(...)
   return ...
 end
 
+---Runs fn protected and re-raises its error unchanged (the shape of lib.nvim's `with_patched`).
+function H.guarded(fn)
+  local ok, err = pcall(fn)
+  if not ok then
+    error(err, 0)
+  end
+end
+
 H.LIMIT = 3
 
 return H

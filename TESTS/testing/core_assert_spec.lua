@@ -281,6 +281,27 @@ return function(H)
   eq(done.status, "pass", "and has finished it")
   eq(a.current(), nil, "end_case unbinds")
 
+  -- a failed check inside a protected call the SPEC wrote raises (nothing recorded); outside one it is recorded
+  local pctx = new_ctx()
+  local asked_ok, asked_err
+  local pcase = run(pctx, function()
+    asked_ok, asked_err = pcall(function()
+      pctx.eq(1, 2, "demo")
+    end)
+    pctx.eq(1, 2, "outside") -- recorded
+    pctx.eq(1, 1, "holds")
+  end)
+  eq(asked_ok, false, "a failed eq inside the spec's pcall raises")
+  eq(asked_err, "FAIL demo: expected 2, got 1", "with the message of the old harnesses")
+  eq(#pcase.assertions, 2, "the raised check is not recorded, the other two are")
+  eq(pcase.assertions[1].ok, false, "the failed check outside the pcall is recorded")
+  eq(pctx.entry_height, nil, "the entry marker is gone with the case")
+  local plain
+  run(pctx, function()
+    plain = pctx.eq(1, 2, "plain")
+  end)
+  eq(plain, false, "a failed eq in a plain body (only the runner's pcalls below) is recorded")
+
   -- inspect and deep_equal, the pure helpers
   local t1 = { b = 1, a = 2, 10, 20 }
   local t2 = { 10, 20, a = 2, b = 1 }

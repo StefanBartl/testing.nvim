@@ -88,6 +88,29 @@ return function(H)
     vim.fs.normalize(here .. "/fixtures/h/harness.lua"),
     "find_harness"
   )
+  -- an assertion inside a protected call the SPEC wrote raises (the spec asks "does this fail?"); a
+  -- protected call of the harness itself (`guarded`) does not make it raise, and neither does the runner's
+  local pfixture = here .. "/fixtures/h/h_pcall.fixture.lua"
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = pfixture,
+    rel = "TESTS/h_pcall_spec.lua",
+    harness = here .. "/fixtures/h/harness.lua",
+  })
+  case = cases[1]
+  eq(case.error, nil, "pcall fixture: the file ran to its end")
+  passed, failed = 0, {}
+  for _, rec in ipairs(case.assertions) do
+    if rec.ok then
+      passed = passed + 1
+    else
+      failed[#failed + 1] = rec
+    end
+  end
+  eq(#failed, 1, "pcall fixture: only the check outside the spec's pcall is recorded as failed")
+  eq(passed, 3, "pcall fixture: the two raising checks were asked for, the last check holds")
+  eq(failed[1].line, line_of(pfixture, "p1"), "pcall fixture: the failure keeps the spec's line")
+  has(failed[1].msg, "recorded", "pcall fixture: and the harness' text")
+
   eq(
     project.find_harness(fixture, here .. "/fixtures/h/"),
     vim.fs.normalize(here .. "/fixtures/h/harness.lua"),
