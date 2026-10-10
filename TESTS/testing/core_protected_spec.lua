@@ -359,10 +359,13 @@ return function(H)
   -- a relative chunk name is read against the working directory of the first look: a harness table that outlives a
   -- run keeps its relative helpers when the working directory changes in between
   do
-    local base = vim.fs.normalize(vim.fn.tempname())
-    local elsewhere = vim.fs.normalize(vim.fn.tempname())
+    -- resolved: the working directory is reported with its symlinks resolved (macOS: /var -> /private/var)
+    local base = vim.fn.tempname()
+    local elsewhere = vim.fn.tempname()
     vim.fn.mkdir(base .. "/sub", "p")
     vim.fn.mkdir(elsewhere, "p")
+    base = vim.fs.normalize(vim.uv.fs_realpath(base))
+    elsewhere = vim.fs.normalize(vim.uv.fs_realpath(elsewhere))
     local home = vim.uv.cwd()
     local harness = { guard = plugin("return function() end", "@sub/helper.lua")() }
     vim.uv.chdir(base)
