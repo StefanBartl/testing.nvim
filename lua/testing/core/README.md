@@ -78,9 +78,13 @@ end)
 -- case.status, case.assertions, case.error ...
 ```
 
-* A failed check **never raises**: it appends `{ ok = false, kind, msg, expected, actual, file, line }`
+* A failed check **does not raise**: it appends `{ ok = false, kind, msg, expected, actual, file, line }`
   to the bound case, returns `false`, and the body goes on. Every failure of a case is therefore
-  visible, not just the first (problem P1).
+  visible, not just the first (problem P1). One exception: a spec can ask "does this check fail?" with
+  `pcall(function() a.eq(1, 2) end)`. When the protected call that would catch the raise is one the
+  spec wrote, the check raises `FAIL <msg>: expected X, got Y` instead of recording (nothing is
+  recorded for it). `testing.core.protected` decides which protected call counts and lists the limits;
+  `a.entry` is the marker `run_case` sets where the case body starts, and is `nil` outside of one.
 * `file`/`line` come from `debug.getinfo` at the caller of the assertion. A wrapper that is **not** a
   tail call must set `a.depth = 1` (a tail call erases its frame and needs nothing).
 * A thrown error in the body ends only that body: status `error`, `case.error.message` (first line) and

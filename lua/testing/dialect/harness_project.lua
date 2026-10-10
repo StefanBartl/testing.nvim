@@ -108,6 +108,7 @@ end
 ---@field a Testing.Assert.Context
 ---@field harness table The project's harness table (wrapped in place).
 ---@field file? string Path of the harness file (its frames are never a call site).
+---@field transparent table<string, true> Chunks that define a function of the harness: their protected calls pass an error on (`testing.core.protected`).
 ---@field resolved Testing.Harness.Resolved
 ---@field assertions table<string, boolean> Helpers known to be assertions.
 ---@field active boolean False once the file ended: late calls pass straight through.
@@ -349,7 +350,7 @@ local function wrap(state, key, original)
     if
       not is_collector
       and entered_in_assert == 0
-      and not protected.inside(state.a.entry_height, state.file)
+      and not protected.inside(state.a.entry, state.transparent)
     then
       local failure = resolved.classify(err)
       if failure then
@@ -369,6 +370,41 @@ local function wrap(state, key, original)
   end
 end
 
+---The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and every function of
+---`H`, one table level deep. A harness split over several files (`H.with_patched` from a helper module)
+---is still the harness; its protected calls clean up and raise again, they never answer a question.
+---Call it before the functions are wrapped.
+---@param harness table
+---@param file? string Path of the harness file as it was loaded.
+---@return table<string, true>
+local function harness_chunks(harness, file)
+  ---@type table<string, true>
+  local chunks = {}
+  if file then
+    chunks["@" .. file] = true
+  end
+  ---@param value any
+  local function add(value)
+    if type(value) == "function" then
+      local info = debug.getinfo(value, "S")
+      if info.what ~= "C" then
+        chunks[info.source] = true
+      end
+    end
+  end
+  for _, value in pairs(harness) do
+    if type(value) == "table" then
+      -- raw traversal: a table of the harness may carry metamethods that must not run here
+      for _, inner in next, value do
+        add(inner)
+      end
+    else
+      add(value)
+    end
+  end
+  return chunks
+end
+
 ---Wrap the project's harness in place and return the table the spec receives as `H`.
 ---@param a Testing.Assert.Context|table Context (needs `current()`).
 ---@param harness table The table the project's `harness.lua` returned (it is modified in place).
@@ -384,6 +420,7 @@ function M.new(a, harness, assertions, opts)
     a = a,
     harness = harness,
     file = opts.file and slashes(opts.file) or nil,
+    transparent = harness_chunks(harness, opts.file),
     resolved = resolved,
     assertions = assertions or {},
     active = true,

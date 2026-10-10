@@ -295,7 +295,7 @@ return function(H)
   eq(asked_err, "FAIL demo: expected 2, got 1", "with the message of the old harnesses")
   eq(#pcase.assertions, 2, "the raised check is not recorded, the other two are")
   eq(pcase.assertions[1].ok, false, "the failed check outside the pcall is recorded")
-  eq(pctx.entry_height, nil, "the entry marker is gone with the case")
+  eq(pctx.entry, nil, "the entry marker is gone with the case")
   local plain
   run(pctx, function()
     plain = pctx.eq(1, 2, "plain")
@@ -347,6 +347,200 @@ return function(H)
   end)
   eq(inner_ok, false, "a spec's pcall inside a plugin's protected call is asked, and answers")
   eq(icase.status, "pass", "nothing is recorded for the check that was asked")
+
+  -- ---------------------------------------------------------------------------------------------
+  -- review of fbcba7d: what the rule must not guess. Every case below records (the loud, safe answer)
+  -- except where it says the spec is answered.
+  local protected = require("testing.core.protected")
+  ---@param code string
+  ---@param chunk string chunk name, as the loader of a plugin's file would give it
+  ---@return function
+  local function plugin(code, chunk)
+    return assert(load(code, chunk))
+  end
+  -- non-tail recursion: every level keeps its frame
+  local function descend(depth, fn)
+    if depth == 0 then
+      return fn()
+    end
+    local r = descend(depth - 1, fn)
+    return r
+  end
+
+  eq(protected.inside(nil), false, "no entry point (outside of a case): nothing to answer")
+  local function linear_size()
+    local n = 1
+    while debug.getinfo(n + 1, "l") do
+      n = n + 1
+    end
+    return n
+  end
+  for _, depth in ipairs({ 0, 1, 2, 3, 7, 64, 100, 513 }) do
+    eq(
+      descend(depth, function()
+        return protected.stack_size()
+      end),
+      descend(depth, function()
+        return linear_size()
+      end),
+      "stack_size() found by halving counts what a walk counts, depth " .. depth
+    )
+  end
+
+  -- xpcall asks as well, and the handler sees the message
+  local xok, xerr
+  run(new_ctx(), function(c)
+    xok, xerr = xpcall(function()
+      c.eq(1, 2, "via xpcall")
+    end, function(e)
+      return "handled: " .. tostring(e)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(xok, false, "a failed eq inside the spec's xpcall raises")
+  eq(xerr, "handled: FAIL via xpcall: expected 2, got 1", "and reaches the message handler")
+
+  -- a pcall that was not called as `pcall` cannot be attributed: a plugin's helper that ends in
+  -- `return pcall(cb)` (LuaJIT has no istailcall; the call site names the helper), an alias, and a
+  -- spec's own tail-calling helper (documented: the spec fails loudly, the question is not answered)
+  local tail_emitter = plugin("local cb = ...; return pcall(cb)", "=plugin_tail")
+  local tctx = new_ctx()
+  local tcase = run(tctx, function()
+    tail_emitter(function()
+      tctx.eq(1, 2, "swallowed by a plugin's tail-called pcall")
+    end)
+    tctx.eq(1, 1, "holds")
+  end)
+  eq(
+    tcase.status,
+    "fail",
+    "a plugin's tail-called pcall is not taken for the spec's: the check is recorded"
+  )
+  local function asks_by_tail(fn)
+    return pcall(fn)
+  end
+  local tail_ok
+  local ocase = run(new_ctx(), function(c)
+    tail_ok = asks_by_tail(function()
+      c.eq(1, 2, "asked through a tail call")
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(tail_ok, true, "a tail-called pcall of the spec is not recognised as a question (documented)")
+  eq(ocase.status, "fail", "so the check is recorded and the spec fails where the author sees it")
+  local try = pcall
+  local alias_ok
+  local acase = run(new_ctx(), function(c)
+    alias_ok = try(function()
+      c.eq(1, 2, "asked through an alias")
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(alias_ok, true, "a pcall under another name is not recognised as a question")
+  eq(acase.status, "fail", "and the check is recorded")
+
+  -- a check that runs in a plugin's chunk is still answered when the spec's pcall is the one that catches:
+  -- the lowest frame of the spec decides, not the highest
+  local plugin_check = plugin("local c = ...; c.eq(1, 2, 'from plugin code')", "=plugin_check")
+  local pc_ok
+  run(new_ctx(), function(c)
+    pc_ok = pcall(function()
+      plugin_check(c)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(pc_ok, false, "the check runs in the plugin, the spec's pcall asks and gets the raise")
+
+  -- another coroutine than the one that started the case: stack heights cannot be compared, always record
+  local cctx = new_ctx()
+  local ccase = run(cctx, function()
+    for depth = 0, 80 do
+      coroutine.wrap(function()
+        descend(depth, function()
+          emitter(function()
+            cctx.eq(1, 2, "coroutine depth " .. depth)
+          end)
+        end)
+      end)()
+    end
+  end)
+  local cfailed = 0
+  for _, rec in ipairs(ccase.assertions) do
+    if not rec.ok then
+      cfailed = cfailed + 1
+    end
+  end
+  eq(cfailed, 81, "no depth of a plugin's coroutine makes a failed check vanish")
+
+  -- a plugin that recurses deeper than the search window: the answer is "record", at any depth
+  local recursive = plugin(
+    [[
+    local depth, cb = ...
+    local function go(n)
+      if n == 0 then
+        local ok = pcall(cb)
+        return ok
+      end
+      local r = go(n - 1)
+      return r
+    end
+    return go(depth)
+  ]],
+    "=plugin_recursive"
+  )
+  for _, depth in ipairs({ 5, 250, 1200 }) do
+    local rctx = new_ctx()
+    local rcase = run(rctx, function()
+      recursive(depth, function()
+        rctx.eq(1, 2, "deep in a plugin, depth " .. depth)
+      end)
+      rctx.eq(1, 1, "holds")
+    end)
+    eq(rcase.status, "fail", "a plugin " .. depth .. " frames deep does not swallow the check")
+  end
+
+  -- the runner is a directory, not a substring of the path
+  local spec_below_testing = plugin(
+    [[
+    local c = ...
+    local ok = pcall(function()
+      c.eq(1, 2, "asked")
+    end)
+    c.ok(not ok, "a spec below a lua/testing/ path is answered")
+  ]],
+    "@/home/dev/neolua/testing/proj/TESTS/ask_spec.lua"
+  )
+  eq(
+    run(new_ctx(), spec_below_testing).status,
+    "pass",
+    "the spec's own path does not make it the runner"
+  )
+  local plugin_below_testing = plugin(
+    "local cb = ...; local ok = pcall(cb); return ok",
+    "@/home/dev/plugins/foo/lua/testing/emit.lua"
+  )
+  local wctx = new_ctx()
+  local wcase = run(wctx, function()
+    pcall(function()
+      plugin_below_testing(function()
+        wctx.eq(1, 2, "swallowed by a plugin whose modules live in a lua/testing/")
+      end)
+    end)
+    wctx.eq(1, 1, "holds")
+  end)
+  eq(wcase.status, "fail", "a plugin below lua/testing/ is not taken for the runner")
+
+  -- an explicit failure (the negated checks of the luassert shim) answers the spec's question too
+  local fail_ok, fail_err
+  local fcase = run(new_ctx(), function(c)
+    fail_ok, fail_err = pcall(function()
+      c.fail("explicit")
+    end)
+    c.fail("recorded")
+  end)
+  eq(fail_ok, false, "a.fail inside the spec's pcall raises")
+  eq(fail_err, "explicit", "with its message")
+  eq(#fcase.assertions, 1, "and only the plain one is recorded")
 
   -- inspect and deep_equal, the pure helpers
   local t1 = { b = 1, a = 2, 10, 20 }

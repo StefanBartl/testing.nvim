@@ -139,6 +139,22 @@ return function(H)
   eq(failed[1].line, line_of(lfixture, "p2"), "plugin pcall fixture: it keeps the spec's line")
   has(failed[1].msg, "swallowed by the plugin", "plugin pcall fixture: and its message")
 
+  -- a harness split over two files: the helper's pcall is in the second file, it still only passes the error on
+  local sfixture = here .. "/fixtures/h_split/h_split.fixture.lua"
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = sfixture,
+    rel = "TESTS/h_split_spec.lua",
+    harness = here .. "/fixtures/h_split/harness.lua",
+  })
+  case = cases[1]
+  eq(case.error, nil, "split harness fixture: the file ran to its end")
+  eq(case.status, "pass", "split harness fixture: the question is answered through the second file")
+  eq(
+    #case.assertions,
+    4,
+    "split harness fixture: the four checks of the spec, the raised ones are not recorded"
+  )
+
   eq(
     project.find_harness(fixture, here .. "/fixtures/h/"),
     vim.fs.normalize(here .. "/fixtures/h/harness.lua"),

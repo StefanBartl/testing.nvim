@@ -21,7 +21,8 @@
 --- harness (`testing.discover.sniff`).
 ---
 --- Differences to the old harness, all by design and documented in `docs`/the M0 notes:
----   * `eq`/`ok` never raise, `with_patched` still re-raises a raise of its body;
+---   * `eq`/`ok` record instead of raising (inside a `pcall` the spec wrote they raise, as before), `with_patched`
+---     still re-raises a raise of its body;
 ---   * a spec file that makes no `H.eq`/`H.ok` call at all would fail under the zero-assertion rule;
 ---     the driver decides what that means for a file (see `testing.run.inproc`).
 

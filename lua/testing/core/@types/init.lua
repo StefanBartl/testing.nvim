@@ -208,8 +208,10 @@
 ---@alias Testing.Assert.CaseBody fun(a: Testing.Assert.Context)
 
 ---@class Testing.Assert.Context
---- The collecting assertions `a`. Every function records onto the current case and NEVER raises on a
---- failed check. Arguments are `(actual, expected, msg?)`, the same order as the `H.eq` of dialect A.
+--- The collecting assertions `a`. Every function records onto the current case and does not raise on a
+--- failed check, except inside a protected call the spec wrote (`testing.core.protected`: the spec asks
+--- "does this fail?" and gets the raise). Arguments are `(actual, expected, msg?)`, the same order as the
+--- `H.eq` of dialect A.
 --- Plain dot calls: `a.eq(x, 1)`, they can be destructured (`local eq = a.eq`).
 ---@field depth integer Extra frames to skip when locating the caller (a wrapper that does not tail call sets 1).
 ---@field eq fun(actual: any, expected: any, msg?: string): boolean Strict `==`; tables by identity.

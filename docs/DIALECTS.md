@@ -6,23 +6,54 @@ text decides; a configured name forces one dialect for every file.
 
 All dialects share the rule that makes a verdict trustworthy: a failed check is **recorded** on
 the open case and the file goes on, so every failure of a file is visible. The recorded call site
-is the spec's own `file:line`. One exception, because it is the only way a spec can ask "does this
-assertion fail?": a failed check inside a `pcall` / `xpcall` **that the spec wrote**
-(`pcall(function() H.eq(1, 2) end)`, `pcall(H.with_patched, t, k, v, function() H.eq(1, 2) end)`) is
-not recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. What
-decides is the protected call that would **catch** the raise, the innermost one between the check and
-the start of the case: it must be written in the spec's own file. Protected calls of a harness
-(`with_patched` pcalls its callback and re-raises) and of the runner are passed over, since the error
-goes on to the next one. A protected call of anything else — the plugin under test protecting a callback
-(`pcall(cb)` in an event emitter, `safe_call`), a helper file of the specs — would catch the raise, and
-whether it passes it on is not known: if it kept the error, the failed check would vanish and the case
-would pass. So there the check is recorded as usual. Checks that pass are recorded everywhere. A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at
-its first failed check, as it did on the old runner; the file then ends as an `error` case carrying that
-check's message. Limit: LuaJIT cannot tell a `pcall` in tail position (`return pcall(cb)`) from a call of
-the code that called the function, so write `local ok = pcall(cb); return ok` in a helper that must not
-swallow a failed check. A case without a single assertion is a failure, a file that raises
+is the spec's own `file:line`. A case without a single assertion is a failure, a file that raises
 while loading is an `error` case, and a file whose dialect is unknown is a `skip` (reported with
 the reason, never green; red under `--strict`). Nothing is a quiet pass.
+
+### A spec that asks "does this check fail?"
+
+There is one exception to "recorded", because it is the only way a spec can ask that question:
+a failed check inside a `pcall` / `xpcall` **that the spec wrote**
+(`pcall(function() H.eq(1, 2) end)`, `pcall(H.with_patched, t, k, v, function() H.eq(1, 2) end)`) is not
+recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. Checks that
+pass are recorded everywhere.
+
+What decides is the protected call that would **catch** the raise: the innermost one between the check
+and the start of the case.
+
+* It counts when the code that called `pcall` is in the spec's own file, and `pcall` / `xpcall` was
+  called under that name.
+* The harness and the runner are passed over, because they clean up and raise again
+  (`with_patched`, the busted hooks). The harness is every file that defines a function of `H`, so a
+  harness split over several files, or with helpers one table level down, counts.
+* A protected call of anything else — the plugin under test protecting a callback (`pcall(cb)` in an
+  event emitter, `safe_call`) — would catch the raise, and whether it passes it on is not known: if it
+  kept the error the failed check would vanish and the case would pass. So there the check is recorded
+  as usual.
+
+The rule is a guess from the call stack and errs towards **recording**: a question it does not
+recognise fails loudly in the spec, a check is never raised into a protected call it cannot attribute.
+What is not recognised, and records:
+
+* `return pcall(fn)` in tail position, and a `pcall` called under another name (`local try = pcall`).
+  LuaJIT has no `istailcall`, but the call site is named after the helper. Write
+  `local ok, err = pcall(...)` in the spec.
+* A question asked from another file than the spec's: a wrapper that returns the spec
+  (`return support.spec(function(H) ... end)`), a dispatcher that runs cases from a shared file, a helper
+  file (`util.fails(fn)`), `vim.F.npcall`.
+* A check on another coroutine than the one that started the case, and a stack more than 1000 frames
+  above it.
+
+What can still go missing, because the catch is not a Lua `pcall`: Neovim runs the callbacks of
+`vim.schedule`, autocmds, keymaps, timers and `nvim_buf_attach` under its own protected call. A check
+that fails there while a `pcall` of the spec is further out is raised into Neovim's catch, which prints
+an error and goes on. The `scheduled_error` guard (default `error`, [GUARDS.md](GUARDS.md)) turns most of
+these into a red case, with the message but without `file:line`. A mock inside the spec that protects a
+callback and throws the error away cannot be told from a question either.
+
+A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at its first
+failed check, as it did on the old runner; the file then ends as an `error` case carrying that check's
+message.
 
 ## Matrix
 
@@ -60,7 +91,7 @@ The project's `harness.lua` is loaded and every function of its table is wrapped
 own state stays one coherent object. The rule is **never greener than the project's own harness**:
 
 * An error that reads `[file:line: ]FAIL ...` is a failed assertion: it is recorded and the call
-  returns `false` (inside a `pcall` the spec wrote it is raised instead, see the top of this page). Functions
+  returns `false` (inside a `pcall` the spec wrote it is raised instead, see [A spec that asks "does this check fail?"](#a-spec-that-asks-does-this-check-fail)). Functions
   whose body mentions `FAIL` are assertions and count as passes when they return.
 * A helper that only **runs a callback** (`H.notifications(fn)`, `H.notices(fn)`) is not an assertion even though the assertions inside the callback raise the project's counter (`H.checks`): the callback's assertions are recorded one by one, the helper is counted only when the counter grew by more than the assertions recorded inside the call. The IR therefore follows the project's counter (fileops 52 of 52, emojis 929 of 929).
 * A collector (`H.check(name, fn)`: it catches the callback's error itself and appends to

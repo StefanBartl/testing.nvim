@@ -447,8 +447,9 @@ The dialect of a file is sniffed from its text (`dialect = "auto"`) or forced.
             raising by name: spy, stub, mock, insulate, expose, finally,
             xdescribe, luassert extensions.
 
-A failed check is recorded and the file goes on. A case without an assertion
-fails; a file whose dialect cannot be told is an error case with the reason
+A failed check is recorded and the file goes on (inside a pcall the spec wrote
+it is raised instead, so a spec can ask whether a check fails: docs/DIALECTS.md).
+A case without an assertion fails; a file whose dialect cannot be told is an error case with the reason
 (never a skip: set `dialect` in .testing.lua).
 
 ==============================================================================

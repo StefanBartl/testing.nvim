@@ -1,5 +1,5 @@
 ---@module 'testing.core.assert'
----@brief Collecting assertions: a failed check is recorded on the current case, never raised.
+---@brief Collecting assertions: a failed check is recorded on the current case; raised only where the spec asks.
 ---@description
 --- Problem P1 of the old runner: the first failed `H.eq` raised, so a file showed one failure at a
 --- time. Here every assertion appends `{ ok, kind, msg, expected, actual, file, line }` to the case
@@ -11,7 +11,9 @@
 ---   * an assertion with no case bound is a programming error and raises (a silent drop would hide
 ---     failures);
 ---   * a failed check inside a protected call that the SPEC wrote (`pcall(function() H.eq(1, 2) end)`)
----     is not recorded but raised, so the spec can ask whether an assertion fails (`testing.core.protected`).
+---     is not recorded but raised, so the spec can ask whether an assertion fails. Which protected call
+---     counts, and where the rule stops, is `testing.core.protected`; the case body is entered through
+---     `a.entry`, which marks where that search ends.
 ---
 --- Pure Lua: no editor API. The clock defaults to `vim.uv.hrtime` when it exists and `os.clock`
 --- otherwise; tests inject their own. Argument order is `(actual, expected, msg)`, the order of
@@ -275,7 +277,7 @@ function M.new(opts)
   ---@param actual string
   ---@return boolean ok always false
   local function fail(file, line, kind, msg, fmt, expected, actual)
-    if protected.inside(a.entry_height) then
+    if protected.inside(a.entry) then
       -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
       error(("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual)), 0)
     end
@@ -413,6 +415,10 @@ function M.new(opts)
 
   function a.fail(msg)
     local file, line = locate()
+    if protected.inside(a.entry) then
+      -- an explicit failure (the negated checks of the luassert shim end here) answers the spec's question too
+      error(msg or "FAIL", 0)
+    end
     return append({ ok = false, kind = "fail", msg = msg, file = file, line = line })
   end
 
@@ -488,11 +494,11 @@ function M.new(opts)
     -- Defensive: should safe_call ever raise itself (its `error.new` insists on a string message),
     -- the case still ends as an error instead of taking the runner down.
     local function entered(...)
-      a.entry_height = protected.entry_height()
+      a.entry = protected.entry()
       return body(...)
     end
     local guarded, called, err = pcall(safe_call, entered, a)
-    a.entry_height = nil
+    a.entry = nil
     if not guarded or not called then
       local traceback = guarded and tostring(type(err) == "table" and err.message or err)
         or tostring(called)

@@ -64,7 +64,8 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   lib.nvim, markdown/diff.nvim and images.nvim (`a`, `b`, `c`), spotlight.nvim's `M.run()` (`d`),
   specs on a project's own `harness.lua` (`h`), self-running scripts (`script`) and `describe`/`it`
   with a luassert subset (`busted`). A failed check is recorded and the file goes on, so every
-  failure is visible. Unsupported busted features (`spy`, `stub`, `mock`, `insulate`, ...) raise by
+  failure is visible (inside a `pcall` the spec wrote it is raised, so a spec can ask whether a check
+  fails: [docs/DIALECTS.md](docs/DIALECTS.md#a-spec-that-asks-does-this-check-fail)). Unsupported busted features (`spy`, `stub`, `mock`, `insulate`, ...) raise by
   name instead of passing silently.
 - **Honesty**: a case without an assertion fails (unless `assertions = "warn"`, and then the terminal
   lists them); the runner is never greener than a project's own harness (collected failures, printed

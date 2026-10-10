@@ -5,7 +5,8 @@
 --- modifier words (`is`, `are`, `has`, `does`, `not`, `no`, joined with `_` or `.`) and then the
 --- assertion: `assert.is_not_nil(x)`, `assert.are_not.equal(a, b)`, `assert.has_no.errors(fn)`.
 --- Every assertion records onto the case that is open (a failed check does not raise: all failures of
---- a case are visible), and maps its arguments onto the kernel (`testing.core.assert`):
+--- a case are visible; inside a `pcall` the spec wrote it raises, see `testing.core.protected`), and
+--- maps its arguments onto the kernel (`testing.core.assert`):
 --- luassert's `expected` comes first, the kernel's `actual` first.
 ---
 --- Supported (the census of the fleet, `dialect_census.json`, found exactly these):
