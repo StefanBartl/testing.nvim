@@ -518,6 +518,32 @@ return function(H)
     "swallowing does not turn a timeout into a pass"
   )
 
+  -- the runner's own work after a timed-out case (streaming it to the parent) is not cut off by the deadline the hook
+  -- still holds: a raise inside it lands wherever the hook happens to be, e.g. inside the first-time `require` of the
+  -- JSON encoder, and leaves that module as "loop or previous error" for the rest of a reused warm-pool member
+  write(T .. "a_hang_spec.lua", "return function(H)\n  while true do end\nend\n")
+  local streamed = {}
+  report = run_root(root, {
+    timeouts = { file_ms = 300 },
+    on_case_early = function(case)
+      local x = 0
+      for i = 1, 3000000 do
+        x = x + i
+      end
+      streamed[case.file] = x
+    end,
+  })
+  eq(
+    by_id_or_file(report)["a_hang_spec.lua"].status,
+    "timeout",
+    "a timed-out file whose case is streamed is a timeout"
+  )
+  ok(
+    streamed["TESTS/a_hang_spec.lua"] ~= nil,
+    "the deadline did not cut off the streaming of the timed-out case"
+  )
+  eq(timeout.depth(), outer_depth, "and the guard is released")
+
   -- a hopeless vim.wait is a timeout as well
   write(
     T .. "a_hang_spec.lua",

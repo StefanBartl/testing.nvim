@@ -57,60 +57,10 @@ local function pack(...)
   return { n = select("#", ...), ... }
 end
 
----Source text without Lua comments (line and long comments); string literals are kept as they are. A doc comment
----above a function would otherwise be read as part of the PREVIOUS function's body by `assertion_names`, and the
----verdict would depend on the wording of a comment ("raises FAIL through error(...)").
----@param src string
----@return string
-function M.strip_comments(src)
-  local out, i, n = {}, 1, #src
-  local sub, find = string.sub, string.find
-  while i <= n do
-    local c = sub(src, i, i)
-    if c == "-" and sub(src, i + 1, i + 1) == "-" then
-      local level = src:match("^%-%-%[(=*)%[", i)
-      if level then
-        local _, e = find(src, "]" .. level .. "]", i, true)
-        i = (e or n) + 1
-        -- a block comment separates tokens (`a--[[x]]b` is two names)
-        out[#out + 1] = " "
-      else
-        i = find(src, "\n", i, true) or (n + 1)
-      end
-    elseif c == '"' or c == "'" then
-      local j = i + 1
-      while j <= n do
-        local d = sub(src, j, j)
-        if d == "\\" then
-          -- `\z` skips the blanks and line breaks that follow, a backslash before CRLF is one escaped line break
-          local nxt = sub(src, j + 1, j + 1)
-          if nxt == "z" then
-            j = (find(src, "[^%s]", j + 2) or (n + 1))
-          elseif nxt == "\r" and sub(src, j + 2, j + 2) == "\n" then
-            j = j + 3
-          else
-            j = j + 2
-          end
-        elseif d == c or d == "\n" then
-          break
-        else
-          j = j + 1
-        end
-      end
-      out[#out + 1] = sub(src, i, j)
-      i = j + 1
-    elseif c == "[" and src:match("^%[=*%[", i) then
-      local level = src:match("^%[(=*)%[", i)
-      local _, e = find(src, "]" .. level .. "]", i, true)
-      out[#out + 1] = sub(src, i, e or n)
-      i = (e or n) + 1
-    else
-      out[#out + 1] = c
-      i = i + 1
-    end
-  end
-  return table.concat(out)
-end
+---Source text without Lua comments (line and long comments; string literals and long strings are kept). A doc
+---comment above a function would otherwise be read as part of the PREVIOUS function's body by `assertion_names`,
+---and the verdict would depend on the wording of a comment ("raises FAIL through error(...)").
+M.strip_comments = require("testing.discover.lua_text").strip_comments
 
 ---Names of the functions in the harness source whose body raises a message mentioning `FAIL` (static scan).
 ---@param text string
@@ -178,6 +128,7 @@ end
 ---@field attributed table<string, integer> Failures per list that the adapter recorded itself.
 ---@field base_fail integer Failure counters when the file started.
 ---@field generic_base table<string, integer> Size of every field that looks like a failure record when the file started.
+---@field listed { entry: Testing.Result.Assertion, list: string, n: integer, printed: integer }[] Collector failures recorded from a failure list, oldest first.
 ---@field attributed_fail integer Failure-counter growth the adapter recorded itself.
 ---@field printed_fail integer Failure lines printed inside wrapped calls.
 ---@field printed_lines string[] The first of them.
@@ -264,14 +215,16 @@ end
 ---@param msg? string
 ---@param file? string
 ---@param line? integer
+---@return Testing.Result.Assertion|nil entry
 local function record(state, kind, ok, msg, file, line)
   local case = state.a.current()
   if not case then
-    return
+    return nil
   end
-  case.assertions[#case.assertions + 1] =
-    { ok = ok, kind = kind, msg = msg, file = file, line = line }
+  local entry = { ok = ok, kind = kind, msg = msg, file = file, line = line }
+  case.assertions[#case.assertions + 1] = entry
   state.recorded = state.recorded + 1
+  return entry
 end
 
 ---Text of an error without its `file:line:` prefix, and that position.
@@ -340,6 +293,7 @@ local function wrap(state, key, original)
     local outermost = state.depth == 0
     state.depth = state.depth + 1
     local printed_from = state.capture and #state.capture.lines or 0
+    local printed_fail_before = state.printed_fail
     local pass_before = pass_counter_sum(state)
     local recorded_before = state.recorded
     local fail_before = fail_counter_sum(state)
@@ -391,7 +345,21 @@ local function wrap(state, key, original)
             efile, eline = site.file, site.line
           end
           local file, line = site_of(state, efile, eline)
-          record(state, key, false, msg, file, line)
+          local entry = record(state, key, false, msg, file, line)
+          if entry and grew > 0 then
+            -- remembered so that a spec which takes the EXPECTED failure back out of the list can withdraw it
+            for _, list_name in ipairs(resolved.lists) do
+              if list_len(state, list_name) > lists_before[list_name] then
+                state.listed[#state.listed + 1] = {
+                  entry = entry,
+                  list = list_name,
+                  n = grew,
+                  printed = state.printed_fail - printed_fail_before,
+                }
+                break
+              end
+            end
+          end
         else
           local file, line = call_site(state)
           record(state, key, true, nil, file, line)
@@ -456,6 +424,16 @@ end
 local CODE_DIRS =
   { lua = true, plugin = true, after = true, ftplugin = true, autoload = true, src = true }
 
+-- directories below a harness in the PROJECT ROOT that hold support code of the tests; anything else below a root
+-- harness may be the plugin (`vendor/`, `core/`, a root-level module is no "below" at all and counts)
+local TEST_DIRS = { tests = true, test = true, spec = true, specs = true }
+
+---function -> absolute path of the chunk it was defined in, taken the first time it is seen: a relative chunk name
+---is read against the working directory of THAT moment, so a harness table that outlives a run does not lose its
+---relative helpers when the working directory changes in between
+---@type table<function, string>
+local CHUNK_PATH = setmetatable({}, { __mode = "k" })
+
 ---The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and the files below the
 ---directory of that file that define a function of `H` (one table level deep, raw fields only). A harness
 ---split over several files (`H.with_patched` from a helper module) is still the harness; its protected calls
@@ -471,8 +449,10 @@ local CODE_DIRS =
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.
+---@param root? string Project root. A harness that sits IN the root has the whole project below it: only files
+---  directly in the root or below `tests/` count then (the plugin may live anywhere else).
 ---@return table<string, true>
-local function harness_chunks(harness, file)
+local function harness_chunks(harness, file, root)
   ---@type table<string, true>
   local chunks = {}
   if not file then
@@ -480,6 +460,7 @@ local function harness_chunks(harness, file)
   end
   chunks["@" .. file] = true
   local dir = absolute(file):match("^(.*)/[^/]*$")
+  local at_root = dir ~= nil and root ~= nil and absolute(root) == dir
   ---@param value any
   local function add(value)
     if type(value) ~= "function" or not dir then
@@ -491,10 +472,14 @@ local function harness_chunks(harness, file)
     if info.what == "C" or info.source:sub(1, 1) ~= "@" then
       return
     end
-    local path = absolute(info.source:sub(2))
-    if
-      path:sub(1, #dir + 1) == dir .. "/" and not CODE_DIRS[path:sub(#dir + 2):match("^([^/]*)/")]
-    then
+    local path = CHUNK_PATH[value]
+    if not path then
+      path = absolute(info.source:sub(2))
+      CHUNK_PATH[value] = path
+    end
+    local below = path:sub(1, #dir + 1) == dir .. "/"
+    local top = below and path:sub(#dir + 2):match("^([^/]*)/") or nil
+    if below and not CODE_DIRS[top] and not (at_root and top and not TEST_DIRS[top:lower()]) then
       -- the key stays the raw name: `protected.inside` looks the calling chunk up by its raw `source`
       chunks[info.source] = true
     end
@@ -521,8 +506,9 @@ local spec_chunks = {}
 ---@param a Testing.Assert.Context|table Context (needs `current()`).
 ---@param harness table The table the project's `harness.lua` returned (it is modified in place).
 ---@param assertions? table<string, boolean> Names known to be assertions (`M.assertion_names`).
----@param opts? { source?: string, file?: string, capture?: Testing.Policy.Capture } `file` is the path of the
----  harness file as it was loaded; without it no helper of the harness is passed over by the pcall rule.
+---@param opts? { source?: string, file?: string, root?: string, capture?: Testing.Policy.Capture } `file` is the
+---  path of the harness file as it was loaded; without it no helper of the harness is passed over by the pcall
+---  rule. `root` is the project root (see `harness_chunks`).
 ---@return table H The same table, its functions wrapped.
 ---@return Testing.HarnessProject.State state
 function M.new(a, harness, assertions, opts)
@@ -533,7 +519,7 @@ function M.new(a, harness, assertions, opts)
     a = a,
     harness = harness,
     file = opts.file and slashes(opts.file) or nil,
-    transparent = harness_chunks(harness, opts.file),
+    transparent = harness_chunks(harness, opts.file, opts.root),
     resolved = resolved,
     assertions = assertions or {},
     active = true,
@@ -542,6 +528,7 @@ function M.new(a, harness, assertions, opts)
     recorded = 0,
     base = {},
     attributed = {},
+    listed = {},
     base_fail = 0,
     generic_base = {},
     attributed_fail = 0,
@@ -585,6 +572,29 @@ function M.reconcile(state)
   end
   local resolved = state.resolved
   for _, name in ipairs(resolved.lists) do
+    -- a spec that tests the harness takes an expected failure back out of the list (`table.remove(H.failures)`):
+    -- the collector failures recorded for it are withdrawn, newest first, as far as the list is shorter now
+    local excess = (state.attributed[name] or 0)
+      - math.max(0, list_len(state, name) - state.base[name])
+    for i = #state.listed, 1, -1 do
+      local item = state.listed[i]
+      if excess <= 0 then
+        break
+      end
+      if item.list == name and item.n <= excess then
+        for j = #case.assertions, 1, -1 do
+          if case.assertions[j] == item.entry then
+            table.remove(case.assertions, j)
+            break
+          end
+        end
+        table.remove(state.listed, i)
+        -- the failure line it printed belongs to the failure that is gone
+        state.printed_fail = math.max(0, state.printed_fail - item.printed)
+        excess = excess - item.n
+        state.attributed[name] = state.attributed[name] - item.n
+      end
+    end
     local list = rawget(state.harness, name)
     local unseen = list_len(state, name) - state.base[name] - (state.attributed[name] or 0)
     if unseen > 0 and type(list) == "table" then
@@ -691,6 +701,7 @@ function M.run_file(a, spec, opts)
         local H, state = M.new(a, harness, M.assertion_names(text), {
           source = text,
           file = path,
+          root = spec.root,
           capture = capture,
         })
         -- a harness table that outlives a file may carry helpers that a spec file put into it: no spec file that

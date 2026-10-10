@@ -356,6 +356,39 @@ return function(H)
     ok(bare_ok and bare_state.transparent["@harness.lua"] == true, "its own chunk is the harness")
   end
 
+  -- a relative chunk name is read against the working directory of the first look: a harness table that outlives a
+  -- run keeps its relative helpers when the working directory changes in between
+  do
+    local base = vim.fs.normalize(vim.fn.tempname())
+    local elsewhere = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(base .. "/sub", "p")
+    vim.fn.mkdir(elsewhere, "p")
+    local home = vim.uv.cwd()
+    local harness = { guard = plugin("return function() end", "@sub/helper.lua")() }
+    vim.uv.chdir(base)
+    local _, first = project.new(
+      assert_mod.new(),
+      harness,
+      {},
+      { file = base .. "/sub/harness.lua" }
+    )
+    vim.uv.chdir(elsewhere)
+    local _, second = project.new(
+      assert_mod.new(),
+      harness,
+      {},
+      { file = base .. "/sub/harness.lua" }
+    )
+    vim.uv.chdir(home)
+    vim.fn.delete(base, "rf")
+    vim.fn.delete(elsewhere, "rf")
+    ok(first.transparent["@sub/helper.lua"] == true, "a relative helper is part of the harness")
+    ok(
+      second.transparent["@sub/helper.lua"] == true,
+      "and still is after the working directory changed"
+    )
+  end
+
   -- -------------------------------------------------------
   -- an assertion that delegates to another assertion: the failure belongs to the outer one
   -- -------------------------------------------------------

@@ -102,6 +102,16 @@ return function(H)
   eq(fixture_h.classify({ "FAIL" }), nil, "a non-string error is not a failure")
 
   -- ------------------------------------------------------------------ the collector (gopath's H.check)
+  -- a spec that tests the harness takes an EXPECTED failure back out of the failure list: the failure the collector
+  -- recorded (and the line it printed) is withdrawn, and the check after it is judged on its own
+  do
+    local trimmed = run("trim")
+    local trim_failed, trim_passed = split(trimmed)
+    eq(#trim_failed, 0, "a failure taken back out of the list is gone")
+    eq(trim_passed, 2, "the check after it holds (the collector and the assertion inside it)")
+    eq(trimmed.status, "pass", "so the file passes")
+  end
+
   local path = fx .. "/check_fail.fixture.lua"
   local case = run("check_fail")
   eq(case.status, "fail", "failed checks fail the file (the old false green)")

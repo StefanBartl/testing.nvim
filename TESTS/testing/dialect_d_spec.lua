@@ -100,6 +100,33 @@ return function(H)
   eq(cases[1].status, "pass", "a module whose checks hold passes")
   eq(#cases[1].assertions, 2, "two checks, two records")
 
+  -- a spec that tests the harness takes an EXPECTED failure back out of the list: it is withdrawn from the case,
+  -- and the next real failure is still seen
+  write(
+    root .. "/trim_spec.lua",
+    'local t = require("harness")\nlocal M = {}\nfunction M.run()\n  t.ok("expected to fail", false)\n  table.remove(t.failures)\n  t.ok("holds", true)\n  t.eq("real", 1, 2)\nend\nreturn M\n'
+  )
+  cases = dialect.run_file(
+    "d",
+    assert_mod.new(),
+    { path = root .. "/trim_spec.lua", rel = "TESTS/trim_spec.lua" }
+  )
+  eq(cases[1].status, "fail", "the real failure after a trimmed one fails the file")
+  local trim_failed, trim_passed = {}, 0
+  for _, rec in ipairs(cases[1].assertions) do
+    if rec.ok then
+      trim_passed = trim_passed + 1
+    else
+      trim_failed[#trim_failed + 1] = rec.msg
+    end
+  end
+  eq(
+    trim_failed,
+    { "real: expected 2, got 1" },
+    "only the real failure is recorded, the trimmed one is gone"
+  )
+  eq(trim_passed, 1, "and the passing check")
+
   -- a module that checks nothing fails (P4); one that raises is an error with the earlier checks kept
   write(root .. "/none_spec.lua", "local M = {}\nfunction M.run()\nend\nreturn M\n")
   cases = dialect.run_file(

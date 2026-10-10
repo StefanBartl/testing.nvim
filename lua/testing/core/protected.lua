@@ -35,9 +35,10 @@
 ---   * a check in the MESSAGE HANDLER of an `xpcall` is not a question: the handler runs on top of the frame of
 ---     `error` / `assert` that is throwing, and an error raised there is not caught by that `xpcall` (LuaJIT
 ---     answers "error in error handling"). Such a check records. After a runtime error (a nil index, an error
----     of a C function, an `error()` that `coroutine.wrap` rethrows, a failing `require`) no such frame is left and
----     the handler cannot be told from the function: a failed check there is raised and lost, so check the
----     returned message after `xpcall` returned.
+---     of a C function) no `error` frame is left, but the C function itself is: a C frame (an `error()` that
+---     `coroutine.wrap` rethrows, a failing `require`) between the check and an `xpcall` records as well. Only a
+---     runtime error of Lua code (a nil index) cannot be told from the function: a failed check in that handler
+---     is raised and lost, so check the returned message after `xpcall` returned.
 ---
 --- Not covered, by design of the platform: Neovim runs the callbacks of `vim.schedule` (while the spec waits),
 --- autocmds, keymaps, timers and the buffer callbacks of typed keys under its own protected call (a C
@@ -170,6 +171,8 @@ function M.inside(entry, transparent)
   -- chunk of the code that called it
   ---@type string|nil
   local catcher
+  -- level and kind of the protected call that decides
+  local catcher_level, catcher_is_xpcall
   for level = 2, last - 1 do
     local info = getinfo(level, "f")
     if not info then
@@ -189,7 +192,7 @@ function M.inside(entry, transparent)
       end
       -- a protected call of the harness or the runner cleans up and raises again: the error goes on
       if not (is_runner(source) or (transparent ~= nil and transparent[source] == true)) then
-        catcher = source
+        catcher, catcher_level, catcher_is_xpcall = source, level, func == xpcall_fn
         break
       end
     elseif func == error_fn or func == assert_fn then
@@ -200,6 +203,21 @@ function M.inside(entry, transparent)
   end
   if not catcher then
     return false
+  end
+  if catcher_is_xpcall then
+    -- A C function between the check and an `xpcall` (a `coroutine.wrap` that rethrows, `require`, `string.gsub`)
+    -- may be the frame an error is being thrown from, and then the check runs in the message handler, where a raise
+    -- is lost. A body that calls the check through such a frame is rare, and recording is loud, not green.
+    for level = 2, catcher_level - 1 do
+      local between = getinfo(level, "fS")
+      if not between then
+        return false
+      end
+      local func = between.func
+      if between.what == "C" and func ~= pcall_fn and func ~= xpcall_fn then
+        return false
+      end
+    end
   end
   -- chunk of the spec: given by the dialect, else the lowest frame of the spec's own code at or above the
   -- entry point (the case body is the spec itself in a unit test of the kernel)

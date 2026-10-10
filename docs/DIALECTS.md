@@ -31,8 +31,8 @@ and the start of the case.
   `H.sut = require("plugin")`, is the code under test and does not count. Paths are compared absolute and
   normalized (a helper found through `./?.lua` counts, `TESTS/../lib/x.lua` is not below `TESTS`), and a file
   below `lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/` or `src/` of the harness directory never counts: a
-  `harness.lua` in the project root has the plugin there (a plugin in another directory of a root harness,
-  such as `TESTS/lib/` or a root-level module, is not told apart and counts). The files are not read, so a support module of
+  `harness.lua` in the project root has the plugin there (a harness in the project root counts only files
+  directly in the root or below `tests/`, `test/`, `spec/` and `specs/`). The files are not read, so a support module of
   the harness directory that is exported through `H` and keeps the error of its own `pcall` (an event bus
   that logs a failing handler) counts as harness: keep it out of the harness directory, or make it raise
   again. No spec file counts, even when it put its helpers into a harness table that outlives the file.
@@ -61,10 +61,11 @@ What is not recognised, and records:
 * A check on another coroutine than the one that started the case, and a stack more than 500 frames
   above it.
 * A check in the message handler of an `xpcall` (`xpcall(fn, function(e) H.eq(e, "x") end)`) is not a
-  question. After `error()` / `assert()` it is recorded; after a runtime error (a nil index, an error of
-  a C function, an `error()` that `coroutine.wrap` rethrows, a failing `require`) the handler cannot be told
-  from the function and a failed check there is lost (LuaJIT answers "error in error handling"). Check the
-  returned message after `xpcall` returned instead.
+  question: the handler runs on top of the frame the error comes from, and a raise there is lost (LuaJIT
+  answers "error in error handling"). It is recorded after `error()` / `assert()` and when a C function sits
+  between the check and the `xpcall` (a `coroutine.wrap` that rethrows, a failing `require`). Only a runtime
+  error of Lua code (a nil index) cannot be told from the function: a failed check in that handler is lost.
+  Check the returned message after `xpcall` returned instead.
 * `return pcall(check)` as the condition of a `vim.wait` or in a retry helper records the first failed
   attempt for good; write `local ok = pcall(check); return ok`. A helper file for questions
   (`util.fails(fn)`) has to be handed the `pcall` by the spec: the call must stand in the spec file.
@@ -140,7 +141,9 @@ own state stays one coherent object. The rule is **never greener than the projec
   whose body mentions `FAIL` are assertions and count as passes when they return.
 * A helper that only **runs a callback** (`H.notifications(fn)`, `H.notices(fn)`) is not an assertion even though the assertions inside the callback raise the project's counter (`H.checks`): the callback's assertions are recorded one by one, the helper is counted only when the counter grew by more than the assertions recorded inside the call. The IR therefore follows the project's counter (fileops 52 of 52, emojis 929 of 929).
 * A collector (`H.check(name, fn)`: it catches the callback's error itself and appends to
-  `H.failures`) is recorded as one assertion, failed when the harness collected a failure.
+  `H.failures`) is recorded as one assertion, failed when the harness collected a failure. A spec that tests
+  the harness may take an expected failure back out of `H.failures`: the assertion (and the failure line it
+  printed) is withdrawn.
 * After the file ran, what the harness recorded and the adapter did not see is added as failures:
   growth of a failure list or counter (`H.failures`, `H.failed`, `H.fail_count`), failure lines the
   harness printed (`[FAIL] ...`, `FAIL ...`, `not ok ...`) through `print`, `io.write`,
@@ -178,7 +181,8 @@ guessing.
 [A spec that asks "does this check fail?"](#a-spec-that-asks-does-this-check-fail) does not apply
 here: the checks are the plugin's own `t.*`, which record into its counters and never raise (as on the
 plugin's own runner), so `pcall(function() t.eq("x", 1, 2) end)` returns `true` and the failure stays
-recorded. The same holds for dialect `script`, which runs in a child editor.
+recorded. The same holds for dialect `script`, which runs in a child editor. A spec that tests the
+harness may take an expected failure back out of `t.failures`: the failure is then withdrawn from the case.
 
 ## `busted` (plenary.busted specs, without plenary)
 

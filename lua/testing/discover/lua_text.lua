@@ -75,7 +75,8 @@ function M.code_only(text)
   return table.concat(out)
 end
 
----Comments only removed (string contents stay): what the spec-list scraper of a project runner needs.
+---Comments only removed (string contents stay, long strings too; each comment leaves one blank): what the spec-list
+---scraper of a project runner and the static scan of a harness need.
 ---@param text string
 ---@return string
 function M.strip_comments(text)
@@ -87,7 +88,15 @@ function M.strip_comments(text)
       while j <= n do
         local d = text:sub(j, j)
         if d == "\\" then
-          j = j + 2
+          -- `\z` skips the blanks and line breaks that follow, a backslash before CRLF is one escaped line break
+          local nxt = text:sub(j + 1, j + 1)
+          if nxt == "z" then
+            j = text:find("[^%s]", j + 2) or (n + 1)
+          elseif nxt == "\r" and text:sub(j + 2, j + 2) == "\n" then
+            j = j + 3
+          else
+            j = j + 2
+          end
         elseif d == c or d == "\n" then
           break
         else
@@ -96,6 +105,12 @@ function M.strip_comments(text)
       end
       out[#out + 1] = text:sub(i, j)
       i = j + 1
+    elseif c == "[" and text:match("^%[=*%[", i) then
+      -- a long string keeps its text, comment markers inside it included
+      local level = text:match("^%[(=*)%[", i)
+      local _, e = text:find("]" .. level .. "]", i, true)
+      out[#out + 1] = text:sub(i, e or n)
+      i = (e or n) + 1
     elseif text:sub(i, i + 1) == "--" then
       local level = text:match("^%-%-%[(=*)%[", i)
       local stop

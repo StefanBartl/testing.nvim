@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: JohnnyMorganz/stylua-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -28,6 +30,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: "5.4"
@@ -50,10 +54,13 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       # lib.nvim is a hard runtime dependency; the runner finds it in .deps/lib.nvim (and names all
       # four places it searched when it is missing: exit code 3).
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           repository: StefanBartl/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
@@ -110,14 +117,18 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           repository: StefanBartl/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       # telemetry_wrap_spec.lua needs the real runtime-analysis.telemetry module on the runtimepath.
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
           repository: StefanBartl/runtime-analysis.nvim
           path: .deps/runtime-analysis.nvim
           ref: ci-verified

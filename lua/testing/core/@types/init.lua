@@ -144,7 +144,10 @@
 ---@field param? string|integer Parameter label, appended as `#param`.
 ---@field line? integer
 ---@field tags? string[]
----@field spec_path? string Path of the spec file as the dialect loads it (`run_case` only; not part of the case).
+
+---Options of `run_case`: a case plus where its spec file is.
+---@class Testing.Assert.RunCaseOpts: Testing.Result.CaseOpts
+---@field spec_path? string Path of the spec file as the dialect loads it. Without it the pcall rule takes the lowest frame of the spec's own code (`testing.core.protected`).
 
 ---@class Testing.Result.FinishOpts
 ---@field expect_fail? boolean Map `fail` to `xfail` and `pass` to `xpass`.
@@ -233,7 +236,7 @@
 ---@field current fun(): Testing.Result.Case|nil The bound case, if any.
 ---@field scope fun(): table Assertion functions bound to the case open now; a call after that case ended is recorded in `late` and raises.
 ---@field late { case_id: string, kind: string, file: string|nil, line: integer|nil, msg: string }[] Assertions that arrived after their case ended.
----@field run_case fun(opts: Testing.Result.CaseOpts, body: Testing.Assert.CaseBody, finish?: Testing.Result.FinishOpts): Testing.Result.Case Run `body(a)` as one case.
+---@field run_case fun(opts: Testing.Assert.RunCaseOpts, body: Testing.Assert.CaseBody, finish?: Testing.Result.FinishOpts): Testing.Result.Case Run `body(a)` as one case.
 
 ---@class Testing.Assert.Module
 ---@field new fun(opts?: Testing.Assert.Opts): Testing.Assert.Context

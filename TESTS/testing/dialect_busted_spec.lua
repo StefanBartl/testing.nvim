@@ -75,6 +75,29 @@ return function(H)
   eq(swallowed.assertions[1].line, line_of(wrap_path, "w1"), "with the spec's line")
   eq(wmap[W .. "asks itself"].status, "pass", "a question the spec asks itself is answered")
 
+  -- ------------------------------------------------------------------ a check in the message handler of an xpcall
+  local handler_path = here .. "/fixtures/busted_handler.fixture.lua"
+  local hmap = by_id(run("busted_handler"))
+  local HP = "TESTS/busted_handler_spec.lua::handler::"
+  for _, row in ipairs({
+    { "after error", "h1" },
+    { "after a wrap rethrow", "h2" },
+    { "after a failing require", "h3" },
+  }) do
+    local handled = hmap[HP .. row[1]]
+    eq(handled.status, "fail", row[1] .. ": the failed check in the handler is recorded, not lost")
+    eq(
+      handled.assertions[1].line,
+      line_of(handler_path, row[2]),
+      row[1] .. ": with the spec's line"
+    )
+  end
+  eq(
+    hmap[HP .. "in the body"].status,
+    "pass",
+    "a check in the body of the xpcall is raised and answered"
+  )
+
   local globals_before = {}
   for _, name in ipairs({
     "describe",

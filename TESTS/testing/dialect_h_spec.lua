@@ -229,6 +229,13 @@ return function(H)
       "swallowed by the plugin below the harness directory",
     },
     {
+      "root harness, plugin in vendor/",
+      "h_rootvendor",
+      "h_rootvendor",
+      "r1",
+      "swallowed by the plugin in vendor/",
+    },
+    {
       "dot-dot path",
       "h_dotdot",
       "h_dotdot",
@@ -242,6 +249,7 @@ return function(H)
       path = lfile,
       rel = "TESTS/" .. name .. "_spec.lua",
       harness = here .. "/fixtures/" .. dir .. "/harness.lua",
+      root = here .. "/fixtures/" .. dir,
     })
     case = cases[1]
     eq(case.error, nil, label .. ": the file ran to its end")
@@ -449,19 +457,19 @@ return function(H)
   )
   eq(
     project.strip_comments("a --[==[ x ]] ]==] b -- c\nd \"--e\" '--f' [[--g]] h"),
-    "a   b \nd \"--e\" '--f' [[--g]] h",
+    "a   b  \nd \"--e\" '--f' [[--g]] h",
     "line and long comments go, string literals and long strings stay"
   )
   for _, row in ipairs({
-    { "a - 1 -- c\nb", "a - 1 \nb", "a minus is not a comment" },
-    { "x -- last line", "x ", "a comment on the last line, no newline behind it" },
+    { "a - 1 -- c\nb", "a - 1  \nb", "a minus is not a comment" },
+    { "x -- last line", "x  ", "a comment on the last line, no newline behind it" },
     { 's = "q\\" -- c"\nz', 's = "q\\" -- c"\nz', "an escaped quote does not end the string" },
-    { 's = "a" -- c\nz', 's = "a" \nz', "a comment after a string that ended" },
-    { "s = 'a' -- c\nz", "s = 'a' \nz", "a comment after a single-quoted string" },
-    { "s = 'a\n-- c\nz", "s = 'a\n\nz", "an unterminated string ends at the line" },
+    { 's = "a" -- c\nz', 's = "a"  \nz', "a comment after a string that ended" },
+    { "s = 'a' -- c\nz", "s = 'a'  \nz", "a comment after a single-quoted string" },
+    { "s = 'a\n-- c\nz", "s = 'a\n \nz", "an unterminated string ends at the line" },
     {
       "s = [==[ ]] -- x ]==] -- c\nz",
-      "s = [==[ ]] -- x ]==] \nz",
+      "s = [==[ ]] -- x ]==]  \nz",
       "a long string of level 2 ends at its own bracket",
     },
     { "a --[[ x ]] b --[==[ y ]] ]==] c", "a   b   c", "long comments of level 0 and 2" },
@@ -469,12 +477,12 @@ return function(H)
     { "a--[[x]]b", "a b", "a block comment separates tokens" },
     {
       's = "a\\z\n   b" -- c\nz',
-      's = "a\\z\n   b" \nz',
+      's = "a\\z\n   b"  \nz',
       "a string goes on after \\z and its line break",
     },
     {
       's = "a\\\r\nb" -- c\nz',
-      's = "a\\\r\nb" \nz',
+      's = "a\\\r\nb"  \nz',
       "a backslash before CRLF is one escaped line break",
     },
   }) do

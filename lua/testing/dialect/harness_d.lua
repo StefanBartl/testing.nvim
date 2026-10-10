@@ -29,6 +29,7 @@ local M = {}
 ---@field t table The plugin's harness module.
 ---@field passed integer Passes already recorded.
 ---@field failed integer Failures already recorded.
+---@field listed table[] The failed assertions recorded from the plugin's failure list, oldest first (taken back when the spec trims the list).
 ---@field depth integer Nesting of wrapped calls.
 
 ---@type Testing.HarnessD.Run|nil
@@ -85,17 +86,34 @@ local function sync(run, file, line)
   local t = run.t
   local passed, failures = t.passed, t.failures
   if case then
+    -- a spec that tests the harness takes an EXPECTED failure back out of the list (`table.remove(t.failures)`):
+    -- the same number of failures that came from the list are withdrawn, newest first, and the count follows the
+    -- list, or the next real failure would go unseen
+    for _ = #failures + 1, run.failed do
+      local entry = table.remove(run.listed)
+      if entry then
+        for i = #case.assertions, 1, -1 do
+          if case.assertions[i] == entry then
+            table.remove(case.assertions, i)
+            break
+          end
+        end
+      end
+    end
+    run.failed = math.min(run.failed, #failures)
     for _ = run.passed + 1, passed do
       case.assertions[#case.assertions + 1] = { ok = true, kind = "ok", file = file, line = line }
     end
     for i = run.failed + 1, #failures do
-      case.assertions[#case.assertions + 1] = {
+      local entry = {
         ok = false,
         kind = "ok",
         msg = tostring(failures[i]),
         file = file,
         line = line,
       }
+      case.assertions[#case.assertions + 1] = entry
+      run.listed[#run.listed + 1] = entry
     end
   end
   run.passed, run.failed = passed, #failures
@@ -203,7 +221,7 @@ function M.run_body(a, spec)
       )
     end
 
-    active = { a = a, t = t, passed = t.passed, failed = #t.failures, depth = 0 }
+    active = { a = a, t = t, passed = t.passed, failed = #t.failures, listed = {}, depth = 0 }
     local run = active
     local ran, run_err = xpcall(mod.run, with_traceback)
     -- whatever was counted without passing through a wrapper (direct writes) is recorded with the spec's file

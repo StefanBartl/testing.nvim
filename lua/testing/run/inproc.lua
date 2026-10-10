@@ -418,6 +418,8 @@ local function run_files(opts, holder)
               ),
             }
           else
+            -- the one place that runs a spec body, for in-process, child, pool and rpc runs alike: `spec.path` is both what
+            -- the dialect loads and the `spec_path` it hands to `a.run_case` (the pcall rule, `testing.core.protected`)
             local spec = { path = entry.path, rel = rel, harness = entry.harness, root = root }
             cases = dialect.run_file(entry.dialect, a, spec, {
               select = accept,
@@ -439,7 +441,12 @@ local function run_files(opts, holder)
                   guards_mod.attach_surface({ case }, gsess)
                 end
                 if opts.on_case_early then
-                  pcall(opts.on_case_early, case)
+                  -- the runner's own work (a child streams the case to its parent) is not cut off by the deadline
+                  -- the spec just exceeded: a raise there would land wherever the hook is, even inside the
+                  -- first-time `require` of the JSON encoder, and poison it for a reused warm-pool member
+                  guard:suspend(function()
+                    return pcall(opts.on_case_early, case)
+                  end)
                 end
                 if M.BAD[case.status] and maxfail then
                   bad_before = bad_before + 1
