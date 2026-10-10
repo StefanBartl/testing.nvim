@@ -203,8 +203,16 @@ return function(H)
   -- the recorded assertion files are real paths of this checkout: normalize them as a report does
   -- (a checkout below /home/<user> or /Users/<user> is a home path until it is a placeholder)
   local host_ci = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
+  -- the traceback also names lib.nvim's frames: a checkout outside the repo and outside $HOME (HOME set elsewhere:
+  -- sudo, a sandbox) would keep its /home/<user> path; the roots have no name for a dependency, <TMP> is "elsewhere"
+  local deps = require("testing.deps")
+  local lib = assert(deps.resolve("lib.nvim", deps.self_dir()))
   local encoded = assert(result.encode(res, {
-    roots = { repo = vim.fs.dirname(vim.fs.dirname(here)), home = vim.uv.os_homedir() },
+    roots = {
+      repo = vim.fs.dirname(vim.fs.dirname(here)),
+      home = vim.uv.os_homedir(),
+      tmp = lib.dir,
+    },
     case_insensitive = host_ci,
   }))
   local good, problems = result.validate(vim.json.decode(encoded))

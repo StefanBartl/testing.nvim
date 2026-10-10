@@ -212,9 +212,14 @@ return function(H)
   -- normalizes them): validate the normalized form, repo before home (a checkout under $HOME,
   -- e.g. /home/runner/work/... on a CI runner, must read <REPO>, not <HOME>/work/...).
   local this = vim.fs.normalize(debug.getinfo(1, "S").source:sub(2))
+  -- the traceback also names lib.nvim's frames: a checkout outside the repo and outside $HOME (HOME set elsewhere:
+  -- sudo, a sandbox) would keep its /home/<user> path; the roots have no name for a dependency, <TMP> is "elsewhere"
+  local deps = require("testing.deps")
+  local lib = assert(deps.resolve("lib.nvim", deps.self_dir()))
   local host_roots = {
     repo = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(this))),
     home = vim.uv.os_homedir(),
+    tmp = lib.dir,
   }
   local ci_host = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
   good, problems =

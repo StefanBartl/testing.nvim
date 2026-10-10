@@ -30,10 +30,15 @@ if ! command -v nvim >/dev/null 2>&1; then
   exit 3
 fi
 
-# Throwaway app name and state: the run never reads or writes the developer's real
-# stdpath("config"/"data"/"state"/"cache").
+# Throwaway app name, state and cache: the run never reads or writes the developer's real stdpath("state") and
+# stdpath("cache"). stdpath("config") and stdpath("data") are not redirected, they only carry the app name below
+# (an exported NVIM_APPNAME is kept, then they are that app's).
 export NVIM_APPNAME="${NVIM_APPNAME:-testing-nvim-tests}"
-scratch="$(mktemp -d)"
+# Without a scratch directory the exports below would point at /state and /cache: stop instead
+scratch="$(mktemp -d)" || {
+  printf '\033[31m%s\033[0m\n' "error: cannot create a scratch directory (mktemp -d failed; is TMPDIR writable?)." >&2
+  exit 3
+}
 trap 'rm -rf "$scratch"' EXIT
 if command -v cygpath >/dev/null 2>&1; then
   scratch="$(cygpath -m "$scratch")"
