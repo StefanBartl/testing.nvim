@@ -161,6 +161,115 @@ return function(H)
     eq(run(new_ctx(), start).status, "pass", "a runner frame below the spec's code is not the spec")
   end
 
+  -- a C frame (the `pcall` that starts the spec) between the runner and the spec is not the spec either
+  do
+    local spec_fn = plugin(
+      [[
+      local c = ...
+      local ok = pcall(function() c.eq(1, 2, "asked") end)
+      c.ok(not ok, "answered")
+    ]],
+      "@/home/dev/proj/TESTS/lower_spec.lua"
+    )
+    local start = plugin(
+      "local spec = ...; return function(c) pcall(spec, c) end",
+      "@" .. runner_dir .. "run/start.lua"
+    )(spec_fn)
+    eq(
+      run(new_ctx(), start).status,
+      "pass",
+      "the runner's pcall below the spec's code is not the spec"
+    )
+  end
+
+  -- the spec's code is looked for at or above the entry point, never in the code that called the function that
+  -- entered: here that is a chunk of another file, and the question is asked in the file that entered
+  do
+    local out = {}
+    local inner = plugin(
+      [[
+      local protected, out = ...
+      return function()
+        local entry = protected.entry()
+        pcall(function() out.answered = protected.inside(entry) end)
+      end
+    ]],
+      "@/home/dev/proj/TESTS/inner_spec.lua"
+    )(protected, out)
+    local outer = plugin(
+      "local inner = ...; return function() inner(); return 1 end",
+      "@/home/dev/proj/TESTS/outer_spec.lua"
+    )(inner)
+    outer()
+    eq(
+      out.answered,
+      true,
+      "the pcall of the file that entered is the spec's, the file that called it is not"
+    )
+  end
+
+  -- -------------------------------------------------------
+  -- which chunks are the harness: the setup (project.new) over chunks that are named, not loaded from disk
+  -- -------------------------------------------------------
+  do
+    local function helper(chunk)
+      return plugin("return function() end", chunk)()
+    end
+    ---@param file string
+    ---@param chunks string[]
+    ---@return table<string, true>
+    local function transparent_for(file, chunks)
+      local harness = {}
+      for i, chunk in ipairs(chunks) do
+        harness["f" .. i] = helper(chunk)
+      end
+      local _, state = project.new(assert_mod.new(), harness, {}, { file = file })
+      return state.transparent
+    end
+    local set = transparent_for("/proj/TESTS/harness.lua", {
+      "@/elsewhere/lib.lua",
+      "@/proj/TESTS/support/guard.lua",
+      "@/proj/TESTS/lua/code.lua",
+      "@/proj/TESTS/plugin/code.lua",
+      "@/proj/TESTS/after/code.lua",
+      "@/proj/TESTS/ftplugin/code.lua",
+      "@/proj/TESTS/autoload/code.lua",
+      "@/proj/TESTS/src/code.lua",
+      "@/proj/TESTS_other/guard.lua",
+      "@/proj/TESTS/../OTHER/guard.lua",
+    })
+    ok(
+      set["@/proj/TESTS/harness.lua"] == true,
+      "the harness file is the harness although none of H came from it"
+    )
+    ok(
+      set["@/proj/TESTS/support/guard.lua"] == true,
+      "a support file below the harness directory is the harness"
+    )
+    for _, dir in ipairs({ "lua", "plugin", "after", "ftplugin", "autoload", "src" }) do
+      ok(
+        set["@/proj/TESTS/" .. dir .. "/code.lua"] == nil,
+        dir .. "/ below the harness directory is the code under test"
+      )
+    end
+    ok(set["@/elsewhere/lib.lua"] == nil, "a file elsewhere is not the harness")
+    ok(
+      set["@/proj/TESTS_other/guard.lua"] == nil,
+      "a directory that only starts like the harness directory is not"
+    )
+    ok(
+      set["@/proj/TESTS/../OTHER/guard.lua"] == nil,
+      "and neither is a path that leaves it through .."
+    )
+    -- a configured relative path of the harness: the directory is the working directory
+    local relative_set = transparent_for("harness.lua", { "@sub/guard.lua", "@lua/code.lua" })
+    ok(
+      relative_set["@sub/guard.lua"] == true,
+      "a relative harness file: the files below the working directory count"
+    )
+    ok(relative_set["@lua/code.lua"] == nil, "except the code under test")
+  end
+
   -- -------------------------------------------------------
   -- the cost of the stack size: a few walks, not one per level
   -- -------------------------------------------------------

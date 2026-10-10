@@ -1007,4 +1007,153 @@ return function(H)
   local ca, cb = {}, {}
   ca.me, cb.me = ca, cb
   ok(assert_mod.deep_equal(ca, cb), "deep_equal terminates on cycles")
+  -- a comparison that raises (a strict-mode table) is "not equal", and says that it raised: a caller that negates the
+  -- answer must not take "raised" for "differs"
+  local raising = setmetatable({ a = 1 }, {
+    __index = function()
+      error("strict")
+    end,
+  })
+  local strict_equal, strict_raised = assert_mod.deep_equal(raising, { a = 1, b = 2 })
+  eq({ strict_equal, strict_raised }, { false, true }, "a raising comparison: unequal, and raised")
+  local plain_equal, plain_raised = assert_mod.deep_equal({ 1 }, { 2 })
+  eq({ plain_equal, plain_raised }, { false, false }, "an ordinary mismatch did not raise")
+
+  -- an assertion without a message keeps `msg` nil in the IR: only a message that is no string is turned into text
+  do
+    local unnamed = run(new_ctx(), function(c)
+      c.eq(1, 1)
+      c.ok(true)
+      c.matches("abc", "b")
+    end)
+    eq(#unnamed.assertions, 3, "three passed assertions without a message")
+    for i, assertion in ipairs(unnamed.assertions) do
+      eq(assertion.msg, nil, "assertion " .. i .. ' has no message, not the text "nil"')
+    end
+  end
+
+  -- a malformed pattern of `error` is a failed check that names the pattern and what the pattern matcher said
+  do
+    local bad = run(new_ctx(), function(c)
+      c.error(function()
+        error("boom", 0)
+      end, "%")
+    end)
+    local failure = bad.assertions[1]
+    eq(failure.ok, false, "a malformed pattern fails the check")
+    has(failure.msg, 'invalid pattern "%"', "and names the pattern")
+    has(failure.msg, '"boom"', "and shows the error that was caught")
+  end
+
+  -- inspect with its character budget gives the text of the unbounded walk, cut at the limit: the cut falls
+  -- inside a string, between two elements and inside the keys behind an array, whatever the lengths
+  do
+    local function quoted(s)
+      return '"' .. s .. '"'
+    end
+    local function expected_text(parts)
+      local text = "{" .. table.concat(parts, ", ") .. "}"
+      if #text > 2000 then
+        text = text:sub(1, 2000) .. "...(truncated)"
+      end
+      return text
+    end
+    local mismatches = {}
+    for count = 12, 30 do
+      for width = 60, 140, 7 do
+        for keys = 0, 3 do
+          local value, parts = {}, {}
+          for i = 1, count do
+            value[i] = ("x"):rep(width + i % 3)
+            parts[i] = quoted(value[i])
+          end
+          for k = 1, keys do
+            value["k" .. k] = k
+            parts[#parts + 1] = "k" .. k .. " = " .. k
+          end
+          if assert_mod.inspect(value) ~= expected_text(parts) then
+            mismatches[#mismatches + 1] = ("%d/%d/%d"):format(count, width, keys)
+          end
+        end
+      end
+    end
+    -- the budget runs out by a few characters only: the keys behind it are still part of the visible text
+    for width = 1980, 2000 do
+      local value = { ("z"):rep(width), k1 = 1, k2 = 2 }
+      local want = expected_text({ quoted(value[1]), "k1 = 1", "k2 = 2" })
+      if assert_mod.inspect(value) ~= want then
+        mismatches[#mismatches + 1] = ("edge/%d"):format(width)
+      end
+    end
+    for width = 1980, 2000 do
+      local value = { ("z"):rep(width), "b", "c" }
+      local want = expected_text({ quoted(value[1]), '"b"', '"c"' })
+      if assert_mod.inspect(value) ~= want then
+        mismatches[#mismatches + 1] = ("array-edge/%d"):format(width)
+      end
+    end
+    eq(mismatches, {}, "array of strings (+ keys): the same text as the unbounded walk")
+    for _, length in ipairs({ 1, 150, 1998, 1999, 2000, 2001, 2002, 5000 }) do
+      local s = ("y"):rep(length)
+      local want = quoted(s)
+      if #want > 2000 then
+        want = want:sub(1, 2000) .. "...(truncated)"
+      end
+      eq(assert_mod.inspect(s), want, "a string of " .. length .. " bytes")
+    end
+    local escaped = ("a\n"):rep(1500)
+    eq(
+      assert_mod.inspect(escaped),
+      (quoted(escaped:gsub("\n", "\\n")):sub(1, 2000)) .. "...(truncated)",
+      "a string whose quoted form is longer than the string"
+    )
+  end
+
+  -- ... and it stops WORKING when the rest is cut anyway: count the `string.format` calls of a huge value
+  do
+    local real_format = string.format
+    local calls = 0
+    local function count_format()
+      local info = debug.getinfo(2, "f")
+      if info and info.func == real_format then
+        calls = calls + 1
+      end
+    end
+    local function formats_for(value)
+      calls = 0
+      debug.sethook(count_format, "c")
+      local finished, problem = pcall(assert_mod.inspect, value)
+      debug.sethook()
+      assert(finished, problem)
+      return calls
+    end
+    local strings, numbers, map = {}, {}, {}
+    for i = 1, 200000 do
+      strings[i] = ("s"):rep(98)
+      numbers[i] = i
+    end
+    for i = 1, 20000 do
+      map["key" .. i] = i
+    end
+    ok(formats_for(strings) <= 40, "a huge array of long strings: about 20 elements are formatted")
+    ok(formats_for(numbers) <= 1100, "a huge array of numbers: about 1000 elements are formatted")
+    ok(formats_for(map) <= 2200, "a huge map: about 1000 entries are formatted, not all 20000")
+    -- an array that used the budget up leaves the keys alone: they are neither collected nor sorted
+    local sorted = 0
+    local mt = {
+      __tostring = function()
+        sorted = sorted + 1
+        return "key"
+      end,
+    }
+    local head = {}
+    for i = 1, 30 do
+      head[i] = ("h"):rep(100)
+    end
+    for _ = 1, 50 do
+      head[setmetatable({}, mt)] = 1
+    end
+    assert_mod.inspect(head)
+    eq(sorted, 0, "the keys behind an array that used the budget up are not sorted")
+  end
 end

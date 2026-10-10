@@ -119,6 +119,11 @@ return function(H)
     { "not_equals holds", "A.not_equals(1, 2)", true },
     { "is_not.same holds", "A.is_not.same({ 1 }, { 2 })", true },
     { "is_not.same fails", "A.is_not.same({ 1 }, { 1 })", false },
+    {
+      "is_not.same on a table that raises while it is compared fails",
+      "A.is_not.same(setmetatable({ a = 1 }, { __index = function() error('strict') end }), { a = 1, b = 2 })",
+      false,
+    },
     { "is_not.truthy holds", "A.is_not.truthy(nil)", true },
     { "is_not_true holds", "A.is_not_true(1)", true },
     { "is_not_false fails", "A.is_not_false(false)", false },

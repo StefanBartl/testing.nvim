@@ -449,8 +449,41 @@ return function(H)
   )
   eq(
     project.strip_comments("a --[==[ x ]] ]==] b -- c\nd \"--e\" '--f' [[--g]] h"),
-    "a  b \nd \"--e\" '--f' [[--g]] h",
+    "a   b \nd \"--e\" '--f' [[--g]] h",
     "line and long comments go, string literals and long strings stay"
+  )
+  for _, row in ipairs({
+    { "a - 1 -- c\nb", "a - 1 \nb", "a minus is not a comment" },
+    { "x -- last line", "x ", "a comment on the last line, no newline behind it" },
+    { 's = "q\\" -- c"\nz', 's = "q\\" -- c"\nz', "an escaped quote does not end the string" },
+    { 's = "a" -- c\nz', 's = "a" \nz', "a comment after a string that ended" },
+    { "s = 'a' -- c\nz", "s = 'a' \nz", "a comment after a single-quoted string" },
+    { "s = 'a\n-- c\nz", "s = 'a\n\nz", "an unterminated string ends at the line" },
+    {
+      "s = [==[ ]] -- x ]==] -- c\nz",
+      "s = [==[ ]] -- x ]==] \nz",
+      "a long string of level 2 ends at its own bracket",
+    },
+    { "a --[[ x ]] b --[==[ y ]] ]==] c", "a   b   c", "long comments of level 0 and 2" },
+    { "a --[[ never closed", "a  ", "an unterminated long comment ends the text" },
+    { "a--[[x]]b", "a b", "a block comment separates tokens" },
+    {
+      's = "a\\z\n   b" -- c\nz',
+      's = "a\\z\n   b" \nz',
+      "a string goes on after \\z and its line break",
+    },
+    {
+      's = "a\\\r\nb" -- c\nz',
+      's = "a\\\r\nb" \nz',
+      "a backslash before CRLF is one escaped line break",
+    },
+  }) do
+    eq(project.strip_comments(row[1]), row[2], "strip_comments: " .. row[3])
+  end
+  eq(
+    project.assertion_names('function H.a(x) if x - 1 > 0 then error("FAIL a") end end'),
+    { a = true },
+    "a minus before error( does not hide the rest of the line"
   )
   cases = dialect.run_file("h", assert_mod.new(), {
     path = comment_dir .. "/swallowed.fixture.lua",

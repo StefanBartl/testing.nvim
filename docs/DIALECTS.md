@@ -30,8 +30,9 @@ and the start of the case.
   split over several files counts. A function of `H` that comes from anywhere else, such as
   `H.sut = require("plugin")`, is the code under test and does not count. Paths are compared absolute and
   normalized (a helper found through `./?.lua` counts, `TESTS/../lib/x.lua` is not below `TESTS`), and a file
-  below `lua/`, `plugin/`, `after/`, `ftplugin/` or `autoload/` of the harness directory never counts: a
-  `harness.lua` in the project root has the plugin there. The files are not read, so a support module of
+  below `lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/` or `src/` of the harness directory never counts: a
+  `harness.lua` in the project root has the plugin there (a plugin in another directory of a root harness,
+  such as `TESTS/lib/` or a root-level module, is not told apart and counts). The files are not read, so a support module of
   the harness directory that is exported through `H` and keeps the error of its own `pcall` (an event bus
   that logs a failing handler) counts as harness: keep it out of the harness directory, or make it raise
   again. No spec file counts, even when it put its helpers into a harness table that outlives the file.
@@ -61,8 +62,9 @@ What is not recognised, and records:
   above it.
 * A check in the message handler of an `xpcall` (`xpcall(fn, function(e) H.eq(e, "x") end)`) is not a
   question. After `error()` / `assert()` it is recorded; after a runtime error (a nil index, an error of
-  a C function) the handler cannot be told from the function and a failed check there is lost (LuaJIT
-  answers "error in error handling"). Check the returned message after `xpcall` returned instead.
+  a C function, an `error()` that `coroutine.wrap` rethrows, a failing `require`) the handler cannot be told
+  from the function and a failed check there is lost (LuaJIT answers "error in error handling"). Check the
+  returned message after `xpcall` returned instead.
 * `return pcall(check)` as the condition of a `vim.wait` or in a retry helper records the first failed
   attempt for good; write `local ok = pcall(check); return ok`. A helper file for questions
   (`util.fails(fn)`) has to be handed the `pcall` by the spec: the call must stand in the spec file.

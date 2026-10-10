@@ -95,7 +95,7 @@ local function msg_of(v)
   if v == nil then
     return nil
   end
-  return type(v) == "string" and v or tostring(v)
+  return type(v) == "string" and v or inspect(v)
 end
 
 A.equal = function(S, neg, expected, actual, msg)
@@ -113,7 +113,12 @@ A.same = function(S, neg, expected, actual, msg)
   if not neg then
     return S.same(actual, expected, msg_of(msg))
   end
-  if not assert_mod.deep_equal(actual, expected) then
+  local equal, raised = assert_mod.deep_equal(actual, expected)
+  if raised then
+    -- a comparison that threw (a strict-mode table) says nothing about the values: never "they differ"
+    return S.fail(msg_of(msg) or "the comparison of the values raised an error")
+  end
+  if not equal then
     return S.ok(true, msg_of(msg))
   end
   return S.fail(msg_of(msg) or ("expected values to differ, both are " .. inspect(actual)))

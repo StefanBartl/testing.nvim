@@ -72,6 +72,8 @@ function M.strip_comments(src)
       if level then
         local _, e = find(src, "]" .. level .. "]", i, true)
         i = (e or n) + 1
+        -- a block comment separates tokens (`a--[[x]]b` is two names)
+        out[#out + 1] = " "
       else
         i = find(src, "\n", i, true) or (n + 1)
       end
@@ -80,7 +82,15 @@ function M.strip_comments(src)
       while j <= n do
         local d = sub(src, j, j)
         if d == "\\" then
-          j = j + 2
+          -- `\z` skips the blanks and line breaks that follow, a backslash before CRLF is one escaped line break
+          local nxt = sub(src, j + 1, j + 1)
+          if nxt == "z" then
+            j = (find(src, "[^%s]", j + 2) or (n + 1))
+          elseif nxt == "\r" and sub(src, j + 2, j + 2) == "\n" then
+            j = j + 3
+          else
+            j = j + 2
+          end
         elseif d == c or d == "\n" then
           break
         else
@@ -443,7 +453,8 @@ local function absolute(path)
 end
 
 -- directories of a project that hold the code under test (what the runtime path loads), never a harness
-local CODE_DIRS = { lua = true, plugin = true, after = true, ftplugin = true, autoload = true }
+local CODE_DIRS =
+  { lua = true, plugin = true, after = true, ftplugin = true, autoload = true, src = true }
 
 ---The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and the files below the
 ---directory of that file that define a function of `H` (one table level deep, raw fields only). A harness
@@ -451,9 +462,12 @@ local CODE_DIRS = { lua = true, plugin = true, after = true, ftplugin = true, au
 ---clean up and raise again, they never answer a question. A function from anywhere else is not the harness:
 ---`H.sut = require("plugin")` exports the code under test, and its `pcall` may swallow what the spec raises.
 ---Paths are compared in their absolute, normalized form, and a file below a directory of the runtime path
----(`lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/`) of the harness directory is never part of the harness: a
----`harness.lua` in the project root has the plugin there. The files are not read: a support module below the
+---(`lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/`, `src/`) of the harness directory is never part of the harness: a
+---`harness.lua` in the project root has the plugin there (`src/` too). The files are not read: a support module below the
 ---harness directory that is exported through `H` counts although its `pcall` may keep the error.
+---A relative chunk name is made absolute against the working directory at the time of the call: a harness table
+---that outlives a run and a working directory that changed in between lose their relative helpers (the check
+---records: a loud false red).
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.

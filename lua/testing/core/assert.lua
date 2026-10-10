@@ -65,7 +65,7 @@ local function inspect_value(value, depth, seen, budget)
   seen[value] = true
   local parts, n = {}, #value
   for i = 1, n do
-    if budget.n <= 0 then
+    if budget.n < 0 then
       break
     end
     parts[#parts + 1] = inspect_value(value[i], depth + 1, seen, budget)
@@ -73,7 +73,7 @@ local function inspect_value(value, depth, seen, budget)
   end
   local keys = {}
   -- nothing left to show: neither collect nor sort the keys of a huge table
-  for k in pairs(budget.n > 0 and value or {}) do
+  for k in pairs(budget.n >= 0 and value or {}) do
     if not (type(k) == "number" and k >= 1 and k <= n and k == math.floor(k)) then
       keys[#keys + 1] = k
     end
@@ -89,7 +89,7 @@ local function inspect_value(value, depth, seen, budget)
     return tostring(a) < tostring(b)
   end)
   for _, k in ipairs(keys) do
-    if budget.n <= 0 then
+    if budget.n < 0 then
       break
     end
     local label = type(k) == "string" and k:match("^[%a_][%w_]*$") and k
@@ -145,13 +145,15 @@ end
 
 ---Deep equality like `vim.deep_equal`: same keys, equal values, metatables not compared (an `__index` is
 ---consulted, as `vim.deep_equal` does; one that raises, as on a strict-mode table, makes the values unequal
----instead of making the check throw out of a protected call that would swallow it).
+---instead of making the check throw out of a protected call that would swallow it). The second result tells that
+---the comparison raised: a caller that NEGATES the answer (`are_not.same`) must not read "raised" as "differs".
 ---@param a any
 ---@param b any
----@return boolean
+---@return boolean equal
+---@return boolean raised
 function M.deep_equal(a, b)
   local called, equal = pcall(deep_eq, a, b, {}, 0)
-  return called and equal
+  return called and equal == true, not called
 end
 
 -- =========================================================

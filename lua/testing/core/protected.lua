@@ -35,8 +35,9 @@
 ---   * a check in the MESSAGE HANDLER of an `xpcall` is not a question: the handler runs on top of the frame of
 ---     `error` / `assert` that is throwing, and an error raised there is not caught by that `xpcall` (LuaJIT
 ---     answers "error in error handling"). Such a check records. After a runtime error (a nil index, an error
----     of a C function) no such frame is left and the handler cannot be told from the function: a failed check
----     there is raised and lost, so check the returned message after `xpcall` returned.
+---     of a C function, an `error()` that `coroutine.wrap` rethrows, a failing `require`) no such frame is left and
+---     the handler cannot be told from the function: a failed check there is raised and lost, so check the
+---     returned message after `xpcall` returned.
 ---
 --- Not covered, by design of the platform: Neovim runs the callbacks of `vim.schedule` (while the spec waits),
 --- autocmds, keymaps, timers and the buffer callbacks of typed keys under its own protected call (a C
