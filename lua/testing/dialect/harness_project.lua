@@ -18,7 +18,10 @@
 ---     recorded as ONE assertion, failed when the harness collected a failure or `fn` raised, with the
 ---     callback's own error as the message;
 ---   * any other error is not an assertion failure (a helper's own bug, an error raised by a callback):
----     it propagates untouched and ends the file as an `error`.
+---     it propagates untouched and ends the file as an `error`;
+---   * except inside a `pcall` / `xpcall` that the SPEC wrote (`testing.core.protected`): there the error of a
+---     failed check propagates too, so a spec can ask "does this fail?". The helpers of the harness itself
+---     are passed over (`harness_chunks`), the code under test is not.
 ---
 --- NEVER GREENER THAN THE PROJECT. After the file ran, the harness' own bookkeeping is reconciled with
 --- what the adapter recorded: failures that appeared in a collected list (`H.failures`) or a failure
@@ -54,11 +57,57 @@ local function pack(...)
   return { n = select("#", ...), ... }
 end
 
+---Source text without Lua comments (line and long comments); string literals are kept as they are. A doc comment
+---above a function would otherwise be read as part of the PREVIOUS function's body by `assertion_names`, and the
+---verdict would depend on the wording of a comment ("raises FAIL through error(...)").
+---@param src string
+---@return string
+function M.strip_comments(src)
+  local out, i, n = {}, 1, #src
+  local sub, find = string.sub, string.find
+  while i <= n do
+    local c = sub(src, i, i)
+    if c == "-" and sub(src, i + 1, i + 1) == "-" then
+      local level = src:match("^%-%-%[(=*)%[", i)
+      if level then
+        local _, e = find(src, "]" .. level .. "]", i, true)
+        i = (e or n) + 1
+      else
+        i = find(src, "\n", i, true) or (n + 1)
+      end
+    elseif c == '"' or c == "'" then
+      local j = i + 1
+      while j <= n do
+        local d = sub(src, j, j)
+        if d == "\\" then
+          j = j + 2
+        elseif d == c or d == "\n" then
+          break
+        else
+          j = j + 1
+        end
+      end
+      out[#out + 1] = sub(src, i, j)
+      i = j + 1
+    elseif c == "[" and src:match("^%[=*%[", i) then
+      local level = src:match("^%[(=*)%[", i)
+      local _, e = find(src, "]" .. level .. "]", i, true)
+      out[#out + 1] = sub(src, i, e or n)
+      i = (e or n) + 1
+    else
+      out[#out + 1] = c
+      i = i + 1
+    end
+  end
+  return table.concat(out)
+end
+
 ---Names of the functions in the harness source whose body raises a message mentioning `FAIL` (static scan).
 ---@param text string
 ---@return table<string, boolean>
 function M.assertion_names(text)
   local names = {}
+  text = M.strip_comments(text)
   -- `function H.name(`, `function M.name(` and `H.name = function(`
   local starts = {}
   for pos, name in text:gmatch("()function%s+[%a_][%w_]*%.([%a_][%w_]*)%s*%(") do
@@ -231,6 +280,12 @@ local function split_position(err)
   return err, nil, nil
 end
 
+---wrapper -> the function of the project it replaced: a harness table that outlives a run (`H` cached in `_G` or
+---in `package.loaded`) is wrapped again by the next run, which must see the project's own function, not a layer
+---of the earlier run (layers would pile up, one per file, and hide the chunk the function was defined in)
+---@type table<function, function>
+local ORIGINAL = setmetatable({}, { __mode = "k" })
+
 ---Wrap one function of the harness.
 ---@param state Testing.HarnessProject.State
 ---@param key string
@@ -239,7 +294,9 @@ end
 local function wrap(state, key, original)
   local resolved = state.resolved
   local is_collector = resolved.collectors[key] == true
-  return function(...)
+  original = ORIGINAL[original] or original
+  local wrapper
+  wrapper = function(...)
     local case = state.active and state.a.current() or nil
     if not case then
       return original(...)
@@ -368,13 +425,35 @@ local function wrap(state, key, original)
     end
     error(err, 0)
   end
+  ORIGINAL[wrapper] = original
+  return wrapper
 end
+
+---Absolute, normalized spelling of a chunk path (forward slashes, no `.` / `..` segments): it does not depend on
+---how the file was found. A module found through a `./?.lua` entry of `package.path` (or `dofile("TESTS/x.lua")`)
+---has a chunk name relative to the working directory, and `TESTS/../lib/x.lua` is not a file below `TESTS`.
+---@param path string
+---@return string
+local function absolute(path)
+  path = slashes(path)
+  if not (path:find("^/") or path:find("^%a:/")) then
+    path = slashes(vim.uv.cwd() or ".") .. "/" .. path
+  end
+  return (vim.fs.normalize(path, { expand_env = false }))
+end
+
+-- directories of a project that hold the code under test (what the runtime path loads), never a harness
+local CODE_DIRS = { lua = true, plugin = true, after = true, ftplugin = true, autoload = true }
 
 ---The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and the files below the
 ---directory of that file that define a function of `H` (one table level deep, raw fields only). A harness
 ---split over several files (`H.with_patched` from a helper module) is still the harness; its protected calls
 ---clean up and raise again, they never answer a question. A function from anywhere else is not the harness:
 ---`H.sut = require("plugin")` exports the code under test, and its `pcall` may swallow what the spec raises.
+---Paths are compared in their absolute, normalized form, and a file below a directory of the runtime path
+---(`lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/`) of the harness directory is never part of the harness: a
+---`harness.lua` in the project root has the plugin there. The files are not read: a support module below the
+---harness directory that is exported through `H` counts although its `pcall` may keep the error.
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.
@@ -386,18 +465,23 @@ local function harness_chunks(harness, file)
     return chunks
   end
   chunks["@" .. file] = true
-  local dir = slashes(file):match("^(.*)/[^/]*$")
+  local dir = absolute(file):match("^(.*)/[^/]*$")
   ---@param value any
   local function add(value)
     if type(value) ~= "function" or not dir then
       return
     end
+    -- a function of an earlier run's wrapper: the function of the project is what was defined in a chunk
+    value = ORIGINAL[value] or value
     local info = debug.getinfo(value, "S")
     if info.what == "C" or info.source:sub(1, 1) ~= "@" then
       return
     end
-    local path = slashes(info.source:sub(2))
-    if path:sub(1, #dir + 1) == dir .. "/" then
+    local path = absolute(info.source:sub(2))
+    if
+      path:sub(1, #dir + 1) == dir .. "/" and not CODE_DIRS[path:sub(#dir + 2):match("^([^/]*)/")]
+    then
+      -- the key stays the raw name: `protected.inside` looks the calling chunk up by its raw `source`
       chunks[info.source] = true
     end
   end
@@ -414,11 +498,17 @@ local function harness_chunks(harness, file)
   return chunks
 end
 
+---Chunks (`@<path>`) of the spec files that ran in this process: a harness table that outlives a file carries what
+---a spec put into it, and that is the spec's, not the harness's.
+---@type table<string, true>
+local spec_chunks = {}
+
 ---Wrap the project's harness in place and return the table the spec receives as `H`.
 ---@param a Testing.Assert.Context|table Context (needs `current()`).
 ---@param harness table The table the project's `harness.lua` returned (it is modified in place).
 ---@param assertions? table<string, boolean> Names known to be assertions (`M.assertion_names`).
----@param opts? { source?: string, file?: string, capture?: Testing.Policy.Capture }
+---@param opts? { source?: string, file?: string, capture?: Testing.Policy.Capture } `file` is the path of the
+---  harness file as it was loaded; without it no helper of the harness is passed over by the pcall rule.
 ---@return table H The same table, its functions wrapped.
 ---@return Testing.HarnessProject.State state
 function M.new(a, harness, assertions, opts)
@@ -589,8 +679,14 @@ function M.run_file(a, spec, opts)
           file = path,
           capture = capture,
         })
-        -- a harness table that outlives the file may carry helpers an earlier run of this very spec put into it
-        state.transparent["@" .. spec.path] = nil
+        -- a harness table that outlives a file may carry helpers that a spec file put into it: no spec file that
+        -- ran in this process (this one included) is part of the harness
+        spec_chunks["@" .. spec.path] = true
+        for chunk in pairs(state.transparent) do
+          if spec_chunks[chunk] then
+            state.transparent[chunk] = nil
+          end
+        end
         local ran, run_err = xpcall(function()
           local run = dofile(spec.path)
           if type(run) ~= "function" then

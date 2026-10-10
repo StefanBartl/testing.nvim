@@ -22,6 +22,10 @@
 local protected = require("testing.core.protected")
 local result = require("testing.core.result")
 
+-- taken now, like in `testing.core.protected`: a spec that stubs `debug.getinfo` must not break (or send into an
+-- endless walk) the location search of every assertion it makes
+local getinfo = debug.getinfo
+
 local M = {}
 
 -- =========================================================
@@ -34,11 +38,16 @@ local INSPECT_MAX_LEN = 2000
 ---@param value any
 ---@param depth integer
 ---@param seen table<table, boolean>
+---@param budget { n: integer } Characters still worth producing. Only text that certainly ends up in the result is
+---  counted (strings, two per element), so an exhausted budget means `M.inspect` cuts the rest anyway.
 ---@return string
-local function inspect_value(value, depth, seen)
+local function inspect_value(value, depth, seen, budget)
   local t = type(value)
   if t == "string" then
-    return (("%q"):format(value):gsub("\\\n", "\\n"))
+    -- `%q` never shortens: the first INSPECT_MAX_LEN bytes are all that can be seen of the quoted string
+    local s = (("%q"):format(value:sub(1, INSPECT_MAX_LEN)):gsub("\\\n", "\\n"))
+    budget.n = budget.n - #s
+    return s
   elseif t == "number" then
     if value == math.floor(value) and math.abs(value) < 2 ^ 53 then
       return ("%d"):format(value)
@@ -56,10 +65,15 @@ local function inspect_value(value, depth, seen)
   seen[value] = true
   local parts, n = {}, #value
   for i = 1, n do
-    parts[#parts + 1] = inspect_value(value[i], depth + 1, seen)
+    if budget.n <= 0 then
+      break
+    end
+    parts[#parts + 1] = inspect_value(value[i], depth + 1, seen, budget)
+    budget.n = budget.n - 2
   end
   local keys = {}
-  for k in pairs(value) do
+  -- nothing left to show: neither collect nor sort the keys of a huge table
+  for k in pairs(budget.n > 0 and value or {}) do
     if not (type(k) == "number" and k >= 1 and k <= n and k == math.floor(k)) then
       keys[#keys + 1] = k
     end
@@ -75,9 +89,13 @@ local function inspect_value(value, depth, seen)
     return tostring(a) < tostring(b)
   end)
   for _, k in ipairs(keys) do
+    if budget.n <= 0 then
+      break
+    end
     local label = type(k) == "string" and k:match("^[%a_][%w_]*$") and k
-      or ("[%s]"):format(inspect_value(k, depth + 1, seen))
-    parts[#parts + 1] = ("%s = %s"):format(label, inspect_value(value[k], depth + 1, seen))
+      or ("[%s]"):format(inspect_value(k, depth + 1, seen, budget))
+    parts[#parts + 1] = ("%s = %s"):format(label, inspect_value(value[k], depth + 1, seen, budget))
+    budget.n = budget.n - 2
   end
   seen[value] = nil
   return "{" .. table.concat(parts, ", ") .. "}"
@@ -88,7 +106,7 @@ end
 ---@param value any
 ---@return string
 function M.inspect(value)
-  local s = inspect_value(value, 0, {})
+  local s = inspect_value(value, 0, {}, { n = INSPECT_MAX_LEN })
   if #s > INSPECT_MAX_LEN then
     s = s:sub(1, INSPECT_MAX_LEN) .. "...(truncated)"
   end
@@ -125,12 +143,15 @@ local function deep_eq(a, b, seen, depth)
   return true
 end
 
----Deep equality like `vim.deep_equal`: same keys, equal values, metatables ignored.
+---Deep equality like `vim.deep_equal`: same keys, equal values, metatables not compared (an `__index` is
+---consulted, as `vim.deep_equal` does; one that raises, as on a strict-mode table, makes the values unequal
+---instead of making the check throw out of a protected call that would swallow it).
 ---@param a any
 ---@param b any
 ---@return boolean
 function M.deep_equal(a, b)
-  return deep_eq(a, b, {}, 0)
+  local called, equal = pcall(deep_eq, a, b, {}, 0)
+  return called and equal
 end
 
 -- =========================================================
@@ -222,7 +243,7 @@ function M.new(opts)
     -- better than the wrong one.
     local level = 3 + a.depth
     while true do
-      local info = debug.getinfo(level, "Sl")
+      local info = getinfo(level, "Sl")
       if not info then
         return nil, nil
       end
@@ -252,6 +273,11 @@ function M.new(opts)
         ),
         4
       )
+    end
+    if entry.msg ~= nil and type(entry.msg) ~= "string" then
+      -- a number (`H.eq(got[i], want[i], i)`) or a table as the message: the IR holds strings only, and a
+      -- message it rejects would end every run that writes a report as an infrastructure error
+      entry.msg = M.inspect(entry.msg)
     end
     case.assertions[#case.assertions + 1] = entry
     return entry.ok
@@ -395,9 +421,17 @@ function M.new(opts)
       return fail(file, line, "error", msg, EXPECTED_GOT, want, "no error")
     end
     local text = tostring(err)
-    if pattern ~= nil and not text:find(pattern) then
-      local want = "an error matching " .. M.inspect(pattern)
-      return fail(file, line, "error", msg, EXPECTED_GOT, want, M.inspect(text))
+    if pattern ~= nil then
+      -- like `matches`: a malformed pattern is a failed check, not an error thrown out of the check
+      local searched, found = pcall(string.find, text, pattern)
+      if not searched then
+        local bad = "invalid pattern " .. M.inspect(pattern) .. ": " .. tostring(found)
+        return fail(file, line, "error", msg, "%s (%s)", bad, M.inspect(text))
+      end
+      if not found then
+        local want = "an error matching " .. M.inspect(pattern)
+        return fail(file, line, "error", msg, EXPECTED_GOT, want, M.inspect(text))
+      end
     end
     return pass(file, line, "error", msg)
   end

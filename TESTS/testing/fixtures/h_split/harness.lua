@@ -1,6 +1,6 @@
 -- Fixture harness split over several files (never a spec): `H.eq` lives here, `H.guarded` comes from
--- guard.lua, `H.util.guarded` from guard_nested.lua. The protected call of a helper is the harness's,
--- whichever file it sits in and one table level down as well.
+-- guard.lua, `H.util.guarded` from guard_nested.lua. The protected call of a helper is the harness's when its file
+-- sits below the directory of this harness.lua (also one table level down).
 
 local here = vim.fs.dirname(debug.getinfo(1, "S").source:sub(2))
 local guard = dofile(here .. "/guard.lua")

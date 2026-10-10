@@ -225,12 +225,11 @@ end
 ---@return Testing.Result.Case[] cases
 function M.run_file(a, spec, opts)
   local case = require("testing.policy").guard(opts, function()
-    return a.run_case(
-      { file = spec.rel, name = vim.fs.basename(spec.rel), spec_path = spec.path },
-      function()
-        M.run_body(a, spec)
-      end
-    )
+    -- no `spec_path`: the checks of dialect d are counted from the plugin's harness, never made through `a.eq` &
+    -- co, so the pcall rule of `testing.core.protected` has nothing to decide here
+    return a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
+      M.run_body(a, spec)
+    end)
   end)
   if opts and opts.on_case then
     opts.on_case(case)

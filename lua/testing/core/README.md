@@ -8,6 +8,7 @@ plain `nvim -l` runs and could be driven by any front end (runner, reporter, dia
 |--------|---------|
 | [`testing.core.result`](result.lua) | The IR (`schema_version = 1`): builders, verdict rules, summary, deterministic JSON, path placeholders, validator |
 | [`testing.core.assert`](assert.lua) | Assertions that record instead of raising, bound to the current case |
+| [`testing.core.protected`](protected.lua) | `entry()` / `inside()` / `stack_size()`: is a failed check running inside a protected call the spec wrote? (the pcall exception of `assert`) |
 | [`@types/`](@types/init.lua) | `Testing.Result.*`, `Testing.Assert.*` |
 
 ## The IR
@@ -84,7 +85,9 @@ end)
   `pcall(function() a.eq(1, 2) end)`. When the protected call that would catch the raise is one the
   spec wrote, the check raises `FAIL <msg>: expected X, got Y` instead of recording (nothing is
   recorded for it). `testing.core.protected` decides which protected call counts and lists the limits;
-  `a.entry` is the marker `run_case` sets where the case body starts, and is `nil` outside of one.
+  `a.entry` is the marker `run_case` sets where the case body starts, and is `nil` outside of one. The
+  exception therefore exists only inside `run_case`: a case opened with `begin_case` / `end_case` has no entry
+  point and never raises. A dialect hands the chunk of its spec file to `run_case` as `spec_path`.
 * `file`/`line` come from `debug.getinfo` at the caller of the assertion. A wrapper that is **not** a
   tail call must set `a.depth = 1` (a tail call erases its frame and needs nothing).
 * A thrown error in the body ends only that body: status `error`, `case.error.message` (first line) and

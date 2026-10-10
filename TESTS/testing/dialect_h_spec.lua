@@ -155,6 +155,42 @@ return function(H)
     "split harness fixture: the four checks of the spec, the raised ones are not recorded"
   )
 
+  -- the helper files of a split harness found through a path relative to the working directory (`dofile("./x.lua")`,
+  -- a `./?.lua` entry of `package.path`): the chunk names are relative, the files are still the harness
+  local cwd = vim.uv.cwd()
+  vim.fn.chdir(here)
+  local rel_ok, rel_cases = pcall(dialect.run_file, "h", assert_mod.new(), {
+    path = sfixture,
+    rel = "TESTS/h_split_rel_spec.lua",
+    harness = here .. "/fixtures/h_split_rel/harness.lua",
+  })
+  vim.fn.chdir(cwd)
+  eq(rel_ok, true, "relative split harness fixture: the run did not raise")
+  case = rel_cases[1]
+  eq(case.error, nil, "relative split harness fixture: the file ran to its end")
+  eq(
+    case.status,
+    "pass",
+    "relative split harness fixture: the question is answered through the helper files"
+  )
+  eq(#case.assertions, 4, "relative split harness fixture: the four checks of the spec")
+
+  -- a split harness whose table outlives the file: the next run wraps the wrappers of the run before, the
+  -- helper's chunk must stay part of the harness
+  for run_no = 1, 3 do
+    cases = dialect.run_file("h", assert_mod.new(), {
+      path = sfixture,
+      rel = "TESTS/h_split_shared_spec.lua",
+      harness = here .. "/fixtures/h_split_rel/harness_shared.lua",
+    })
+    eq(
+      cases[1].status,
+      "pass",
+      "shared split harness fixture: run " .. run_no .. " answers the spec's question"
+    )
+  end
+  rawset(_G, "__testing_h_split_shared_fixture", nil)
+
   -- a function of `H` that is the code under test (exported from outside the harness directory) is not the harness:
   -- its pcall may swallow what the spec raises, so the check is recorded
   local xfixture = here .. "/fixtures/h_export/h_export.fixture.lua"
@@ -182,6 +218,68 @@ return function(H)
   eq(passed, 2, "export fixture: two checks hold")
   eq(failed[1].line, line_of(xfixture, "x1"), "export fixture: the failure keeps the spec's line")
 
+  -- the harness sits in the root of the project: the code under test below its `lua/` is not the harness, and
+  -- neither is a file that only has the harness directory as a textual prefix (`<dir>/../other/x.lua`)
+  for _, layout in ipairs({
+    {
+      "root harness",
+      "h_root",
+      "h_root",
+      "r1",
+      "swallowed by the plugin below the harness directory",
+    },
+    {
+      "dot-dot path",
+      "h_dotdot",
+      "h_dotdot",
+      "d1",
+      "swallowed by the plugin behind a dot-dot path",
+    },
+  }) do
+    local label, dir, name, mark, text = unpack(layout)
+    local lfile = here .. "/fixtures/" .. dir .. "/" .. name .. ".fixture.lua"
+    cases = dialect.run_file("h", assert_mod.new(), {
+      path = lfile,
+      rel = "TESTS/" .. name .. "_spec.lua",
+      harness = here .. "/fixtures/" .. dir .. "/harness.lua",
+    })
+    case = cases[1]
+    eq(case.error, nil, label .. ": the file ran to its end")
+    eq(case.status, "fail", label .. ": the failed check inside the plugin's pcall is not lost")
+    passed, failed = 0, {}
+    for _, rec in ipairs(case.assertions) do
+      if rec.ok then
+        passed = passed + 1
+      else
+        failed[#failed + 1] = rec
+      end
+    end
+    eq(#failed, 1, label .. ": one check failed")
+    eq(passed, 2, label .. ": two checks hold")
+    local first = failed[1] or {}
+    eq(first.line, line_of(lfile, mark), label .. ": the failure keeps the spec's line")
+    has(first.msg, text, label .. ": and its message")
+  end
+
+  -- the same export, its chunk name spelled with `..` (absolute, and relative to the working directory): textually
+  -- below the harness directory, in fact outside it, so still the code under test
+  for _, variant in ipairs({ "harness_dotdot.lua", "harness_dotdot_rel.lua" }) do
+    local saved_cwd = vim.uv.cwd()
+    vim.fn.chdir(here .. "/fixtures/h_export")
+    local ran, dcases = pcall(dialect.run_file, "h", assert_mod.new(), {
+      path = xfixture,
+      rel = "TESTS/h_export_spec.lua",
+      harness = here .. "/fixtures/h_export/" .. variant,
+    })
+    vim.fn.chdir(saved_cwd)
+    eq(ran, true, variant .. ": the run did not raise")
+    eq(
+      dcases[1].status,
+      "fail",
+      variant .. ": the failed check inside the exported plugin's pcall is not lost"
+    )
+  end
+
   -- a harness table that outlives the file: what a spec left in it does not make the spec's own pcall part of the harness
   for run_no = 1, 3 do
     cases = dialect.run_file("h", assert_mod.new(), {
@@ -196,6 +294,42 @@ return function(H)
     )
   end
   rawset(_G, "__testing_h_shared_fixture", nil)
+
+  -- ... and what ANOTHER file left in the table is not the harness either: its pcall may swallow what the spec raises
+  do
+    local shared = here .. "/fixtures/h_shared"
+    local leave = dialect.run_file("h", assert_mod.new(), {
+      path = shared .. "/leave.fixture.lua",
+      rel = "TESTS/leave_spec.lua",
+      harness = shared .. "/harness.lua",
+    })
+    eq(leave[1].status, "pass", "shared harness, first file: leaves a helper behind and passes")
+    local through = dialect.run_file("h", assert_mod.new(), {
+      path = shared .. "/through.fixture.lua",
+      rel = "TESTS/through_spec.lua",
+      harness = shared .. "/harness.lua",
+    })
+    rawset(_G, "__testing_h_shared_fixture", nil)
+    case = through[1]
+    eq(case.error, nil, "shared harness, second file: ran to its end")
+    eq(
+      case.status,
+      "fail",
+      "shared harness, second file: the check swallowed by another file's helper is not lost"
+    )
+    failed = {}
+    for _, rec in ipairs(case.assertions) do
+      if not rec.ok then
+        failed[#failed + 1] = rec
+      end
+    end
+    eq(#failed, 1, "shared harness, second file: one check failed")
+    eq(
+      failed[1] and failed[1].line,
+      line_of(shared .. "/through.fixture.lua", "t1"),
+      "shared harness, second file: at the spec's line"
+    )
+  end
 
   -- a framework of another file starts the spec: its own pcall is not the spec's (dialect h and A, same entry)
   cases = dialect.run_file("h", assert_mod.new(), {
@@ -304,4 +438,51 @@ return function(H)
   for _, dir in ipairs({ root, lonely }) do
     vim.fn.delete(dir, "rf")
   end
+
+  -- the doc comment of the NEXT function is not part of the body of a helper: a cleanup helper that throws its
+  -- callback's error away is no assertion because a comment below it says "FAIL" and "error("
+  local comment_dir = here .. "/fixtures/h_comment"
+  eq(
+    project.assertion_names(table.concat(vim.fn.readfile(comment_dir .. "/harness.lua"), "\n")),
+    { eq = true },
+    "comments are not read as code: only H.eq is an assertion"
+  )
+  eq(
+    project.strip_comments("a --[==[ x ]] ]==] b -- c\nd \"--e\" '--f' [[--g]] h"),
+    "a  b \nd \"--e\" '--f' [[--g]] h",
+    "line and long comments go, string literals and long strings stay"
+  )
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = comment_dir .. "/swallowed.fixture.lua",
+    rel = "TESTS/swallowed_spec.lua",
+    harness = comment_dir .. "/harness.lua",
+  })
+  case = cases[1]
+  eq(case.error, nil, "comment fixture: the file ran to its end")
+  eq(case.status, "fail", "comment fixture: the failed check inside the cleanup helper is not lost")
+  passed, failed = 0, {}
+  for _, rec in ipairs(case.assertions) do
+    if rec.ok then
+      passed = passed + 1
+    else
+      failed[#failed + 1] = rec
+    end
+  end
+  eq(#failed, 1, "comment fixture: one check failed")
+  eq(passed, 1, "comment fixture: one check holds")
+  eq(
+    failed[1] and failed[1].line,
+    line_of(comment_dir .. "/swallowed.fixture.lua", "c1"),
+    "comment fixture: the failure keeps the spec's line"
+  )
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = comment_dir .. "/noassert.fixture.lua",
+    rel = "TESTS/noassert_spec.lua",
+    harness = comment_dir .. "/harness.lua",
+  })
+  eq(
+    cases[1].status,
+    "fail",
+    "comment fixture: a helper that is no assertion does not count as a check"
+  )
 end

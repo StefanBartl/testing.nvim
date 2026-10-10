@@ -400,6 +400,113 @@ return function(H)
   eq(xok, false, "a failed eq inside the spec's xpcall raises")
   eq(xerr, "handled: FAIL via xpcall: expected 2, got 1", "and reaches the message handler")
 
+  -- the spec's own pcall is recognised under every name LuaJIT reports for a plain call: a global, a local or
+  -- an upvalue named `pcall` (the luacheck-clean `local pcall = pcall` at the top of a spec); a method is not
+  do
+    local pcall = pcall -- an upvalue in the body below
+    local upvalue_ok
+    run(new_ctx(), function(c)
+      upvalue_ok = pcall(function()
+        c.eq(1, 2, "asked through an upvalue")
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(upvalue_ok, false, "a pcall held in an upvalue is the spec's own: the question is answered")
+  end
+  do
+    local local_ok
+    run(new_ctx(), function(c)
+      local pcall = pcall -- a local of this very function
+      local_ok = pcall(function()
+        c.eq(1, 2, "asked through a local")
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(local_ok, false, "a pcall held in a local is the spec's own: the question is answered")
+  end
+  do
+    -- the real pcall called as a method (the receiver must be callable: it becomes pcall's first argument)
+    local callable = setmetatable({ pcall = pcall }, {
+      __call = function(_, fn)
+        return fn()
+      end,
+    })
+    local method_ok
+    local method_case = run(new_ctx(), function(c)
+      method_ok = callable:pcall(function()
+        c.eq(1, 2, "asked through a method")
+      end)
+    end)
+    eq(method_ok, true, "a pcall called as a method is not recognised as a question (documented)")
+    eq(
+      method_case.status,
+      "fail",
+      "so the check is recorded and the spec fails where the author sees it"
+    )
+  end
+
+  -- the message handler runs ON TOP of the erroring stack: a raise there is not caught by its xpcall (LuaJIT
+  -- answers "error in error handling"), so a failed check in a handler is recorded, not raised
+  for _, thrower in ipairs({
+    {
+      "error()",
+      function()
+        error("boom", 0)
+      end,
+    },
+    {
+      "assert(false)",
+      function()
+        assert(false, "boom")
+      end,
+    },
+  }) do
+    local hok, herr
+    local hcase = run(new_ctx(), function(c)
+      hok, herr = xpcall(thrower[2], function(e)
+        c.eq(e, "WRONG", "handler check")
+        return e
+      end)
+      c.ok(not hok, "xpcall reported the error")
+    end)
+    eq(hok, false, "xpcall of " .. thrower[1] .. " failed")
+    -- `assert` adds the position of its caller, `error(..., 0)` does not
+    has(herr, "boom", "the spec sees the original error of " .. thrower[1] .. ", not a lost raise")
+    eq(hcase.status, "fail", "a failed check in the handler after " .. thrower[1] .. " is recorded")
+  end
+  -- a protected call that the spec writes inside the handler is still a question, and answers
+  local hq_ok
+  local hq_case = run(new_ctx(), function(c)
+    xpcall(function()
+      error("boom", 0)
+    end, function(e)
+      hq_ok = pcall(function()
+        c.eq(1, 2, "asked inside the handler")
+      end)
+      return e
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(hq_ok, false, "a spec's pcall inside a handler is asked, and answers")
+  eq(hq_case.status, "pass", "nothing is recorded for the check that was asked")
+  -- an xpcall that comes after a handled error asks as before
+  local again_ok
+  local again_case = run(new_ctx(), function(c)
+    xpcall(function()
+      error("boom", 0)
+    end, function(e)
+      return e
+    end)
+    again_ok = xpcall(function()
+      c.eq(1, 2, "asked after a handled error")
+    end, function(e)
+      return e
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(again_ok, false, "an xpcall that comes after a handled error asks as before")
+  eq(again_case.status, "pass", "and records nothing")
+
   -- a pcall that was not called as `pcall` cannot be attributed: a plugin's helper that ends in
   -- `return pcall(cb)` (LuaJIT has no istailcall; the call site names the helper), an alias, and a
   -- spec's own tail-calling helper (documented: the spec fails loudly, the question is not answered)
@@ -657,6 +764,36 @@ return function(H)
     eq(dcase.status, status, "and the verdict of the case")
   end
 
+  -- the window is exactly MAX_LEVELS (500) frames: `distance` is what `inside` measures
+  local function ask_at(n)
+    local entry = protected.entry()
+    local answered, distance
+    pcall(function()
+      descend(n, function()
+        -- `inside` runs one frame deeper than this function, and that is the distance it measures
+        distance = protected.stack_size() + 1 - entry.height
+        answered = protected.inside(entry)
+      end)
+    end)
+    return answered, distance
+  end
+  local _, base = ask_at(0)
+  local edge = 500 - base
+  for _, row in ipairs({
+    { edge - 1, 499, true },
+    { edge, 500, true },
+    { edge + 1, 501, false },
+    { edge + 100, 600, false },
+  }) do
+    local answered, distance = ask_at(row[1])
+    eq(distance, row[2], "the probe stands " .. row[2] .. " frames above the entry point")
+    eq(
+      answered,
+      row[3],
+      "a question " .. row[2] .. " frames above the entry point: answered or not"
+    )
+  end
+
   -- messages without a text of their own
   local bare_eq
   run(new_ctx(), function(c)
@@ -676,6 +813,45 @@ return function(H)
     c.ok(true, "keeps the case valid")
   end)
   eq(bare_fail, "FAIL", "an explicit failure without a message")
+
+  -- inspect of a huge value stops early and still ends like the full text would: the head of the walk, then the mark
+  do
+    local big = {}
+    for i = 1, 200000 do
+      big[i] = i
+    end
+    local text = assert_mod.inspect(big)
+    eq(#text, 2000 + #"...(truncated)", "a huge array is cut to the limit")
+    eq(text:sub(1, 13), "{1, 2, 3, 4, ", "and starts like the full text")
+    eq(text:sub(-14), "...(truncated)", "and carries the mark")
+    local exact = {}
+    for i = 1, 5 do
+      exact[i] = ("x"):rep(5)
+    end
+    eq(
+      assert_mod.inspect(exact),
+      '{"xxxxx", "xxxxx", "xxxxx", "xxxxx", "xxxxx"}',
+      "a small value is untouched"
+    )
+  end
+
+  -- a message that is no string (the loop index of `H.eq(got[i], want[i], i)`, a table) is stored as text: the IR
+  -- holds strings only, and a message it rejects would end every run that writes a report as an infrastructure error
+  local numeric = run(new_ctx(), function(c)
+    c.eq(1, 1, 7)
+    c.eq(1, 2, { why = "x" })
+    c.ok(false, true)
+  end)
+  eq(numeric.assertions[1].msg, "7", "a numeric message of a passed check is stored as text")
+  eq(
+    numeric.assertions[2].msg,
+    assert_mod.inspect({ why = "x" }),
+    "and a table message of a failed one"
+  )
+  eq(numeric.assertions[3].msg, "true", "and a boolean one")
+  for _, assertion in ipairs(numeric.assertions) do
+    eq(type(assertion.msg), "string", "every recorded message is a string")
+  end
 
   -- the dialect hands over the spec's file: a wrapper of another file that runs the spec under its own
   -- pcall is not the spec's pcall, whatever frame sits lowest; a question the spec asks itself is answered
@@ -713,6 +889,101 @@ return function(H)
     asking_case.status,
     "pass",
     "a question in the spec's file is answered, though a foreign body started it"
+  )
+
+  -- a check whose own input is hostile (a malformed pattern, a table whose __index raises) is a failed
+  -- check like any other: recorded in a protected call of the code under test, raised in the spec's own
+  -- pcall. It must not throw out of the helper, or the plugin's pcall swallows it and the case is green.
+  local strict = setmetatable({}, {
+    __index = function(_, key)
+      error("undefined field '" .. tostring(key) .. "'", 2)
+    end,
+  })
+  local hostile = {
+    {
+      "error with a malformed pattern",
+      function(c)
+        c.error(function()
+          error("boom", 0)
+        end, "(", "malformed")
+      end,
+    },
+    {
+      "same on a strict-mode table",
+      function(c)
+        c.same(strict, { 1 }, "strict")
+      end,
+    },
+  }
+  for _, row in ipairs(hostile) do
+    local name, check = row[1], row[2]
+    local hcase = run(new_ctx(), function(c)
+      check(c)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(hcase.status, "fail", name .. ": in the body it is a failed check, not status=error")
+    eq((hcase.assertions[1] or {}).ok, false, name .. ": recorded")
+    local ecase = run(new_ctx(), function(c)
+      emitter(function()
+        check(c)
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(ecase.status, "fail", name .. ": inside the plugin's pcall it is not lost")
+    eq(#ecase.assertions, 2, name .. ": recorded next to the check that holds")
+    local raised
+    local qcase = run(new_ctx(), function(c)
+      raised = select(
+        2,
+        pcall(function()
+          check(c)
+        end)
+      )
+      c.ok(true, "keeps the case valid")
+    end)
+    ok(tostring(raised):find("^FAIL"), name .. ": the spec's own pcall gets the FAIL raise")
+    eq(qcase.status, "pass", name .. ": and nothing is recorded")
+  end
+  local bad_pattern = run(new_ctx(), function(c)
+    c.error(function()
+      error("boom", 0)
+    end, "(", nil)
+  end)
+  has(
+    bad_pattern.assertions[1].msg,
+    "invalid pattern",
+    "a malformed error pattern is named, as in matches"
+  )
+  local strict_eq = setmetatable({ a = 1 }, getmetatable(strict))
+  ok(assert_mod.deep_equal(strict_eq, { a = 1 }), "deep_equal: a strict table with the same keys")
+  ok(
+    not assert_mod.deep_equal({ a = 1, b = 2 }, strict_eq),
+    "deep_equal: a key the strict table lacks is a difference, not a raise"
+  )
+  ok(
+    not assert_mod.deep_equal(strict_eq, { a = 1, b = 2 }),
+    "deep_equal: the same, the strict table on the left"
+  )
+  -- an __index that supplies a value counts, as it does for vim.deep_equal (and luassert's same)
+  local defaults = setmetatable({}, { __index = { a = 1 } })
+  eq(
+    assert_mod.deep_equal(defaults, { a = 1 }),
+    vim.deep_equal(defaults, { a = 1 }),
+    "deep_equal reads an inherited field like vim.deep_equal"
+  )
+  ok(
+    assert_mod.deep_equal({ a = false }, setmetatable({ a = false }, getmetatable(strict))),
+    "deep_equal: a stored false is a value, not a missing key"
+  )
+  local inherited_false = setmetatable({}, { __index = { a = false } })
+  ok(
+    assert_mod.deep_equal({ a = false }, inherited_false),
+    "deep_equal: an inherited false is a value"
+  )
+  ok(assert_mod.deep_equal(inherited_false, { a = false }), "deep_equal: the same, on the left")
+  ok(
+    not assert_mod.deep_equal({ a = false }, strict),
+    "deep_equal: false on the left, a key the strict table lacks on the right"
   )
 
   -- inspect and deep_equal, the pure helpers

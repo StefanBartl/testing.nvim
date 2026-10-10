@@ -10,7 +10,7 @@ is the spec's own `file:line`. A case without a single assertion is a failure, a
 while loading is an `error` case, and a file whose dialect is unknown is a `skip` (reported with
 the reason, never green; red under `--strict`). Nothing is a quiet pass.
 
-### A spec that asks "does this check fail?"
+## A spec that asks "does this check fail?"
 
 There is one exception to "recorded", because it is the only way a spec can ask that question:
 a failed check inside a `pcall` / `xpcall` **that the spec wrote**
@@ -28,7 +28,21 @@ and the start of the case.
   (`with_patched`, the busted hooks). The harness is `harness.lua` and the files below its directory that
   define a function of `H`, directly or one table level down (own fields, no metamethods), so a harness
   split over several files counts. A function of `H` that comes from anywhere else, such as
-  `H.sut = require("plugin")`, is the code under test and does not count.
+  `H.sut = require("plugin")`, is the code under test and does not count. Paths are compared absolute and
+  normalized (a helper found through `./?.lua` counts, `TESTS/../lib/x.lua` is not below `TESTS`), and a file
+  below `lua/`, `plugin/`, `after/`, `ftplugin/` or `autoload/` of the harness directory never counts: a
+  `harness.lua` in the project root has the plugin there. The files are not read, so a support module of
+  the harness directory that is exported through `H` and keeps the error of its own `pcall` (an event bus
+  that logs a failing handler) counts as harness: keep it out of the harness directory, or make it raise
+  again. No spec file counts, even when it put its helpers into a harness table that outlives the file.
+* That premise does not hold for a harness helper that **catches on purpose**: `H.throws(fn)`
+  (`not pcall(fn)`), or a retry or poll helper (`H.eventually(fn)`: `pcall(fn)` in a loop, raising only the
+  last error). Its `pcall` is passed over too, so a failed check inside its callback is **recorded** and the
+  callback returns normally: the helper sees success, the question is answered wrongly and the case goes
+  red (a retry helper never retries, its first failed poll stays recorded). It is never green. Ask the
+  question with a `pcall` in the spec file (`pcall(function() H.eq(1, 2) end)`), poll with a predicate
+  or a `pcall` loop in the spec, or let the helper raise a `FAIL ...` error of its own: a helper whose
+  body does that is an assertion (see [Dialect `h`](#dialect-h)), and a check inside its callback is raised.
 * A protected call of anything else is not passed over: the plugin under test protecting a callback
   (`pcall(cb)` in an event emitter, `safe_call`), or a framework of another file running the spec under a
   `pcall` of its own. It would catch the raise, and whether it passes it on is not known: if it kept the
@@ -45,6 +59,18 @@ What is not recognised, and records:
   helper file (`util.fails(fn)`), `vim.F.npcall`.
 * A check on another coroutine than the one that started the case, and a stack more than 500 frames
   above it.
+* A check in the message handler of an `xpcall` (`xpcall(fn, function(e) H.eq(e, "x") end)`) is not a
+  question. After `error()` / `assert()` it is recorded; after a runtime error (a nil index, an error of
+  a C function) the handler cannot be told from the function and a failed check there is lost (LuaJIT
+  answers "error in error handling"). Check the returned message after `xpcall` returned instead.
+* `return pcall(check)` as the condition of a `vim.wait` or in a retry helper records the first failed
+  attempt for good; write `local ok = pcall(check); return ok`. A helper file for questions
+  (`util.fails(fn)`) has to be handed the `pcall` by the spec: the call must stand in the spec file.
+
+What works as a question: `local ok, err = pcall(fn)`, `xpcall(fn, debug.traceback)`,
+`pcall(H.with_patched, ...)`, `pcall(H.eq, ...)`, `local pcall = pcall`, and a `pcall` inside a helper
+that the spec file defines itself. A spec made only of answered questions has no recorded check: finish
+with `H.ok(not ok, ...)` so the case has one.
 
 What can still go missing, because the catch is not a Lua `pcall`:
 
@@ -52,13 +78,20 @@ What can still go missing, because the catch is not a Lua `pcall`:
   the buffer callbacks of typed keys under its own protected call. A check that fails there while a
   `pcall` of the spec is further out is raised into Neovim's catch, which prints an error and goes on.
   The `scheduled_error` guard (default `error`, [GUARDS.md](GUARDS.md)) turns these into a red case,
-  with the message but without `file:line`. Callbacks that run synchronously for the caller
-  (`nvim_buf_set_lines`, `:normal`, `nvim_buf_call`) hand the error on, and `vim.on_key` runs under a Lua
-  `xpcall`, so those are recorded.
+  with the message but without `file:line`. It finds the error in `:messages`, which keeps 500 entries: a
+  case that prints about 500 more messages after the swallowed check pushes the error out and stays
+  green (only a `vim.schedule` callback is still seen). Callbacks that run synchronously for the caller
+  (`nvim_buf_set_lines`, `:normal`, `nvim_buf_call`, `:doautocmd`) hand the raise on to the spec's
+  `pcall`, which answers; `vim.on_key` runs under a Lua `xpcall` of the runtime, so its checks are recorded.
 * A mock inside the spec that protects a callback and throws the error away cannot be told from a question.
+* Code is told apart by the name of its chunk (`debug.getinfo(...).source`), the only thing a frame
+  carries. Code that is loaded under the name of the spec file or of the harness
+  (`load(text, "@" .. spec_path)`) is taken for it. Only a deliberate construct does that.
 * The runner's own questions (`a.error`, `a.no_error`, luassert `has_error`) catch what they are given
   but are passed over like the rest of the runner: a check inside their callback is recorded when no
-  `pcall` of the spec is further out, and raised (and answered) when one is.
+  `pcall` of the spec is further out, and raised (and answered) when one is. In busted style,
+  `assert.has_error(function() assert.equal(1, 2) end)` therefore reports two failures; ask with
+  `pcall(assert.equal, 1, 2)`.
 * A plugin below the runner's own directory (testing.nvim testing its own modules) counts as the runner.
 
 A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at its first
@@ -140,6 +173,11 @@ spec's directory on `package.path`) and restored afterwards. The file is one cas
 without the two counters (`passed`, `failures`) is not dialect `d`; the shim raises instead of
 guessing.
 
+[A spec that asks "does this check fail?"](#a-spec-that-asks-does-this-check-fail) does not apply
+here: the checks are the plugin's own `t.*`, which record into its counters and never raise (as on the
+plugin's own runner), so `pcall(function() t.eq("x", 1, 2) end)` returns `true` and the failure stays
+recorded. The same holds for dialect `script`, which runs in a child editor.
+
 ## `busted` (plenary.busted specs, without plenary)
 
 The shim executes a file like plenary does: `it` runs where it is written, so a spec that reads
@@ -170,4 +208,5 @@ needs it fails loudly instead of passing without having asserted:
 * luassert extensions: custom assertion registration, `assert.message`, `assert.are.unique`, ...
 
 Known differences from plenary: a failed assertion does not abort the body (all failures of a case
-are visible), and `pending()` inside a body aborts it.
+are visible; inside a `pcall` the spec wrote it raises, as in plenary), and `pending()` inside a body
+aborts it.

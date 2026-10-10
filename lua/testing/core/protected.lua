@@ -31,22 +31,36 @@
 ---     in a plugin's helper and in a spec's own;
 ---   * a check on another coroutine than the one that started the case always records (stack heights of
 ---     two threads cannot be compared);
----   * a stack more than `MAX_LEVELS` frames above the entry point is not searched and records.
+---   * a stack more than `MAX_LEVELS` frames above the entry point is not searched and records;
+---   * a check in the MESSAGE HANDLER of an `xpcall` is not a question: the handler runs on top of the frame of
+---     `error` / `assert` that is throwing, and an error raised there is not caught by that `xpcall` (LuaJIT
+---     answers "error in error handling"). Such a check records. After a runtime error (a nil index, an error
+---     of a C function) no such frame is left and the handler cannot be told from the function: a failed check
+---     there is raised and lost, so check the returned message after `xpcall` returned.
 ---
 --- Not covered, by design of the platform: Neovim runs the callbacks of `vim.schedule` (while the spec waits),
 --- autocmds, keymaps, timers and the buffer callbacks of typed keys under its own protected call (a C
 --- `lua_pcall`, no Lua frame). A check that fails there while a `pcall` of the spec is further out is raised
 --- into Neovim's catch, which prints an error and goes on. The `scheduled_error` guard (default `error`) turns
---- these into a red case with the message, not into a check with `file:line`. A mock inside the spec that
---- protects a callback and throws the error away cannot be told from a question either. The runner's own
---- questions (`a.error`, `a.no_error`, luassert `has_error`) catch what they are given but count as the runner,
---- which passes errors on. A plugin that lives below the runner's own directory (testing.nvim testing its own
---- modules) counts as the runner.
+--- these into a red case with the message, not into a check with `file:line`; it reads `:messages`, which keeps
+--- 500 entries, so a case that prints about that many more messages afterwards loses the error (a `vim.schedule`
+--- callback is remembered by the guard itself). A mock inside the spec that protects a callback and throws the
+--- error away cannot be told from a question either. The runner's own questions (`a.error`, `a.no_error`, luassert
+--- `has_error`) catch what they are given but count as the runner, which passes errors on, and so does a
+--- helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
+--- callback is recorded, the helper sees success and the case ends red, never green. A plugin that lives below the
+--- runner's own directory (testing.nvim testing its own modules) counts as the runner. Code is told apart by the
+--- name of its chunk (`source`), which is all a frame carries: text that is loaded under the name of the spec
+--- file or of the harness (`load(text, "@" .. spec_path)`) is taken for it, and only deliberate code does that.
 
 local M = {}
 
 -- the real protected calls: a frame running one of these is a `pcall` that the code below it wrote
 local pcall_fn, xpcall_fn = pcall, xpcall
+
+-- a frame running one of these means an error is being thrown right now: what runs above it is the message
+-- handler of an `xpcall`, and an error raised there is not caught by that `xpcall`
+local error_fn, assert_fn = error, assert
 
 -- taken now: a spec that stubs `debug.getinfo` or `coroutine.running` must not send the search into a loop
 local getinfo = debug.getinfo
@@ -56,8 +70,8 @@ local running = coroutine.running
 -- walk of the stack, so the search is quadratic in this number (about a millisecond at 500).
 local MAX_LEVELS = 500
 
--- stands for "a protected call that cannot be attributed": it is never the spec's
-local UNKNOWN = "\0unknown"
+-- a chunk name longer than this is the text of a chunk that was loaded without a name, not a path
+local MAX_SOURCE = 4096
 
 ---@param s string
 ---@return string
@@ -80,6 +94,11 @@ end
 ---@param source string `debug.getinfo(...).source`
 ---@return boolean
 local function is_runner(source)
+  -- a chunk loaded without a name has its whole text as `source`: longer than any path, never a file of the
+  -- runner, and not worth a copy per protected call
+  if #source > MAX_SOURCE then
+    return false
+  end
   local path = slashes(source:sub(1, 1) == "@" and source:sub(2) or source)
   if runner_root then
     return path:sub(1, #runner_root) == runner_root
@@ -133,45 +152,70 @@ function M.inside(entry, transparent)
     return false
   end
   local height = entry.height
-  local total = M.stack_size()
-  if total - height > MAX_LEVELS then
+  -- Beyond the window? One probe tells (a level that does not exist costs a walk of the stack and allocates
+  -- nothing), so the size of a very deep stack is not searched just to answer "record".
+  if getinfo(height + MAX_LEVELS, "l") then
     return false
   end
-  -- chunk of the code that called the innermost protected call that is not transparent
+  local total = M.stack_size()
+  -- level of the frame that entered the case body (this function is level 1)
+  local last = total - height
+  if last > MAX_LEVELS then
+    return false
+  end
+  -- The innermost protected call above the entry point that is not transparent decides. Only the function of a
+  -- level is asked for: the name and the chunk of the caller are needed for the (few) protected calls only,
+  -- and the walk stops at the one that decides.
+  -- chunk of the code that called it
   ---@type string|nil
   local catcher
-  -- chunk of the spec: given by the dialect, else the lowest frame of the spec's own code at or above the
-  -- entry point (the case body is the spec itself in a unit test of the kernel)
-  ---@type string|nil
-  local spec_source = entry.spec
-  for level = 2, total - height do
-    local info = getinfo(level, "fSn")
+  for level = 2, last - 1 do
+    local info = getinfo(level, "f")
     if not info then
       return false
     end
-    if total - level > height and (info.func == pcall_fn or info.func == xpcall_fn) then
-      if not catcher then
-        local caller = getinfo(level + 1, "S")
-        local source = caller and caller.what ~= "C" and caller.source or nil
-        -- called from C, as a field or a method, or through another name (an alias, a tail call): nobody
-        -- can say who wrote it
-        local named = (info.name == "pcall" or info.name == "xpcall")
-          and (info.namewhat == "global" or info.namewhat == "local" or info.namewhat == "upvalue")
-        if source and named then
-          -- a protected call of the harness or the runner cleans up and raises again: the error goes on
-          if not (is_runner(source) or (transparent ~= nil and transparent[source] == true)) then
-            catcher = source
-          end
-        else
-          catcher = UNKNOWN
-        end
+    local func = info.func
+    if func == pcall_fn or func == xpcall_fn then
+      local call = getinfo(level, "n")
+      local caller = getinfo(level + 1, "S")
+      local source = caller and caller.what ~= "C" and caller.source or nil
+      -- called from C, as a field or a method, or through another name (an alias, a tail call): nobody
+      -- can say who wrote it
+      local named = (call.name == "pcall" or call.name == "xpcall")
+        and (call.namewhat == "global" or call.namewhat == "local" or call.namewhat == "upvalue")
+      if not (source and named) then
+        return false
       end
-    elseif not entry.spec and info.what ~= "C" and not is_runner(info.source) then
-      -- frames come from the assertion down to the entry point: the last one seen is the lowest
-      spec_source = info.source
+      -- a protected call of the harness or the runner cleans up and raises again: the error goes on
+      if not (is_runner(source) or (transparent ~= nil and transparent[source] == true)) then
+        catcher = source
+        break
+      end
+    elseif func == error_fn or func == assert_fn then
+      -- reached from the check before any protected call: the check runs in a message handler, where a raise
+      -- is lost
+      return false
     end
   end
-  return catcher ~= nil and catcher ~= UNKNOWN and catcher == spec_source
+  if not catcher then
+    return false
+  end
+  -- chunk of the spec: given by the dialect, else the lowest frame of the spec's own code at or above the
+  -- entry point (the case body is the spec itself in a unit test of the kernel)
+  local spec_source = entry.spec
+  if not spec_source then
+    for level = last, 2, -1 do
+      local info = getinfo(level, "S")
+      if not info then
+        return false
+      end
+      if info.what ~= "C" and not is_runner(info.source) then
+        spec_source = info.source
+        break
+      end
+    end
+  end
+  return catcher == spec_source
 end
 
 return M
