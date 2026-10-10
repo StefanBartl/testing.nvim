@@ -454,7 +454,7 @@ return function(H)
   -- another coroutine than the one that started the case: stack heights cannot be compared, always record
   local cctx = new_ctx()
   local ccase = run(cctx, function()
-    for depth = 0, 80 do
+    for depth = 0, 200 do
       coroutine.wrap(function()
         descend(depth, function()
           emitter(function()
@@ -470,7 +470,7 @@ return function(H)
       cfailed = cfailed + 1
     end
   end
-  eq(cfailed, 81, "no depth of a plugin's coroutine makes a failed check vanish")
+  eq(cfailed, 201, "no depth of a plugin's coroutine makes a failed check vanish")
 
   -- a plugin that recurses deeper than the search window: the answer is "record", at any depth
   local recursive = plugin(
@@ -541,6 +541,179 @@ return function(H)
   eq(fail_ok, false, "a.fail inside the spec's pcall raises")
   eq(fail_err, "explicit", "with its message")
   eq(#fcase.assertions, 1, "and only the plain one is recorded")
+
+  -- a protected call nobody can attribute ends the search: the spec's pcall further out must not take over
+  -- (its raise would be swallowed by the pcall in between)
+  local alias_plugin =
+    plugin("local cb = ...; local try = pcall; local ok = try(cb); return ok", "=plugin_alias")
+  local field_plugin = { pcall = plugin("local cb = ...; return pcall(cb)", "=plugin_field") }
+  ---@param label string
+  ---@param ask fun(c: Testing.Assert.Context)
+  local function unattributed_inside_spec_pcall(label, ask)
+    local uctx = new_ctx()
+    local outer_ok
+    local ucase = run(uctx, function(c)
+      outer_ok = pcall(function()
+        ask(c)
+      end)
+      c.eq(1, 1, "holds")
+    end)
+    eq(outer_ok, true, label .. ": the spec's pcall saw no error, the plugin's is the catch")
+    eq(ucase.status, "fail", label .. ": the check is recorded, not lost")
+  end
+  unattributed_inside_spec_pcall("tail call", function(c)
+    tail_emitter(function()
+      c.eq(1, 2, "x")
+    end)
+  end)
+  unattributed_inside_spec_pcall("alias", function(c)
+    alias_plugin(function()
+      c.eq(1, 2, "x")
+    end)
+  end)
+  unattributed_inside_spec_pcall("a field called pcall", function(c)
+    field_plugin.pcall(function()
+      c.eq(1, 2, "x")
+    end)
+  end)
+  unattributed_inside_spec_pcall("pcall(pcall, f)", function(c)
+    pcall(pcall, function()
+      c.eq(1, 2, "x")
+    end)
+  end)
+
+  -- a case that starts on a coroutine and asks there is answered (the thread is the one that entered)
+  local co_asked
+  coroutine.wrap(function()
+    run(new_ctx(), function(c)
+      co_asked = pcall(function()
+        c.eq(1, 2, "asked on the case's own coroutine")
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+  end)()
+  eq(co_asked, false, "the question is answered on the coroutine that entered the case")
+
+  -- a C function that only calls back (table.sort) passes the error on: it is not a protected call
+  local sort_ok
+  run(new_ctx(), function(c)
+    sort_ok = pcall(function()
+      table.sort({ 3, 2, 1 }, function(x, y)
+        c.eq(1, 2, "in a comparator")
+        return x < y
+      end)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(sort_ok, false, "the question reaches the spec's pcall through table.sort")
+
+  -- the runner is told by its directory, with the separators of any platform; a neighbour below lua/ is not it
+  local runner_file = debug.getinfo(protected.inside, "S").source:sub(2):gsub("\\", "/")
+  local runner_dir =
+    assert(runner_file:match("^(.*/lua/testing/)core/protected%.lua$"), "runner directory")
+  local runner_like = plugin(
+    "local cb = ...; local ok, err = pcall(cb); if not ok then error(err, 0) end",
+    "@" .. runner_dir:gsub("/", "\\") .. "run\\x.lua"
+  )
+  local passes_ok
+  local pass_case = run(new_ctx(), function(c)
+    passes_ok = pcall(function()
+      runner_like(function()
+        c.eq(1, 2, "through a runner chunk named with backslashes")
+      end)
+    end)
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(passes_ok, false, "a chunk below the runner directory passes the error on, backslashes or not")
+  eq(pass_case.status, "pass", "and nothing was recorded for the question")
+  local neighbour = plugin(
+    "local cb = ...; local ok = pcall(cb); return ok",
+    "@" .. runner_dir:match("^(.*/lua/)testing/$") .. "otherplugin/emit.lua"
+  )
+  local nctx = new_ctx()
+  local ncase2 = run(nctx, function()
+    pcall(function()
+      neighbour(function()
+        nctx.eq(1, 2, "swallowed by a plugin next to the runner")
+      end)
+    end)
+    nctx.eq(1, 1, "holds")
+  end)
+  eq(ncase2.status, "fail", "a plugin in a sibling directory of lua/testing/ is not the runner")
+
+  -- the search stops 500 frames above the entry point: a question further out records, one nearer is answered
+  for _, row in ipairs({ { 100, false, "pass" }, { 700, true, "fail" } }) do
+    local depth, kept, status = row[1], row[2], row[3]
+    local got
+    local dcase = run(new_ctx(), function(c)
+      got = pcall(function()
+        descend(depth, function()
+          c.eq(1, 2, "asked " .. depth .. " frames deep")
+        end)
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(got, kept, "a spec's pcall " .. depth .. " frames above the check")
+    eq(dcase.status, status, "and the verdict of the case")
+  end
+
+  -- messages without a text of their own
+  local bare_eq
+  run(new_ctx(), function(c)
+    local _, failure = pcall(function()
+      c.eq(1, 2)
+    end)
+    bare_eq = failure
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(bare_eq, "FAIL : expected 2, got 1", "a failed eq without a message")
+  local bare_fail
+  run(new_ctx(), function(c)
+    local _, failure = pcall(function()
+      c.fail(nil)
+    end)
+    bare_fail = failure
+    c.ok(true, "keeps the case valid")
+  end)
+  eq(bare_fail, "FAIL", "an explicit failure without a message")
+
+  -- the dialect hands over the spec's file: a wrapper of another file that runs the spec under its own
+  -- pcall is not the spec's pcall, whatever frame sits lowest; a question the spec asks itself is answered
+  -- even when a foreign body starts it
+  local make_wrapper = plugin(
+    "local spec = ...; return function(c) local ok = pcall(spec, c); return ok end",
+    "=support_wrapper"
+  )
+  local wrapped_spec = plugin(
+    "local c = ...; c.eq(1, 1, 'a'); c.eq(1, 2, 'a failing check'); c.eq(2, 2, 'c')",
+    "@/home/dev/proj/TESTS/wrapped_spec.lua"
+  )
+  local wrapped_case = new_ctx().run_case({
+    file = "TESTS/wrapped_spec.lua",
+    name = "wrapped",
+    spec_path = "/home/dev/proj/TESTS/wrapped_spec.lua",
+  }, make_wrapper(wrapped_spec))
+  eq(
+    wrapped_case.status,
+    "fail",
+    "the wrapper's pcall swallows nothing: the failed check is recorded"
+  )
+  local asking_spec = plugin(
+    "local c = ...; local ok = pcall(function() c.eq(1, 2, 'asked') end); c.ok(not ok, 'answered')",
+    "@/home/dev/proj/TESTS/asking_spec.lua"
+  )
+  local asking_case = new_ctx().run_case({
+    file = "TESTS/asking_spec.lua",
+    name = "asking",
+    spec_path = "/home/dev/proj/TESTS/asking_spec.lua",
+  }, function(c)
+    asking_spec(c)
+  end)
+  eq(
+    asking_case.status,
+    "pass",
+    "a question in the spec's file is answered, though a foreign body started it"
+  )
 
   -- inspect and deep_equal, the pure helpers
   local t1 = { b = 1, a = 2, 10, 20 }

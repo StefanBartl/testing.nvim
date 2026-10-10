@@ -21,35 +21,45 @@ pass are recorded everywhere.
 What decides is the protected call that would **catch** the raise: the innermost one between the check
 and the start of the case.
 
-* It counts when the code that called `pcall` is in the spec's own file, and `pcall` / `xpcall` was
-  called under that name.
+* It counts when the code that called `pcall` is in the spec's own file (the file the dialect loaded; so
+  a question the spec asks itself is answered even when a framework of another file starts it), and
+  `pcall` / `xpcall` was called under that name as a global, a local or an upvalue.
 * The harness and the runner are passed over, because they clean up and raise again
-  (`with_patched`, the busted hooks). The harness is every file that defines a function of `H`, so a
-  harness split over several files, or with helpers one table level down, counts.
-* A protected call of anything else — the plugin under test protecting a callback (`pcall(cb)` in an
-  event emitter, `safe_call`) — would catch the raise, and whether it passes it on is not known: if it
-  kept the error the failed check would vanish and the case would pass. So there the check is recorded
-  as usual.
+  (`with_patched`, the busted hooks). The harness is `harness.lua` and the files below its directory that
+  define a function of `H`, directly or one table level down (own fields, no metamethods), so a harness
+  split over several files counts. A function of `H` that comes from anywhere else, such as
+  `H.sut = require("plugin")`, is the code under test and does not count.
+* A protected call of anything else is not passed over: the plugin under test protecting a callback
+  (`pcall(cb)` in an event emitter, `safe_call`), or a framework of another file running the spec under a
+  `pcall` of its own. It would catch the raise, and whether it passes it on is not known: if it kept the
+  error the failed check would vanish and the case would pass. So there the check is recorded as usual.
 
 The rule is a guess from the call stack and errs towards **recording**: a question it does not
 recognise fails loudly in the spec, a check is never raised into a protected call it cannot attribute.
 What is not recognised, and records:
 
-* `return pcall(fn)` in tail position, and a `pcall` called under another name (`local try = pcall`).
-  LuaJIT has no `istailcall`, but the call site is named after the helper. Write
-  `local ok, err = pcall(...)` in the spec.
-* A question asked from another file than the spec's: a wrapper that returns the spec
-  (`return support.spec(function(H) ... end)`), a dispatcher that runs cases from a shared file, a helper
-  file (`util.fails(fn)`), `vim.F.npcall`.
-* A check on another coroutine than the one that started the case, and a stack more than 1000 frames
+* `return pcall(fn)` in tail position, a `pcall` called as a field or a method, and one called under
+  another name (`local try = pcall`). LuaJIT has no `istailcall`, but the call site is named after the
+  helper. Write `local ok, err = pcall(...)` in the spec.
+* A question asked from another file than the spec's: a dispatcher that runs cases from a shared file, a
+  helper file (`util.fails(fn)`), `vim.F.npcall`.
+* A check on another coroutine than the one that started the case, and a stack more than 500 frames
   above it.
 
-What can still go missing, because the catch is not a Lua `pcall`: Neovim runs the callbacks of
-`vim.schedule`, autocmds, keymaps, timers and `nvim_buf_attach` under its own protected call. A check
-that fails there while a `pcall` of the spec is further out is raised into Neovim's catch, which prints
-an error and goes on. The `scheduled_error` guard (default `error`, [GUARDS.md](GUARDS.md)) turns most of
-these into a red case, with the message but without `file:line`. A mock inside the spec that protects a
-callback and throws the error away cannot be told from a question either.
+What can still go missing, because the catch is not a Lua `pcall`:
+
+* Neovim runs the callbacks of `vim.schedule` (while the spec waits), autocmds, keymaps, timers and
+  the buffer callbacks of typed keys under its own protected call. A check that fails there while a
+  `pcall` of the spec is further out is raised into Neovim's catch, which prints an error and goes on.
+  The `scheduled_error` guard (default `error`, [GUARDS.md](GUARDS.md)) turns these into a red case,
+  with the message but without `file:line`. Callbacks that run synchronously for the caller
+  (`nvim_buf_set_lines`, `:normal`, `nvim_buf_call`) hand the error on, and `vim.on_key` runs under a Lua
+  `xpcall`, so those are recorded.
+* A mock inside the spec that protects a callback and throws the error away cannot be told from a question.
+* The runner's own questions (`a.error`, `a.no_error`, luassert `has_error`) catch what they are given
+  but are passed over like the rest of the runner: a check inside their callback is recorded when no
+  `pcall` of the spec is further out, and raised (and answered) when one is.
+* A plugin below the runner's own directory (testing.nvim testing its own modules) counts as the runner.
 
 A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at its first
 failed check, as it did on the old runner; the file then ends as an `error` case carrying that check's

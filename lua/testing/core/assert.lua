@@ -494,7 +494,7 @@ function M.new(opts)
     -- Defensive: should safe_call ever raise itself (its `error.new` insists on a string message),
     -- the case still ends as an error instead of taking the runner down.
     local function entered(...)
-      a.entry = protected.entry()
+      a.entry = protected.entry(case_opts.spec_path and ("@" .. case_opts.spec_path) or nil)
       return body(...)
     end
     local guarded, called, err = pcall(safe_call, entered, a)

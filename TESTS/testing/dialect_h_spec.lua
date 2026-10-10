@@ -155,6 +155,88 @@ return function(H)
     "split harness fixture: the four checks of the spec, the raised ones are not recorded"
   )
 
+  -- a function of `H` that is the code under test (exported from outside the harness directory) is not the harness:
+  -- its pcall may swallow what the spec raises, so the check is recorded
+  local xfixture = here .. "/fixtures/h_export/h_export.fixture.lua"
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = xfixture,
+    rel = "TESTS/h_export_spec.lua",
+    harness = here .. "/fixtures/h_export/harness.lua",
+  })
+  case = cases[1]
+  eq(case.error, nil, "export fixture: the file ran to its end")
+  eq(
+    case.status,
+    "fail",
+    "export fixture: the failed check inside the exported plugin's pcall is not lost"
+  )
+  passed, failed = 0, {}
+  for _, rec in ipairs(case.assertions) do
+    if rec.ok then
+      passed = passed + 1
+    else
+      failed[#failed + 1] = rec
+    end
+  end
+  eq(#failed, 1, "export fixture: one check failed")
+  eq(passed, 2, "export fixture: two checks hold")
+  eq(failed[1].line, line_of(xfixture, "x1"), "export fixture: the failure keeps the spec's line")
+
+  -- a harness table that outlives the file: what a spec left in it does not make the spec's own pcall part of the harness
+  for run_no = 1, 3 do
+    cases = dialect.run_file("h", assert_mod.new(), {
+      path = here .. "/fixtures/h_shared/h_shared.fixture.lua",
+      rel = "TESTS/h_shared_spec.lua",
+      harness = here .. "/fixtures/h_shared/harness.lua",
+    })
+    eq(
+      cases[1].status,
+      "pass",
+      "shared harness fixture: run " .. run_no .. " answers the spec's question"
+    )
+  end
+  rawset(_G, "__testing_h_shared_fixture", nil)
+
+  -- a framework of another file starts the spec: its own pcall is not the spec's (dialect h and A, same entry)
+  cases = dialect.run_file("h", assert_mod.new(), {
+    path = here .. "/fixtures/h/h_wrap_ask.fixture.lua",
+    rel = "TESTS/h_wrap_ask_spec.lua",
+    harness = here .. "/fixtures/h/harness.lua",
+  })
+  eq(cases[1].status, "pass", "wrapped spec (h): the question the spec asks is answered")
+  for _, wrapped in ipairs({
+    { "h", here .. "/fixtures/h/h_wrap_swallow.fixture.lua", here .. "/fixtures/h/harness.lua" },
+    { "a", here .. "/fixtures/a_wrap_swallow.fixture.lua", nil },
+  }) do
+    local wpath = wrapped[2]
+    cases = dialect.run_file(wrapped[1], assert_mod.new(), {
+      path = wpath,
+      rel = "TESTS/wrap_swallow_spec.lua",
+      harness = wrapped[3],
+    })
+    case = cases[1]
+    eq(
+      case.status,
+      "fail",
+      "wrapped spec (" .. wrapped[1] .. "): the framework's pcall swallows nothing"
+    )
+    passed, failed = 0, {}
+    for _, rec in ipairs(case.assertions) do
+      if rec.ok then
+        passed = passed + 1
+      else
+        failed[#failed + 1] = rec
+      end
+    end
+    eq(#failed, 1, "wrapped spec (" .. wrapped[1] .. "): the failed check is recorded")
+    eq(passed, 2, "wrapped spec (" .. wrapped[1] .. "): the two checks that hold")
+    eq(
+      failed[1].line,
+      line_of(wpath, "w1"),
+      "wrapped spec (" .. wrapped[1] .. "): with the spec's line"
+    )
+  end
+
   eq(
     project.find_harness(fixture, here .. "/fixtures/h/"),
     vim.fs.normalize(here .. "/fixtures/h/harness.lua"),

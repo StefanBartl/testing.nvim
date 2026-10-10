@@ -308,6 +308,7 @@ function M.run_file(a, spec, opts)
         name = name,
         param = param,
         line = line,
+        spec_path = spec.path,
       }, function()
         if broken then
           error("a setup() of an enclosing block failed: " .. broken, 0)

@@ -370,9 +370,11 @@ local function wrap(state, key, original)
   end
 end
 
----The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and every function of
----`H`, one table level deep. A harness split over several files (`H.with_patched` from a helper module)
----is still the harness; its protected calls clean up and raise again, they never answer a question.
+---The chunks (`debug.getinfo(..., "S").source`) that define the harness: its file and the files below the
+---directory of that file that define a function of `H` (one table level deep, raw fields only). A harness
+---split over several files (`H.with_patched` from a helper module) is still the harness; its protected calls
+---clean up and raise again, they never answer a question. A function from anywhere else is not the harness:
+---`H.sut = require("plugin")` exports the code under test, and its `pcall` may swallow what the spec raises.
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.
@@ -380,16 +382,23 @@ end
 local function harness_chunks(harness, file)
   ---@type table<string, true>
   local chunks = {}
-  if file then
-    chunks["@" .. file] = true
+  if not file then
+    return chunks
   end
+  chunks["@" .. file] = true
+  local dir = slashes(file):match("^(.*)/[^/]*$")
   ---@param value any
   local function add(value)
-    if type(value) == "function" then
-      local info = debug.getinfo(value, "S")
-      if info.what ~= "C" then
-        chunks[info.source] = true
-      end
+    if type(value) ~= "function" or not dir then
+      return
+    end
+    local info = debug.getinfo(value, "S")
+    if info.what == "C" or info.source:sub(1, 1) ~= "@" then
+      return
+    end
+    local path = slashes(info.source:sub(2))
+    if path:sub(1, #dir + 1) == dir .. "/" then
+      chunks[info.source] = true
     end
   end
   for _, value in pairs(harness) do
@@ -558,47 +567,52 @@ end
 ---@return Testing.Result.Case[] cases
 function M.run_file(a, spec, opts)
   local case = policy.guard(opts, function(capture)
-    return a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
-      local path = spec.harness or (spec.root and M.find_harness(spec.path, spec.root))
-      if not path then
-        error(("dialect h: no harness.lua found above %s"):format(spec.rel), 0)
-      end
-      local f = assert(io.open(path, "rb"))
-      local text = f:read("*a")
-      f:close()
-      local harness = dofile(path)
-      if type(harness) ~= "table" then
-        error(
-          ("dialect h: %s must return the harness table, got %s"):format(path, type(harness)),
-          0
-        )
-      end
-      local H, state = M.new(a, harness, M.assertion_names(text), {
-        source = text,
-        file = path,
-        capture = capture,
-      })
-      local ran, run_err = xpcall(function()
-        local run = dofile(spec.path)
-        if type(run) ~= "function" then
+    return a.run_case(
+      { file = spec.rel, name = vim.fs.basename(spec.rel), spec_path = spec.path },
+      function()
+        local path = spec.harness or (spec.root and M.find_harness(spec.path, spec.root))
+        if not path then
+          error(("dialect h: no harness.lua found above %s"):format(spec.rel), 0)
+        end
+        local f = assert(io.open(path, "rb"))
+        local text = f:read("*a")
+        f:close()
+        local harness = dofile(path)
+        if type(harness) ~= "table" then
           error(
-            ("%s must return `function(H)`, got %s"):format(
-              spec.rel,
-              run == nil and "nothing" or type(run)
-            ),
+            ("dialect h: %s must return the harness table, got %s"):format(path, type(harness)),
             0
           )
         end
-        run(H)
-      end, function(e)
-        -- keep the traceback of a raise of the spec itself; other error values travel untouched
-        return type(e) == "string" and debug.traceback(e, 2) or e
-      end)
-      M.reconcile(state)
-      if not ran then
-        error(run_err, 0)
+        local H, state = M.new(a, harness, M.assertion_names(text), {
+          source = text,
+          file = path,
+          capture = capture,
+        })
+        -- a harness table that outlives the file may carry helpers an earlier run of this very spec put into it
+        state.transparent["@" .. spec.path] = nil
+        local ran, run_err = xpcall(function()
+          local run = dofile(spec.path)
+          if type(run) ~= "function" then
+            error(
+              ("%s must return `function(H)`, got %s"):format(
+                spec.rel,
+                run == nil and "nothing" or type(run)
+              ),
+              0
+            )
+          end
+          run(H)
+        end, function(e)
+          -- keep the traceback of a raise of the spec itself; other error values travel untouched
+          return type(e) == "string" and debug.traceback(e, 2) or e
+        end)
+        M.reconcile(state)
+        if not ran then
+          error(run_err, 0)
+        end
       end
-    end)
+    )
   end)
   if opts and opts.on_case then
     opts.on_case(case)

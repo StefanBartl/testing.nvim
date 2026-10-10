@@ -58,22 +58,25 @@ M.CHILD_ONLY = { script = true }
 local function h_style(builder)
   return function(a, spec, opts)
     local case = policy.guard(opts, function()
-      return a.run_case({ file = spec.rel, name = vim.fs.basename(spec.rel) }, function()
-        -- One `H` per file, bound to this case: a late call (timer, `vim.schedule`) after the file
-        -- ended cannot land on the next file's case.
-        local H = builder(a.scope())
-        local run = dofile(spec.path)
-        if type(run) ~= "function" then
-          error(
-            ("%s must return `function(H)`, got %s"):format(
-              spec.rel,
-              run == nil and "nothing" or type(run)
-            ),
-            0
-          )
+      return a.run_case(
+        { file = spec.rel, name = vim.fs.basename(spec.rel), spec_path = spec.path },
+        function()
+          -- One `H` per file, bound to this case: a late call (timer, `vim.schedule`) after the file
+          -- ended cannot land on the next file's case.
+          local H = builder(a.scope())
+          local run = dofile(spec.path)
+          if type(run) ~= "function" then
+            error(
+              ("%s must return `function(H)`, got %s"):format(
+                spec.rel,
+                run == nil and "nothing" or type(run)
+              ),
+              0
+            )
+          end
+          run(H)
         end
-        run(H)
-      end)
+      )
     end)
     if opts and opts.on_case then
       opts.on_case(case)

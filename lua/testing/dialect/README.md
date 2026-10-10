@@ -16,6 +16,8 @@ and the caller adds them to the result.
 
 A, B, C and h share `H.eq` / `H.ok` semantics: a failed check is **recorded** on the open case and the spec goes on, so every
 failure of a file is visible (P1). The recorded call site is the spec's own `file:line`. An unknown `H` key reads `nil`.
+One exception: inside a `pcall` the spec wrote, a failed check is raised, so a spec can ask "does this fail?"
+(`testing.core.protected`, [docs/DIALECTS.md](../../../docs/DIALECTS.md#a-spec-that-asks-does-this-check-fail)).
 
 ## Dialect h
 

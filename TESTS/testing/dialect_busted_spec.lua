@@ -61,6 +61,20 @@ return function(H)
     return map
   end
 
+  -- ------------------------------------------------------------------ a framework of another file wraps the it body
+  local wrap_path = here .. "/fixtures/busted_wrap.fixture.lua"
+  local wrap_cases = run("busted_wrap")
+  local W = "TESTS/busted_wrap_spec.lua::wrapped::"
+  local wmap = by_id(wrap_cases)
+  local swallowed = wmap[W .. "swallowed by the framework"]
+  eq(
+    swallowed.status,
+    "fail",
+    "the framework's pcall is not the spec's: the failed check is recorded"
+  )
+  eq(swallowed.assertions[1].line, line_of(wrap_path, "w1"), "with the spec's line")
+  eq(wmap[W .. "asks itself"].status, "pass", "a question the spec asks itself is answered")
+
   local globals_before = {}
   for _, name in ipairs({
     "describe",

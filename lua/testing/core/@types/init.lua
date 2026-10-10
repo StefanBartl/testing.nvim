@@ -144,6 +144,7 @@
 ---@field param? string|integer Parameter label, appended as `#param`.
 ---@field line? integer
 ---@field tags? string[]
+---@field spec_path? string Path of the spec file as the dialect loads it (`run_case` only; not part of the case).
 
 ---@class Testing.Result.FinishOpts
 ---@field expect_fail? boolean Map `fail` to `xfail` and `pass` to `xpass`.
@@ -214,6 +215,7 @@
 --- `H.eq` of dialect A.
 --- Plain dot calls: `a.eq(x, 1)`, they can be destructured (`local eq = a.eq`).
 ---@field depth integer Extra frames to skip when locating the caller (a wrapper that does not tail call sets 1).
+---@field entry? Testing.Protected.Entry Where `run_case` entered the case body; nil outside of one (`testing.core.protected`).
 ---@field eq fun(actual: any, expected: any, msg?: string): boolean Strict `==`; tables by identity.
 ---@field same fun(actual: any, expected: any, msg?: string): boolean Deep equality (keys sorted, metatables ignored).
 ---@field deep_eq fun(actual: any, expected: any, msg?: string): boolean Alias of `same`.
