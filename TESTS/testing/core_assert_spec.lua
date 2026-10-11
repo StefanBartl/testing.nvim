@@ -953,6 +953,232 @@ return function(H)
     error("a different error", 0)
   end)
   eq(other_case.status, "error", "a later, different error is not booked as the earlier check")
+  eq(#other_case.notes, 0, "a case that ended in an error carries no note about guessed questions")
+
+  -- the question belongs to the thread that asked it: a check on another coroutine is not asked (it records), a
+  -- question on a coroutine answers for the checks of that coroutine, and a question that ends hands the mode back to
+  -- the one it interrupted, on whatever thread that one runs
+  do
+    local other_thread = run(new_ctx(), function(c)
+      local asked = c.ask(function()
+        coroutine.wrap(function()
+          c.eq(1, 2, "on another thread")
+        end)()
+      end)
+      c.ok(asked, "a check on another thread is not asked: the question sees no error")
+    end)
+    eq(other_thread.status, "fail", "the check on the other thread is recorded")
+    local recorded = {}
+    for _, rec in ipairs(other_thread.assertions) do
+      if not rec.ok then
+        recorded[#recorded + 1] = rec.msg
+      end
+    end
+    eq(recorded, { "on another thread" }, "as the only failure of the case")
+
+    local on_thread = run(new_ctx(), function(c)
+      local answered = coroutine.wrap(function()
+        return (c.ask(function()
+          c.eq(1, 2, "asked on its own thread")
+        end))
+      end)()
+      c.ok(answered == false, "a question on a coroutine answers for a check of that coroutine")
+    end)
+    eq(on_thread.status, "pass", "and records nothing")
+
+    local restored = run(new_ctx(), function(c)
+      local answered = coroutine.wrap(function()
+        return (
+          c.ask(function()
+            coroutine.wrap(function()
+              c.ask(function() end)
+            end)()
+            c.eq(1, 2, "the outer question still holds")
+          end)
+        )
+      end)()
+      c.ok(
+        answered == false,
+        "the question that was interrupted by another thread's one still asks"
+      )
+    end)
+    eq(restored.status, "pass", "so the check of the outer question raised and recorded nothing")
+  end
+
+  -- an explicit failure (`fail`, where the negated checks of the luassert shim end) answers a question like any failed
+  -- check, and when its raise gets out of the spec it is booked as the failure it was
+  do
+    local fail_answer
+    local asked_fail = run(new_ctx(), function(c)
+      local called, text = c.ask(function()
+        c.fail("by hand")
+      end)
+      fail_answer = { called, text }
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(fail_answer, { false, "by hand" }, "fail inside a question raises its message")
+    eq(asked_fail.status, "pass", "and records nothing")
+    for _, row in ipairs({
+      { "with a message", "by hand" },
+      { "without a message", nil },
+    }) do
+      local fail_line
+      local escaped_fail = run(new_ctx(), function(c)
+        local called, caught = pcall(function()
+          fail_line = debug.getinfo(1, "l").currentline + 1
+          c.fail(row[2])
+        end)
+        if not called then
+          error(caught, 0)
+        end
+      end)
+      local label = "fail " .. row[1]
+      eq(escaped_fail.status, "fail", label .. ": a raise that escaped is a fail")
+      eq(escaped_fail.error, nil, label .. ": and not an error")
+      eq(#escaped_fail.assertions, 1, label .. ": one assertion")
+      local failure = escaped_fail.assertions[1]
+      eq(failure.ok, false, label .. ": a failed one")
+      eq(failure.kind, "fail", label .. ": of the kind fail")
+      eq(failure.msg, row[2], label .. ": with its message")
+      has(failure.file, "core_assert_spec.lua", label .. ": in this file")
+      eq(failure.line, fail_line, label .. ": at the line of the call")
+    end
+  end
+
+  -- the text of a failed check can look like a position (a message naming `file:12: `): the raise that escaped is
+  -- still found, whether the spec raises it again as it is or with a position of its own in front of it
+  for _, row in ipairs({
+    {
+      "error(err, 0)",
+      function(caught)
+        error(caught, 0)
+      end,
+    },
+    {
+      "error(err)",
+      function(caught)
+        error(caught)
+      end,
+    },
+  }) do
+    local positional = run(new_ctx(), function(c)
+      local called, caught = pcall(function()
+        c.eq(1, 2, "see x.lua:12: bar")
+      end)
+      if not called then
+        row[2](caught)
+      end
+    end)
+    eq(
+      positional.status,
+      "fail",
+      row[1] .. ": a message that looks like a position, still the failed check"
+    )
+    eq(positional.error, nil, row[1] .. ": and not an error")
+  end
+
+  -- what an earlier question left behind outside `run_case` is not the error of the next case
+  do
+    local shared = new_ctx()
+    shared.begin_case({ file = "TESTS/x_spec.lua", name = "earlier" })
+    shared.ask(function()
+      shared.eq(1, 2, "stale")
+    end)
+    shared.end_case()
+    local later = run(shared, function()
+      error("FAIL stale: expected 2, got 1", 0)
+    end)
+    eq(later.status, "error", "an error that only reads like an earlier check stays an error")
+  end
+
+  -- the count of guessed questions starts over with every case of a context
+  do
+    local shared_guess = new_ctx()
+    run(shared_guess, function(c)
+      pcall(function()
+        c.eq(1, 2, "guessed")
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    local second = run(shared_guess, function(c)
+      c.ok(true, "no question here")
+    end)
+    eq(#second.notes, 0, "a later case of the same context carries no note of the earlier case")
+  end
+
+  -- the file of an assertion is found once per chunk name and remembered: the same file every time, no work for a
+  -- chunk seen before (counted in calls of `string.gsub`), and the memory is bounded however many chunks come
+  do
+    local real_gsub = string.gsub
+    local gsubs = 0
+    local function count_gsub()
+      local info = debug.getinfo(2, "f")
+      if info and info.func == real_gsub then
+        gsubs = gsubs + 1
+      end
+    end
+    ---@param fn fun()
+    ---@return integer
+    local function gsubs_during(fn)
+      gsubs = 0
+      debug.sethook(count_gsub, "c")
+      local finished, problem = pcall(fn)
+      debug.sethook()
+      assert(finished, problem)
+      return gsubs
+    end
+    local function chunk_named(name)
+      return assert(load("local c = ...; c.eq(1, 1)", "@/virtual/" .. name .. ".lua"))
+    end
+    local memo_case = run(new_ctx(), function(c)
+      local one, two = chunk_named("one"), chunk_named("two")
+      one(c)
+      two(c)
+      eq(
+        gsubs_during(function()
+          for _ = 1, 20 do
+            one(c)
+            two(c)
+          end
+        end),
+        0,
+        "two chunks that were seen before cost no search, however they alternate"
+      )
+      local many = {}
+      for i = 1, 5000 do
+        many[i] = chunk_named("flood" .. i)
+        many[i](c)
+      end
+      eq(
+        gsubs_during(function()
+          many[1](c)
+        end),
+        1,
+        "the memory is bounded: the first of 5000 chunks has been forgotten"
+      )
+      eq(
+        gsubs_during(function()
+          for _ = 1, 20 do
+            many[5000](c)
+            many[4999](c)
+          end
+        end),
+        0,
+        "and the memory keeps working after it was cleared"
+      )
+    end)
+    local files = {}
+    for _, rec in ipairs(memo_case.assertions) do
+      if rec.file and rec.file:find("virtual/one", 1, true) then
+        files[rec.file] = true
+      end
+    end
+    eq(
+      files,
+      { ["/virtual/one.lua"] = true },
+      "the file of every assertion of a chunk is the same, without the @"
+    )
+  end
 
   -- an explicit question does not look at the stack, but it does not hand a check to a protected call of the code under
   -- test (it may keep the error) nor to a message handler (a raise there is lost): there the check is recorded

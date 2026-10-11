@@ -112,6 +112,56 @@ return function(H)
     eq(trimmed.status, "pass", "so the file passes")
   end
 
+  -- the newest failure goes first: of two expected failures the second one is taken back, the first one stays
+  do
+    local two = run("trim_two")
+    local two_failed = split(two)
+    eq(two.status, "fail", "a failure that is still in the list fails the file")
+    eq(#two_failed, 1, "one failure is left: the one that is still in the list")
+    has(two_failed[1].msg, "first fails", "the first one, not the one that was taken back")
+    ok(not two_failed[1].msg:find("second fails", 1, true), "and not the second")
+    eq(
+      two_failed[1].kind,
+      "check",
+      "as a failed check (the list holds no failure the adapter missed)"
+    )
+
+    -- a call of the collector that brought in two failures (a check inside a check) is not withdrawn for one failure
+    -- that was taken back: the failure that stays in the list stays a failure of the file
+    local nested = run("trim_nested")
+    local nested_failed = split(nested)
+    eq(nested.status, "fail", "a failure that is still in the list fails the file")
+    eq(#nested_failed, 1, "one failure record is left")
+    has(nested_failed[1].msg, "inner: in: expected 2, got 1", "the failure that stays in the list")
+
+    -- the failure line the withdrawn failure printed goes with it; one that was printed by itself is still unrecorded
+    local shout = run("trim_shout")
+    local shout_failed = split(shout)
+    eq(shout.status, "fail", "a failure line that nothing recorded fails the file")
+    eq(#shout_failed, 2, "the failure that is left, and the line nobody recorded")
+    local unrecorded = shout_failed[2] or {}
+    eq(unrecorded.kind, "project_failures", "the second one is of its own kind")
+    has(unrecorded.msg, "printed 1 failure line(s)", "naming one line, not the two of the failures")
+    has(unrecorded.msg, "[FAIL] lost: shouted", "and showing it")
+
+    -- a failure that an earlier file left in the list is not this file's: the trim withdraws this file's own
+    local real_print = print
+    ---@diagnostic disable-next-line: duplicate-set-field
+    _G.print = function() end
+    local called, dirty_cases = pcall(dialect.run_file, "h", assert_mod.new(), {
+      path = fx .. "/trim.fixture.lua",
+      rel = "TESTS/trim_dirty_spec.lua",
+      harness = fx .. "/harness_dirty.lua",
+    })
+    _G.print = real_print
+    assert(called, dirty_cases)
+    local dirty = dirty_cases[1]
+    local dirty_failed, dirty_passed = split(dirty)
+    eq(#dirty_failed, 0, "with a leftover in the list the expected failure is still withdrawn")
+    eq(dirty_passed, 2, "and the check after it holds")
+    eq(dirty.status, "pass", "so the file passes")
+  end
+
   local path = fx .. "/check_fail.fixture.lua"
   local case = run("check_fail")
   eq(case.status, "fail", "failed checks fail the file (the old false green)")

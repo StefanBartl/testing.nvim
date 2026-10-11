@@ -182,6 +182,29 @@ return function(H)
   end
   vim.fn.delete(trim_root, "rf")
 
+  -- the newest failure is the one that goes: of two failures the second is taken back out of the list, the first stays
+  write(
+    root .. "/trim_two_spec.lua",
+    'local t = require("harness")\nlocal M = {}\nfunction M.run()\n  t.eq("first", 1, 2)\n  t.eq("second", 3, 4)\n  table.remove(t.failures)\nend\nreturn M\n'
+  )
+  cases = dialect.run_file(
+    "d",
+    assert_mod.new(),
+    { path = root .. "/trim_two_spec.lua", rel = "TESTS/trim_two_spec.lua" }
+  )
+  local two_failed = {}
+  for _, rec in ipairs(cases[1].assertions) do
+    if not rec.ok then
+      two_failed[#two_failed + 1] = rec.msg
+    end
+  end
+  eq(
+    two_failed,
+    { "first: expected 2, got 1" },
+    "the failure that is still in the list stays recorded"
+  )
+  eq(cases[1].status, "fail", "so the file fails")
+
   -- a module that checks nothing fails (P4); one that raises is an error with the earlier checks kept
   write(root .. "/none_spec.lua", "local M = {}\nfunction M.run()\nend\nreturn M\n")
   cases = dialect.run_file(

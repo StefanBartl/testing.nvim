@@ -217,13 +217,14 @@ return function(H)
     end
     ---@param file string
     ---@param chunks string[]
+    ---@param root? string project root (the harness sits in it, or not)
     ---@return table<string, true>
-    local function transparent_for(file, chunks)
+    local function transparent_for(file, chunks, root)
       local harness = {}
       for i, chunk in ipairs(chunks) do
         harness["f" .. i] = helper(chunk)
       end
-      local _, state = project.new(assert_mod.new(), harness, {}, { file = file })
+      local _, state = project.new(assert_mod.new(), harness, {}, { file = file, root = root })
       return state.transparent
     end
     local set = transparent_for("/proj/TESTS/harness.lua", {
@@ -268,6 +269,131 @@ return function(H)
       "a relative harness file: the files below the working directory count"
     )
     ok(relative_set["@lua/code.lua"] == nil, "except the code under test")
+
+    -- a harness IN the project root has the whole project below it: only the files next to it and below tests/ test/
+    -- spec/ specs/ (whatever the case of the name) are the harness, the code under test may live anywhere else
+    for _, root in ipairs({ "/proj", "/proj/", "/proj/./", "/proj/sub/.." }) do
+      local at_root = transparent_for("/proj/harness.lua", {
+        "@/proj/helper.lua",
+        "@/proj/tests/support.lua",
+        "@/proj/tests/deep/support.lua",
+        "@/proj/test/support.lua",
+        "@/proj/spec/support.lua",
+        "@/proj/specs/support.lua",
+        "@/proj/TESTS/support.lua",
+        "@/proj/vendor/emit.lua",
+        "@/proj/core/emit.lua",
+        "@/proj/lua/code.lua",
+        "@/proj/src/code.lua",
+        "@/proj_other/support.lua",
+      }, root)
+      local label = "root " .. root .. ": "
+      ok(at_root["@/proj/harness.lua"] == true, label .. "the harness file is the harness")
+      for _, name in ipairs({ "helper", "tests/support", "tests/deep/support", "test/support" }) do
+        ok(at_root["@/proj/" .. name .. ".lua"] == true, label .. name .. " is the harness")
+      end
+      for _, name in ipairs({ "spec/support", "specs/support", "TESTS/support" }) do
+        ok(at_root["@/proj/" .. name .. ".lua"] == true, label .. name .. " is the harness")
+      end
+      for _, name in ipairs({ "vendor/emit", "core/emit", "lua/code", "src/code" }) do
+        ok(at_root["@/proj/" .. name .. ".lua"] == nil, label .. name .. " may be the plugin")
+      end
+      ok(
+        at_root["@/proj_other/support.lua"] == nil,
+        label .. "a directory next to the root is not below it"
+      )
+    end
+    -- a harness below the root, or a root that is not known, keeps everything below its directory but the runtime path
+    for label, root in pairs({ ["below the root"] = "/proj", ["no root"] = false }) do
+      local below =
+        transparent_for("/proj/TESTS/harness.lua", { "@/proj/TESTS/vendor/emit.lua" }, root or nil)
+      ok(
+        below["@/proj/TESTS/vendor/emit.lua"] == true,
+        label .. ": a vendor/ below the harness directory is the harness"
+      )
+    end
+  end
+
+  -- a C function between the check and the xpcall that decides: the check may run in the message handler of an error
+  -- that this very function threw, where a raise is lost, so it records. A pcall or xpcall of the runner in between
+  -- only cleans up and passes the error on, and a Lua chunk that was loaded and called is no C function.
+  do
+    local direct = run(new_ctx(), function(c)
+      -- (the C function is the very function that xpcall calls)
+      local called = xpcall(string.rep, function(e)
+        c.eq(1, 2, "in the handler of a C function")
+        return e
+      end)
+      c.ok(not called, "the C function failed")
+    end)
+    eq(
+      direct.status,
+      "fail",
+      "a check in the handler of a C function's error is recorded, not lost"
+    )
+    local direct_failed = {}
+    for _, rec in ipairs(direct.assertions) do
+      if not rec.ok then
+        direct_failed[#direct_failed + 1] = rec.msg
+      end
+    end
+    eq(direct_failed, { "in the handler of a C function" }, "as a failure of its own")
+
+    local cleanups = {
+      pcall = plugin(
+        "local cb = ...; local ok, err = pcall(cb); if not ok then error(err, 0) end",
+        "@" .. runner_dir .. "run/cleanup_p.lua"
+      ),
+      xpcall = plugin(
+        "local cb = ...; local ok, err = xpcall(cb, function(e) return e end); if not ok then error(err, 0) end",
+        "@" .. runner_dir .. "run/cleanup_x.lua"
+      ),
+    }
+    for _, kind in ipairs({ "pcall", "xpcall" }) do
+      local through = run(new_ctx(), function(c)
+        local called = xpcall(function()
+          cleanups[kind](function()
+            c.eq(1, 2, "asked through a " .. kind .. " of the runner")
+          end)
+        end, function(e)
+          return e
+        end)
+        c.ok(not called, "answered")
+      end)
+      eq(
+        through.status,
+        "pass",
+        "a " .. kind .. " of the runner between the check and the xpcall passes the raise on"
+      )
+    end
+
+    local through_main = run(new_ctx(), function(c)
+      local chunk =
+        assert(load("c.eq(1, 2, 'asked in a main chunk')", "@/home/dev/proj/TESTS/main_chunk.lua"))
+      setfenv(chunk, { c = c })
+      local called = xpcall(chunk, function(e)
+        return e
+      end)
+      c.ok(not called, "answered")
+    end)
+    eq(
+      through_main.status,
+      "pass",
+      "the main chunk of loaded code between the check and the xpcall is no C function"
+    )
+
+    -- the same C function under a pcall: no handler runs on top of it, the raise is caught in place
+    local under_pcall = run(new_ctx(), function(c)
+      local called = pcall(string.gsub, "x", "x", function()
+        c.eq(1, 2, "asked below a C function")
+      end)
+      c.ok(not called, "answered")
+    end)
+    eq(
+      under_pcall.status,
+      "pass",
+      "a C function between the check and a pcall does not stop the raise"
+    )
   end
 
   -- -------------------------------------------------------
@@ -419,5 +545,15 @@ return function(H)
     })
     eq(cases[1].error, nil, "dialect " .. name .. ": the file ran to its end")
     eq(cases[1].status, "pass", "dialect " .. name .. ": the question the spec asks is answered")
+  end
+
+  -- ... and so is the explicit question, `H.ask`, that the three of them hand to the spec
+  for _, name in ipairs({ "a", "b", "c" }) do
+    local cases = dialect.run_file(name, assert_mod.new(), {
+      path = here .. "/fixtures/ask_explicit.fixture.lua",
+      rel = "TESTS/ask_explicit_spec.lua",
+    })
+    eq(cases[1].error, nil, "dialect " .. name .. ": H.ask exists and the file ran to its end")
+    eq(cases[1].status, "pass", "dialect " .. name .. ": the question asked with H.ask is answered")
   end
 end

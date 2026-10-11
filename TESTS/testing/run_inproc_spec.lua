@@ -544,6 +544,26 @@ return function(H)
   )
   eq(timeout.depth(), outer_depth, "and the guard is released")
 
+  -- a hook of the runner that raises costs nothing: the case, the file and the run stay as they were
+  write(
+    T .. "a_hang_spec.lua",
+    'return function(H)\n  H.eq(1, 1, "fine")\n  H.eq(2, 2, "also")\nend\n'
+  )
+  local hooked = 0
+  report = run_root(root, {
+    on_case_early = function()
+      hooked = hooked + 1
+      error("the hook broke")
+    end,
+  })
+  ok(hooked > 0, "the hook ran")
+  eq(
+    by_id_or_file(report)["a_hang_spec.lua"].status,
+    "pass",
+    "a hook that raises does not touch the case it was called for"
+  )
+  eq(report.exit_code, 0, "or the run")
+
   -- a hopeless vim.wait is a timeout as well
   write(
     T .. "a_hang_spec.lua",

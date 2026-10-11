@@ -192,6 +192,38 @@ return function(H)
   has(case.assertions[4].msg, "expected values to differ", "negated equal: generated message")
   eq(case.assertions[5].msg, "custom error", "has_error: caller message")
 
+  -- the negated `same`: the caller's message, the generated one, and a comparison that raised (a strict table) says
+  -- so instead of claiming the values differ or are equal; a message that is no string is shown through `inspect`
+  local strict = setmetatable({ a = 1 }, {
+    __index = function()
+      error("strict")
+    end,
+  })
+  case = run(function(A)
+    A.are.equal(1, 2, { code = 7 })
+    A.are_not.same({ 1 }, { 1 }, "custom same")
+    A.are_not.same({ 1 }, { 1 })
+    A.are_not.same(strict, { a = 1, b = 2 }, "custom raised")
+    A.are_not.same(strict, { a = 1, b = 2 })
+  end)
+  eq(
+    case.assertions[1].msg,
+    "{code = 7}",
+    "a table as the message is shown as text, not as an address"
+  )
+  eq(case.assertions[2].msg, "custom same", "negated same: caller message")
+  has(case.assertions[3].msg, "expected values to differ", "negated same: generated message")
+  eq(
+    case.assertions[4].msg,
+    "custom raised",
+    "negated same on a comparison that raised: caller message"
+  )
+  has(
+    case.assertions[5].msg,
+    "comparison of the values raised",
+    "and the generated message says what happened"
+  )
+
   -- the call site is the caller's own line, also through the negation chain and has_no
   local lines = {}
   case = run(function(A)

@@ -494,6 +494,35 @@ return function(H)
     )
   end
 
+  -- an error that reads like a failed check but did not come through a wrapped helper (the spec raised it itself, or
+  -- code under test did) is a broken file, not a failed check: it ends the file as an error, and the check that was
+  -- answered earlier is neither booked in its place nor takes the error's position
+  local by_hand = dialect.run_file("h", assert_mod.new(), {
+    path = escaped_dir .. "/by_hand.fixture.lua",
+    rel = "TESTS/by_hand_spec.lua",
+    harness = here .. "/fixtures/h/harness.lua",
+  })[1]
+  eq(
+    by_hand.status,
+    "error",
+    "an error that reads like a failed check, raised by hand, is an error of the file"
+  )
+  has(by_hand.error and by_hand.error.message, "FAIL raised by hand", "with its own text")
+  for _, rec in ipairs(by_hand.assertions) do
+    ok(rec.ok, "no failed check is booked for it: " .. tostring(rec.msg))
+  end
+  local table_error = dialect.run_file("h", assert_mod.new(), {
+    path = escaped_dir .. "/tablerr.fixture.lua",
+    rel = "TESTS/tablerr_spec.lua",
+    harness = here .. "/fixtures/h/harness.lua",
+  })[1]
+  eq(table_error.status, "error", "an error value that is no string is an error of the file")
+  eq(
+    table_error.error and table_error.error.message,
+    "non-string error value (table)",
+    "reported as what it is"
+  )
+
   -- the doc comment of the NEXT function is not part of the body of a helper: a cleanup helper that throws its
   -- callback's error away is no assertion because a comment below it says "FAIL" and "error("
   local comment_dir = here .. "/fixtures/h_comment"
@@ -532,6 +561,23 @@ return function(H)
       's = "a\\\r\nb"  \nz',
       "a backslash before CRLF is one escaped line break",
     },
+    {
+      's = "a\\\r\n" -- c\nz',
+      's = "a\\\r\n"  \nz',
+      "a string that ends right behind an escaped CRLF",
+    },
+    {
+      's = "a\\\r" -- c\nz',
+      's = "a\\\r"  \nz',
+      "a string that ends right behind an escaped CR",
+    },
+    { 's = "a\\z   ', 's = "a\\z   ', "a \\z with nothing but blanks behind it" },
+    {
+      "x = [[abc -- no",
+      "x = [[abc -- no",
+      "an unterminated long string keeps the rest of the text, once",
+    },
+    { "x = [==[abc ]] -- no", "x = [==[abc ]] -- no", "an unterminated long string of level 2" },
   }) do
     eq(project.strip_comments(row[1]), row[2], "strip_comments: " .. row[3])
   end
@@ -540,6 +586,77 @@ return function(H)
     { a = true },
     "a minus before error( does not hide the rest of the line"
   )
+
+  -- the names of a harness text are remembered per text: every caller gets a copy (the adapter adds the names it
+  -- learns while it runs), the key is the whole text, nothing is cut off a long one, and the memory is bounded
+  do
+    local text = 'function H.a(x) error("FAIL a") end'
+    project.assertion_names(text).learned = true
+    project.assertion_names(text).learned = true
+    eq(
+      project.assertion_names(text),
+      { a = true },
+      "a name one caller learned is not handed to the next"
+    )
+    local head = ("-- the same first line "):rep(8) .. "\n"
+    eq(
+      project.assertion_names(head .. 'function H.one(x) error("FAIL") end'),
+      { one = true },
+      "a text"
+    )
+    eq(
+      project.assertion_names(head .. 'function H.two(x) error("FAIL") end'),
+      { two = true },
+      "a text that starts like the one before is another text"
+    )
+    eq(
+      project.assertion_names(
+        ("local filler = 1\n"):rep(400) .. 'function H.tail(x) error("FAIL") end'
+      ),
+      { tail = true },
+      "an assertion at the end of a long harness is found"
+    )
+
+    local real_scan = project.scan_assertion_names
+    local scans = 0
+    project.scan_assertion_names = function(source)
+      scans = scans + 1
+      return real_scan(source)
+    end
+    local unique = tostring(vim.uv.hrtime())
+    local function text_n(n)
+      return ('-- memo test %s %d\nfunction H.f%d(x) error("FAIL") end'):format(unique, n, n)
+    end
+    local finished, problem = pcall(function()
+      project.assertion_names(text_n(1))
+      project.assertion_names(text_n(1))
+      eq(scans, 1, "a text is scanned once")
+      -- (the memory is shared by everything that ran in this process and clears itself now and then: of three tries
+      -- one has the two texts in the same generation)
+      local fewest = math.huge
+      for try = 1, 3 do
+        scans = 0
+        for _ = 1, 3 do
+          project.assertion_names(text_n(100 + 2 * try))
+          project.assertion_names(text_n(101 + 2 * try))
+        end
+        fewest = math.min(fewest, scans)
+      end
+      eq(fewest, 2, "two texts that alternate are scanned once each")
+      for n = 200, 270 do
+        project.assertion_names(text_n(n))
+      end
+      scans = 0
+      project.assertion_names(text_n(200))
+      eq(scans, 1, "the memory is bounded: the first of 70 texts has been forgotten")
+      scans = 0
+      project.assertion_names(text_n(300))
+      project.assertion_names(text_n(300))
+      eq(scans, 1, "and it keeps working after it was cleared")
+    end)
+    project.scan_assertion_names = real_scan
+    assert(finished, problem)
+  end
   cases = dialect.run_file("h", assert_mod.new(), {
     path = comment_dir .. "/swallowed.fixture.lua",
     rel = "TESTS/swallowed_spec.lua",
