@@ -270,8 +270,9 @@ return function(H)
     )
     ok(relative_set["@lua/code.lua"] == nil, "except the code under test")
 
-    -- a harness IN the project root has the whole project below it: only the files next to it and below tests/ test/
-    -- spec/ specs/ (whatever the case of the name) are the harness, the code under test may live anywhere else
+    -- a harness IN the project root has the whole project around it: only the harness file itself and the files below
+    -- tests/ test/ spec/ specs/ (whatever the case of the name) are the harness, the code under test may live anywhere
+    -- else, also as a single file next to the harness
     for _, root in ipairs({ "/proj", "/proj/", "/proj/./", "/proj/sub/.." }) do
       local at_root = transparent_for("/proj/harness.lua", {
         "@/proj/helper.lua",
@@ -289,13 +290,13 @@ return function(H)
       }, root)
       local label = "root " .. root .. ": "
       ok(at_root["@/proj/harness.lua"] == true, label .. "the harness file is the harness")
-      for _, name in ipairs({ "helper", "tests/support", "tests/deep/support", "test/support" }) do
+      for _, name in ipairs({ "tests/support", "tests/deep/support", "test/support" }) do
         ok(at_root["@/proj/" .. name .. ".lua"] == true, label .. name .. " is the harness")
       end
       for _, name in ipairs({ "spec/support", "specs/support", "TESTS/support" }) do
         ok(at_root["@/proj/" .. name .. ".lua"] == true, label .. name .. " is the harness")
       end
-      for _, name in ipairs({ "vendor/emit", "core/emit", "lua/code", "src/code" }) do
+      for _, name in ipairs({ "helper", "vendor/emit", "core/emit", "lua/code", "src/code" }) do
         ok(at_root["@/proj/" .. name .. ".lua"] == nil, label .. name .. " may be the plugin")
       end
       ok(

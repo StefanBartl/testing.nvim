@@ -313,6 +313,7 @@ return function(H)
   vim.fn.writefile({ "describe('x', function(" }, broken)
   cases =
     dialect.run_file("busted", assert_mod.new(), { path = broken, rel = "TESTS/broken_spec.lua" })
+  vim.fn.delete(broken)
   eq(cases[1].status, "error", "a syntax error is an error case")
   eq(#cases, 1, "and only that")
 

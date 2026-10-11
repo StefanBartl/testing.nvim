@@ -470,8 +470,8 @@ end
 local CODE_DIRS =
   { lua = true, plugin = true, after = true, ftplugin = true, autoload = true, src = true }
 
--- directories below a harness in the PROJECT ROOT that hold support code of the tests; anything else below a root
--- harness may be the plugin (`vendor/`, `core/`, a root-level module is no "below" at all and counts)
+-- directories below a harness in the PROJECT ROOT that hold support code of the tests; anything else next to or below a
+-- root harness may be the plugin (`vendor/`, `core/`, a single-file module in the root)
 local TEST_DIRS = { tests = true, test = true, spec = true, specs = true }
 
 ---function -> absolute path of the chunk it was defined in, taken the first time it is seen: a relative chunk name
@@ -495,9 +495,9 @@ local CHUNK_PATH = setmetatable({}, { __mode = "k" })
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.
----@param root? string Project root. A harness that sits IN the root has the whole project below it: only files
----  directly in the root or below `tests/`, `test/`, `spec/` and `specs/` (any capitalisation) count then (the plugin
----  may live anywhere else).
+---@param root? string Project root. A harness that sits IN the root has the whole project around it: only the harness
+---  file itself and files below `tests/`, `test/`, `spec/` and `specs/` (any capitalisation) count then (the plugin may
+---  live anywhere else, also as a file directly in the root).
 ---@return table<string, true>
 local function harness_chunks(harness, file, root)
   ---@type table<string, true>
@@ -506,7 +506,8 @@ local function harness_chunks(harness, file, root)
     return chunks
   end
   chunks["@" .. file] = true
-  local dir = absolute(file):match("^(.*)/[^/]*$")
+  local own = absolute(file)
+  local dir = own:match("^(.*)/[^/]*$")
   local at_root = false
   if dir ~= nil and root ~= nil then
     -- the same directory spelled differently (a symlinked project root, a case-insensitive file system) is still the
@@ -533,7 +534,10 @@ local function harness_chunks(harness, file, root)
     end
     local below = path:sub(1, #dir + 1) == dir .. "/"
     local top = below and path:sub(#dir + 2):match("^([^/]*)/") or nil
-    if below and not CODE_DIRS[top] and not (at_root and top and not TEST_DIRS[top:lower()]) then
+    -- in a root harness only the harness file itself and the test directories count: anything else directly in the root
+    -- or in another directory may be the plugin (a single-file `emit.lua` next to `harness.lua`)
+    local plugin_site = at_root and path ~= own and not (top and TEST_DIRS[top:lower()])
+    if below and not CODE_DIRS[top] and not plugin_site then
       -- the key stays the raw name: `protected.inside` looks the calling chunk up by its raw `source`
       chunks[info.source] = true
     end

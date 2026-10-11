@@ -236,6 +236,13 @@ return function(H)
       "swallowed by the plugin in vendor/",
     },
     {
+      "root harness, plugin in a file of the root",
+      "h_rootfile",
+      "h_rootfile",
+      "r1",
+      "swallowed by the plugin in a file of the root",
+    },
+    {
       "dot-dot path",
       "h_dotdot",
       "h_dotdot",

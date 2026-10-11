@@ -41,9 +41,10 @@ and the start of the case.
   `H.sut = require("plugin")`, is the code under test and does not count. Paths are compared absolute and
   normalized (a helper found through `./?.lua` counts, `TESTS/../lib/x.lua` is not below `TESTS`), and a file
   below `lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/` or `src/` of the harness directory never counts: a
-  `harness.lua` in the project root has the plugin there (a harness in the project root counts only files
-  directly in the root or below `tests/`, `test/`, `spec/` and `specs/`, whatever the capitalisation: `TESTS/`
-  counts). The files are not read, so a support module of
+  `harness.lua` in the project root has the plugin there (a harness in the project root counts only the harness
+  file itself and the files below `tests/`, `test/`, `spec/` and `specs/`, whatever the capitalisation: `TESTS/`
+  counts; a single-file plugin in the root is the code under test, and a support module in the root or in
+  `helpers/` is not the harness, so its checks are recorded). The files are not read, so a support module of
   the harness directory that is exported through `H` and keeps the error of its own `pcall` (an event bus
   that logs a failing handler) counts as harness: keep it out of the harness directory, or make it raise
   again. No spec file counts, even when it put its helpers into a harness table that outlives the file.

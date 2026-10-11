@@ -205,6 +205,22 @@ return function(H)
   )
   eq(cases[1].status, "fail", "so the file fails")
 
+  -- a check at the top level of the file (before `M.run`) is a check of the file: the project's own runner loads
+  -- the file and prints the shared list, so the file must not be greener here
+  write(
+    root .. "/load_spec.lua",
+    'local t = require("harness")\nt.ok("at load time", false)\nlocal M = {}\nfunction M.run()\n  t.ok("fine", true)\nend\nreturn M\n'
+  )
+  cases = dialect.run_file(
+    "d",
+    assert_mod.new(),
+    { path = root .. "/load_spec.lua", rel = "TESTS/load_spec.lua" }
+  )
+  eq(cases[1].status, "fail", "a failed check at load time fails the file")
+  eq(#cases[1].assertions, 2, "the load-time check and the one of run() are both recorded")
+  eq(cases[1].assertions[1].msg, "at load time: expected a truthy value", "the load-time failure")
+  eq(cases[1].assertions[1].line, 2, "its line is the spec's own line")
+
   -- a module that checks nothing fails (P4); one that raises is an error with the earlier checks kept
   write(root .. "/none_spec.lua", "local M = {}\nfunction M.run()\nend\nreturn M\n")
   cases = dialect.run_file(

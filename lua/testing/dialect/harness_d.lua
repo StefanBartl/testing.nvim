@@ -279,17 +279,9 @@ function M.run_body(a, spec)
     end
     instrument(t, harness_file)
 
-    local mod = dofile(spec.path)
-    if type(mod) ~= "table" or type(mod.run) ~= "function" then
-      error(
-        ("dialect d: %s must return a table with a run() function, got %s"):format(
-          spec.rel,
-          type(mod) == "table" and "a table without run" or type(mod)
-        ),
-        0
-      )
-    end
-
+    -- The baseline is taken BEFORE the file is loaded: a check at the top level of the file (outside `M.run`) is a
+    -- check of the file, as it is for the project's own runner, which loads the file and prints the shared list. What
+    -- the harness itself recorded while it was required, and what earlier files left in the list, stays baseline.
     active = {
       a = a,
       t = t,
@@ -301,6 +293,17 @@ function M.run_body(a, spec)
       depth = 0,
     }
     local run = active
+    local mod = dofile(spec.path)
+    if type(mod) ~= "table" or type(mod.run) ~= "function" then
+      error(
+        ("dialect d: %s must return a table with a run() function, got %s"):format(
+          spec.rel,
+          type(mod) == "table" and "a table without run" or type(mod)
+        ),
+        0
+      )
+    end
+
     local ran, run_err = xpcall(mod.run, with_traceback)
     -- whatever was counted without passing through a wrapper (direct writes) is recorded with the spec's file
     sync(run, slashes(spec.path), nil)
