@@ -86,7 +86,10 @@ function M.profile(text)
   for pos, name, params in code:gmatch("()function%s+[%a_][%w_]*[%.:]([%a_][%w_]*)%s*%(([^)]*)%)") do
     starts[#starts + 1] = { pos = pos, name = name, params = params }
   end
-  for pos, name, params in code:gmatch("()[%a_][%w_]*%.([%a_][%w_]*)%s*=%s*function%s*%(([^)]*)%)") do
+  -- (`%f[%w_]`: only the start of an identifier is tried; every byte of a very long one made this quadratic)
+  for pos, name, params in
+    code:gmatch("()%f[%w_][%a_][%w_]*%.([%a_][%w_]*)%s*=%s*function%s*%(([^)]*)%)")
+  do
     starts[#starts + 1] = { pos = pos, name = name, params = params }
   end
   table.sort(starts, function(x, y)

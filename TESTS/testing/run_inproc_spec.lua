@@ -569,6 +569,34 @@ return function(H)
   )
   eq(report.exit_code, 1, "red")
 
+  -- the runner's own work after a case (streaming it to the parent) is not the next case's time: it may take longer
+  -- than the case window without the remaining its of the file being cut off
+  write(
+    T .. "a_hang_spec.lua",
+    "describe('w', function()\n  it('1', function() assert.are.equal(1, 1) end)\n  it('2', function() assert.are.equal(1, 1) end)\n  it('3', function() assert.are.equal(1, 1) end)\nend)\n"
+  )
+  report = run_root(root, {
+    timeouts = { case_ms = 200, file_ms = 30000 },
+    on_case_early = function()
+      vim.wait(300) -- longer than the case window (not clamped: the guard is suspended)
+    end,
+  })
+  by = by_id_or_file(report)
+  for _, name in ipairs({ "1", "2", "3" }) do
+    eq(
+      by["TESTS/a_hang_spec.lua::w::" .. name].status,
+      "pass",
+      "slow streaming of a case does not time out it " .. name
+    )
+  end
+  local of_file = 0
+  for _, kept in ipairs(report.result.cases) do
+    if kept.file == "TESTS/a_hang_spec.lua" then
+      of_file = of_file + 1
+    end
+  end
+  eq(of_file, 3, "and no case of the file is lost")
+
   -- without limits nothing is guarded
   write(T .. "a_hang_spec.lua", 'return function(H)\n  H.eq(1, 1, "no limit")\nend\n')
   report = run_root(root, {})

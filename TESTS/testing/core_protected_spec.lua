@@ -368,23 +368,20 @@ return function(H)
     elsewhere = vim.fs.normalize(vim.uv.fs_realpath(elsewhere))
     local home = vim.uv.cwd()
     local harness = { guard = plugin("return function() end", "@sub/helper.lua")() }
-    vim.uv.chdir(base)
-    local _, first = project.new(
-      assert_mod.new(),
-      harness,
-      {},
-      { file = base .. "/sub/harness.lua" }
-    )
-    vim.uv.chdir(elsewhere)
-    local _, second = project.new(
-      assert_mod.new(),
-      harness,
-      {},
-      { file = base .. "/sub/harness.lua" }
-    )
+    local first, second
+    -- the working directory and the directories are put back whatever happens in between: the specs after this one run
+    -- in the same process
+    local moved, problem = pcall(function()
+      vim.uv.chdir(base)
+      local _
+      _, first = project.new(assert_mod.new(), harness, {}, { file = base .. "/sub/harness.lua" })
+      vim.uv.chdir(elsewhere)
+      _, second = project.new(assert_mod.new(), harness, {}, { file = base .. "/sub/harness.lua" })
+    end)
     vim.uv.chdir(home)
     vim.fn.delete(base, "rf")
     vim.fn.delete(elsewhere, "rf")
+    assert(moved, problem)
     ok(first.transparent["@sub/helper.lua"] == true, "a relative helper is part of the harness")
     ok(
       second.transparent["@sub/helper.lua"] == true,

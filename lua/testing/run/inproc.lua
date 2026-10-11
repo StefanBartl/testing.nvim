@@ -429,25 +429,22 @@ local function run_files(opts, holder)
                   case.status = "timeout"
                 end
                 seen_in_file = seen_in_file + 1
-                guard:arm_case()
-                if gsess then
-                  -- the case is over: what the guards saw goes into it BEFORE the runner's own hooks
-                  -- (a child streams the case to its parent below) run outside the window
-                  -- (the deadline the spec just exceeded must not cut the guard layer's own checks short)
-                  local gf, ge = guard:suspend(function()
-                    return gsess:close()
-                  end)
-                  vim.list_extend(unattached, prefixed(rel, guards_mod.attach({ case }, gf, ge)))
-                  guards_mod.attach_surface({ case }, gsess)
-                end
-                if opts.on_case_early then
-                  -- the runner's own work (a child streams the case to its parent) is not cut off by the deadline
-                  -- the spec just exceeded: a raise there would land wherever the hook is, even inside the
-                  -- first-time `require` of the JSON encoder, and poison it for a reused warm-pool member
-                  guard:suspend(function()
-                    return pcall(opts.on_case_early, case)
-                  end)
-                end
+                -- The case is over. What the runner does now is not cut off by the deadline the spec just exceeded (a
+                -- raise there would land wherever the hook is, even inside the first-time `require` of the JSON
+                -- encoder, and poison it for a reused warm-pool member): what the guards saw goes into the case BEFORE the
+                -- runner's own hooks (a child streams the case to its parent) run, all outside the deadlines. The next
+                -- case's window opens only afterwards, so the runner's own time is not billed to it.
+                guard:suspend(function()
+                  if gsess then
+                    local gf, ge = gsess:close()
+                    vim.list_extend(unattached, prefixed(rel, guards_mod.attach({ case }, gf, ge)))
+                    guards_mod.attach_surface({ case }, gsess)
+                  end
+                  if opts.on_case_early then
+                    pcall(opts.on_case_early, case)
+                  end
+                  guard:arm_case()
+                end)
                 if M.BAD[case.status] and maxfail then
                   bad_before = bad_before + 1
                   if bad_before >= maxfail then

@@ -30,6 +30,10 @@ return function(H)
   -- a linear scan of this line takes about a millisecond, the quadratic one more than a second
   local BLANKS = 60000
   local LIMIT_MS = 250
+  -- the two scans of a line of 200 KB take about 100 ms on an idle host: 2.4 times that is the limit above, and a host
+  -- that is busy with something else is slower than that (4 busy processes on 4 cores: 256 ms). A quadratic scan of
+  -- these lines takes many seconds.
+  local LIMIT_LONG_MS = 1500
 
   ---@param fn fun(): any
   ---@return any result
@@ -158,7 +162,10 @@ return function(H)
       local info, ms = timed(function()
         return scan.analyze("--" .. PAD .. "@cache" .. PAD .. "off" .. PAD .. "\nreturn 1\n")
       end)
-      ok(ms < LIMIT_MS, ("a directive between blanks took %.0f ms (limit %d)"):format(ms, LIMIT_MS))
+      ok(
+        ms < LIMIT_LONG_MS,
+        ("a directive between blanks took %.0f ms (limit %d)"):format(ms, LIMIT_LONG_MS)
+      )
       ok(info.directives.off, "it is still `off`")
     end)
     scan.MAX_HEADER_LINE = bound
@@ -219,7 +226,10 @@ return function(H)
     local info, ms = timed(function()
       return scan.analyze(env_line .. "\nreturn 1\n")
     end)
-    ok(ms < LIMIT_MS, ("a header line of 200 KB took %.0f ms (limit %d)"):format(ms, LIMIT_MS))
+    ok(
+      ms < LIMIT_LONG_MS,
+      ("a header line of 200 KB took %.0f ms (limit %d)"):format(ms, LIMIT_LONG_MS)
+    )
     eq(
       #info.directives.env,
       scan.MAX_ENV_DECLARED,

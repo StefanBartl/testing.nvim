@@ -236,7 +236,10 @@ function Guard:suspend(fn)
   local ok, a, b = pcall(fn)
   if not self.stopped then
     self.file_deadline = file_deadline
-    self.case_deadline = case_deadline
+    -- a window that `fn` opened itself (`arm_case`) is the newer one and stays
+    if self.case_deadline == nil then
+      self.case_deadline = case_deadline
+    end
   end
   if not ok then
     error(a, 0)
