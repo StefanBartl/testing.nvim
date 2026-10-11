@@ -175,6 +175,18 @@ return function(H)
     A.has_error(function() end, nil, "custom error")
   end)
   eq(case.assertions[1].msg, "custom message", "equal: caller message")
+  -- a message object that prints itself keeps its text; a plain table is shown by its content
+  local rich = setmetatable({}, {
+    __tostring = function()
+      return "rich message"
+    end,
+  })
+  local rich_case = run(function(A)
+    A.are.equal(1, 2, rich)
+    A.is_true(false, { code = 7 })
+  end)
+  eq(rich_case.assertions[1].msg, "rich message", "a message object with __tostring: its own text")
+  eq(rich_case.assertions[2].msg, "{code = 7}", "a plain table: its content, not an address")
   eq(case.assertions[2].msg, "custom true", "is_true: caller message")
   eq(case.assertions[3].msg, "custom negation", "negated equal: caller message")
   has(case.assertions[4].msg, "expected values to differ", "negated equal: generated message")

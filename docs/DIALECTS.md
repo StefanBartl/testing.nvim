@@ -7,18 +7,19 @@ text decides; a configured name forces one dialect for every file.
 All dialects share the rule that makes a verdict trustworthy: a failed check is **recorded** on
 the open case and the file goes on, so every failure of a file is visible. The recorded call site
 is the spec's own `file:line`. A case without a single assertion is a failure, a file that raises
-while loading is an `error` case, and a file whose dialect is unknown is a `skip` (reported with
-the reason, never green; red under `--strict`). Nothing is a quiet pass.
+while loading is an `error` case, and a file whose dialect is unknown is an `error` case with the reason (never a
+skip, never green). Nothing is a quiet pass.
 
 ## A spec that asks "does this check fail?"
 
 **The recommended way to ask is explicit**: `local ok, err = H.ask(function() H.eq(1, 2) end)` (dialects a, b and
-c; in the kernel `a.ask(fn, ...)`). A failed check inside `ask` raises (also when no `pcall` of the spec stands between it and the `ask`, and
-whatever else is further out), is caught there and leaves nothing in the case. It is **recorded** instead when a
-protected call of the code under test, a message handler or a C function (`xpcall` only) lies between the check and
-the `ask`: that call may keep the error, and a failed check must never vanish. `a.error`, `a.no_error` and luassert `has_error` / `has_no.errors` are built on
-it, so `assert.has_error(function() assert.equal(1, 2) end)` passes in busted style, as in luassert, with or without
-a `pcall` further out. Which protected call counts as the spec's own is decided by the rules below also inside an `ask`.
+c; in the kernel `a.ask(fn, ...)`). A failed check inside `ask` raises (also when no `pcall` of the spec stands
+between it and the `ask`, and whatever else is further out), is caught there and leaves nothing in the case. It is
+**recorded** instead when a protected call of the code under test, a message handler or a C function (`xpcall` only)
+lies between the check and the `ask`: that call may keep the error, and a failed check must never vanish.
+`a.error`, `a.no_error` and luassert `has_error` / `has_no.errors` are built on it, so
+`assert.has_error(function() assert.equal(1, 2) end)` passes in busted style, as in luassert, with or without a
+`pcall` further out. Which protected call counts as the spec's own is decided by the rules below also inside an `ask`.
 
 What follows is the **fallback for specs written before `ask`** (the project's own `pcall` idiom keeps working, and
 `lib.nvim`'s specs use it). There is one exception to "recorded", because it is the only way a spec can ask that
@@ -41,7 +42,8 @@ and the start of the case.
   normalized (a helper found through `./?.lua` counts, `TESTS/../lib/x.lua` is not below `TESTS`), and a file
   below `lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/` or `src/` of the harness directory never counts: a
   `harness.lua` in the project root has the plugin there (a harness in the project root counts only files
-  directly in the root or below `tests/`, `test/`, `spec/` and `specs/`). The files are not read, so a support module of
+  directly in the root or below `tests/`, `test/`, `spec/` and `specs/`, whatever the capitalisation: `TESTS/`
+  counts). The files are not read, so a support module of
   the harness directory that is exported through `H` and keeps the error of its own `pcall` (an event bus
   that logs a failing handler) counts as harness: keep it out of the harness directory, or make it raise
   again. No spec file counts, even when it put its helpers into a harness table that outlives the file.
@@ -101,13 +103,15 @@ What can still go missing, because the catch is not a Lua `pcall`:
   (`load(text, "@" .. spec_path)`) is taken for it. Only a deliberate construct does that.
 * A guessed question leaves a trace: a case that raised failed checks only because the stack looked like a
   question carries the note "N failed check(s) were raised into a pcall of the spec", so a swallowed failure (a
-  mock, a handler, a callback of Neovim) is not completely invisible. A question asked with `ask` leaves none.
+  mock, a handler, a callback of Neovim) is not completely invisible to whoever reads the Result IR (`--json`,
+  `cases[].notes`; the terminal, JUnit and GitHub reporters do not print notes). A question asked with `ask` leaves
+  none, and neither does a raise that got out of the spec and was booked as a failure (below).
 * A plugin below the runner's own directory (testing.nvim testing its own modules) counts as the runner.
 
 A spec that wraps its body in `pcall` for cleanup and re-raises (`error(err, 0)`, `error(err)`, `assert(ok, err)`)
 stops at its first failed check, as it did on the old runner. The check is booked as a **failure** (verdict
-`fail`, the message of the check, the line of the check, not the line that raised it again); a later check of that
-file does not run. An error that is no failed check (`error("boom")`, a nil index) still ends the file as an
+`fail`, the message of the check, the line of the check, not the line that raised it again); the rest of that spec
+body does not run (in busted: the rest of that `it`, the next one runs). An error that is no failed check (`error("boom")`, a nil index) still ends the file as an
 `error`. This holds in every dialect that runs its checks through the kernel (a, b, c, h, busted).
 
 ## Matrix
@@ -138,7 +142,7 @@ provides (or provides with different semantics, e.g. a deep-equal `H.eq`), in a 
   `return function(H)` is `a`, `b`, `c` or `h` by the `H` keys it uses.
 * Conflicting evidence (busted and `return function(H)` in one file, helpers of `b` and `c` at once)
   and no evidence at all give `unknown`. An `unknown` file is an error finding with the reason and
-  its case is a `skip` that names the reason: nobody guesses silently, and `--strict` makes it red.
+  its case is an `error` that names the reason: nobody guesses silently, and nothing about it is green.
 
 ## Dialect `h`
 

@@ -81,18 +81,24 @@ end)
 
 * A failed check **does not raise**: it appends `{ ok = false, kind, msg, expected, actual, file, line }`
   to the bound case, returns `false`, and the body goes on. Every failure of a case is therefore
-  visible, not just the first (problem P1). One exception: a spec can ask "does this check fail?" with
-  `pcall(function() a.eq(1, 2) end)`. When the protected call that would catch the raise is one the
-  spec wrote, the check raises `FAIL <msg>: expected X, got Y` instead of recording (nothing is
-  recorded for it). `testing.core.protected` decides which protected call counts and lists the limits;
-  `a.entry` is the marker `run_case` sets where the case body starts, and is `nil` outside of one. The
-  exception therefore exists only inside `run_case`: a case opened with `begin_case` / `end_case` has no entry
-  point and never raises. A dialect hands the chunk of its spec file to `run_case` as `spec_path`.
+  visible, not just the first (problem P1). One exception: a spec can ask "does this check fail?".
+  The explicit way is `local ok, err = a.ask(function() a.eq(1, 2) end)`: like `pcall`, but a failed check inside
+  raises `FAIL <msg>: expected X, got Y` (and is caught there, nothing is recorded for it), also in a case opened with
+  `begin_case`. It is recorded instead when a protected call of the code under test or a message handler lies
+  between the check and the `ask`, because that call may keep the error. `a.error`, `a.no_error` are built on `ask`.
+  The fallback for specs written before it is a GUESS from the stack: when the protected call that would catch the
+  raise is one the spec wrote (`pcall(function() a.eq(1, 2) end)`), the check raises too.
+  `testing.core.protected` decides which protected call counts and lists the limits; `a.entry` is the marker
+  `run_case` sets where the case body starts, and is `nil` outside of one, so the guess exists only inside
+  `run_case`. A dialect hands the chunk of its spec file to `run_case` as `spec_path`.
 * `file`/`line` come from `debug.getinfo` at the caller of the assertion. A wrapper that is **not** a
   tail call must set `a.depth = 1` (a tail call erases its frame and needs nothing).
 * A thrown error in the body ends only that body: status `error`, `case.error.message` (first line) and
   `case.error.traceback` from `lib.lua.error.safe_call`; assertions recorded before it are kept. A
-  thrown non-string value is reported as `non-string error value (table)` rather than a raw address.
+  thrown non-string value is reported as `non-string error value (table)` rather than a raw address. One
+  thrown error is no error of the body: a failed check that was raised for a question and got out of the spec
+  (it cleaned up in a `pcall` of its own and raised again: `error(err, 0)`, `error(err)`, `assert(ok, err)`) is
+  booked as a failure of THAT check, with its line.
 * An assertion with **no case bound** raises: a silent drop would hide failures. Bind with
   `a.begin_case(opts)` / `a.end_case(finish?)`, or use `a.run_case(opts, body, finish?)`.
 * `eq` is strict (`==`, tables by identity); `same` / `deep_eq` compare deeply (metatables ignored).
@@ -102,10 +108,12 @@ end)
 | `eq`, `same`, `deep_eq` | equality (kind `eq` / `same`) |
 | `ok`, `not_ok`, `is_nil`, `not_nil` | truthiness / nil checks |
 | `matches(str, pattern)`, `has(haystack, needle)` | Lua pattern / plain substring |
-| `error(fn, pattern?)`, `no_error(fn)` | `fn` must / must not throw (`no_error` also returns its result) |
+| `error(fn, pattern?)`, `no_error(fn)` | `fn` must / must not throw (`no_error` also returns its result); a failed check inside counts as a throw |
+| `ask(fn, ...)` | not an assertion: `pcall` that lets a failed check inside raise (the explicit "does this fail?") |
 | `fail(msg)` | an explicit failure |
 
-`assert_mod.inspect(v)` and `assert_mod.deep_equal(a, b)` are the pure helpers behind the messages
+`assert_mod.inspect(v)` and `assert_mod.deep_equal(a, b)` (returns `equal, raised`: a comparison that raised, or went
+deeper than 100 levels, is not "different") are the pure helpers behind the messages
 (`lib.lua.dump` walks `pairs` order and prints function addresses, which an IR cannot use).
 
 ## Clock

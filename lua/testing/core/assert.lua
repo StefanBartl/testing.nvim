@@ -327,17 +327,18 @@ function M.new(opts)
   ---Does a failed check raise now? Yes inside an explicit question (`a.ask`) unless a protected call of the code under
   ---test lies between the check and the question (it may keep the error: the failed check would vanish); else when the
   ---protected call that would catch the raise is one the spec wrote (`testing.core.protected`, a guess, counted).
-  ---@return boolean
+  ---@return boolean raises
+  ---@return boolean guessed True when only the stack heuristic took a `pcall` of the spec for a question (counted).
   local function raises()
     local question = ASKS[running() or MAIN]
     if question then
-      return protected.inside(question, nil, true)
+      return protected.inside(question, nil, true), false
     end
     if protected.inside(a.entry) then
       a.guessed = a.guessed + 1
-      return true
+      return true, true
     end
-    return false
+    return false, false
   end
 
   ---Record a failure. `expected`/`actual` are printable strings; without a caller message the
@@ -360,11 +361,12 @@ function M.new(opts)
       file = file,
       line = line,
     }
-    if raises() then
+    local raised, guessed = raises()
+    if raised then
       -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
       local text = ("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual))
       -- (remembered: should the raise get out of the spec, `run_case` books it as this failed check)
-      a.raised = { text = text, entry = entry }
+      a.raised = { text = text, entry = entry, guessed = guessed }
       error(text, 0)
     end
     return append(entry)
@@ -522,11 +524,13 @@ function M.new(opts)
 
   function a.fail(msg)
     local file, line = locate()
-    if raises() then
+    local raised, guessed = raises()
+    if raised then
       -- an explicit failure (the negated checks of the luassert shim end here) answers the spec's question too
       a.raised = {
         text = msg or "FAIL",
         entry = { ok = false, kind = "fail", msg = msg, file = file, line = line },
+        guessed = guessed,
       }
       error(msg or "FAIL", 0)
     end
@@ -636,6 +640,10 @@ function M.new(opts)
       local escaped = want ~= nil and (first == want or first:gsub("^[^\n]-:%d+: ", "", 1) == want)
       if escaped then
         append(raised.entry)
+        -- it is in the case now: nothing was swallowed, so there is nothing to hint at
+        if raised.guessed then
+          a.guessed = a.guessed - 1
+        end
       else
         bound.status = "error"
         bound.error = { message = first, traceback = traceback }

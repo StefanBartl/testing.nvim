@@ -47,12 +47,13 @@
 --- these into a red case with the message, not into a check with `file:line`; it reads `:messages`, which keeps
 --- 500 entries, so a case that prints about that many more messages afterwards loses the error (a `vim.schedule`
 --- callback is remembered by the guard itself). A mock inside the spec that protects a callback and throws the
---- error away cannot be told from a question either. The explicit question (`a.ask`, and `a.error`, `a.no_error` and luassert
---- `has_error`, which are built on it) uses this module with the `ask` as the end of the search: with no protected call
---- in between the `ask` itself catches the raise, any of the rules above still says "record". A helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
---- callback is recorded, the helper sees success and the case ends red, never green. A plugin that lives below the
---- runner's own directory (testing.nvim testing its own modules) counts as the runner. Code is told apart by the
---- name of its chunk (`source`), which is all a frame carries: text that is loaded under the name of the spec
+--- error away cannot be told from a question either. The explicit question (`a.ask`, and `a.error`, `a.no_error`
+--- and luassert `has_error`, which are built on it) uses this module with the `ask` as the end of the search: with no
+--- protected call in between the `ask` itself catches the raise, and any of the rules above still says "record". A
+--- helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper) is the same: a check
+--- inside its callback is recorded, the helper sees success and the case ends red, never green. A plugin that lives
+--- below the runner's own directory (testing.nvim testing its own modules) counts as the runner. Code is told apart
+--- by the name of its chunk (`source`), which is all a frame carries: text that is loaded under the name of the spec
 --- file or of the harness (`load(text, "@" .. spec_path)`) is taken for it, and only deliberate code does that.
 
 local M = {}

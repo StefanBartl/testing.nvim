@@ -855,6 +855,17 @@ return function(H)
         return x, nil, nil
       end, "arg")
       c.same({ r1, r2, r3, r4 }, { true, "arg" }, "ask hands the results on")
+      -- (a table of the four locals cannot tell trailing nils from none: count the results)
+      c.eq(
+        select(
+          "#",
+          c.ask(function()
+            return nil, 2, nil
+          end)
+        ),
+        4,
+        "ask hands on every result, nils included"
+      )
       c.ok(
         c.error(function()
           c.eq(1, 2, "inside error")
@@ -924,6 +935,7 @@ return function(H)
     eq(#escaped_case.assertions, 1, label .. ": one failed assertion")
     eq(escaped_case.assertions[1].line, check_line, label .. ": at the line of the check")
     eq(escaped_case.assertions[1].expected, "2", label .. ": with what the check expected")
+    eq(#escaped_case.notes, 0, label .. ": the check is in the case, so nothing is hinted at")
   end
   local boom_case = run(new_ctx(), function()
     local called, caught = pcall(function()

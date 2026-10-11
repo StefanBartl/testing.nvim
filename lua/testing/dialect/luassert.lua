@@ -97,7 +97,18 @@ local function msg_of(v)
   if v == nil then
     return nil
   end
-  return type(v) == "string" and v or inspect(v)
+  if type(v) == "string" then
+    return v
+  end
+  -- a message object that knows how to print itself (a rich error, a context) is shown by its own text
+  local meta = type(v) == "table" and getmetatable(v) or nil
+  if type(meta) == "table" and rawget(meta, "__tostring") ~= nil then
+    local shown, text = pcall(tostring, v)
+    if shown and type(text) == "string" then
+      return text
+    end
+  end
+  return inspect(v)
 end
 
 A.equal = function(S, neg, expected, actual, msg)

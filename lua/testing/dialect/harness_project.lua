@@ -18,7 +18,9 @@
 ---     recorded as ONE assertion, failed when the harness collected a failure or `fn` raised, with the
 ---     callback's own error as the message;
 ---   * any other error is not an assertion failure (a helper's own bug, an error raised by a callback):
----     it propagates untouched and ends the file as an `error`;
+---     it propagates untouched and ends the file as an `error`. The exception is the error of a failed check
+---     that got out of a `pcall` of the spec (cleanup, then raised again): `record_escaped` books it as a failure
+---     of that check;
 ---   * except inside a `pcall` / `xpcall` that the SPEC wrote (`testing.core.protected`): there the error of a
 ---     failed check propagates too, so a spec can ask "does this fail?". The helpers of the harness itself
 ---     are passed over (`harness_chunks`), the code under test is not.
@@ -487,14 +489,15 @@ local CHUNK_PATH = setmetatable({}, { __mode = "k" })
 ---(`lua/`, `plugin/`, `after/`, `ftplugin/`, `autoload/`, `src/`) of the harness directory is never part of the harness: a
 ---`harness.lua` in the project root has the plugin there (`src/` too). The files are not read: a support module below the
 ---harness directory that is exported through `H` counts although its `pcall` may keep the error.
----A relative chunk name is made absolute against the working directory at the time of the call: a harness table
----that outlives a run and a working directory that changed in between lose their relative helpers (the check
----records: a loud false red).
+---A relative chunk name is made absolute the first time the function is seen (`CHUNK_PATH`), so a harness table that
+---outlives a run keeps its relative helpers when the working directory changes; only a function first seen after the
+---change is read against the new directory.
 ---Call it before the functions are wrapped.
 ---@param harness table
 ---@param file? string Path of the harness file as it was loaded.
 ---@param root? string Project root. A harness that sits IN the root has the whole project below it: only files
----  directly in the root or below `tests/` count then (the plugin may live anywhere else).
+---  directly in the root or below `tests/`, `test/`, `spec/` and `specs/` (any capitalisation) count then (the plugin
+---  may live anywhere else).
 ---@return table<string, true>
 local function harness_chunks(harness, file, root)
   ---@type table<string, true>

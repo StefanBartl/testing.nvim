@@ -114,7 +114,7 @@ function M.strip_comments(text)
       local _, e = text:find("]" .. level .. "]", i, true)
       out[#out + 1] = text:sub(i, e or n)
       i = (e or n) + 1
-    elseif text:sub(i, i + 1) == "--" then
+    elseif c == "-" and text:sub(i + 1, i + 1) == "-" then
       local level = text:match("^%-%-%[(=*)%[", i)
       local stop
       if level then

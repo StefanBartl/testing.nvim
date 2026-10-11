@@ -213,14 +213,14 @@
 
 ---@class Testing.Assert.Context
 --- The collecting assertions `a`. Every function records onto the current case and does not raise on a
---- failed check, except inside a protected call the spec wrote (`testing.core.protected`: the spec asks
---- "does this fail?" and gets the raise). Arguments are `(actual, expected, msg?)`, the same order as the
+--- failed check, except inside an explicit question (`a.ask`) or, as a guess from the stack, inside a protected call
+--- the spec wrote (`testing.core.protected`: the spec asks "does this fail?" and gets the raise). Arguments are `(actual, expected, msg?)`, the same order as the
 --- `H.eq` of dialect A.
 --- Plain dot calls: `a.eq(x, 1)`, they can be destructured (`local eq = a.eq`).
 ---@field depth integer Extra frames to skip when locating the caller (a wrapper that does not tail call sets 1).
 ---@field guessed integer Failed checks of the open case raised only because the stack heuristic took a pcall for a question.
 ---@field ask fun(fn: function, ...: any): boolean, ... The explicit question "does this fail?": like `pcall`, but a failed check inside raises (see `testing.core.assert`).
----@field raised? { text: string, entry: Testing.Result.Assertion } The last failed check that was RAISED (a spec's pcall asked); `run_case` books it as a failure when the raise gets out of the spec.
+---@field raised? { text: string, entry: Testing.Result.Assertion, guessed: boolean } The last failed check that was RAISED (a spec's pcall asked); `run_case` books it as a failure when the raise gets out of the spec.
 ---@field entry? Testing.Protected.Entry Where `run_case` entered the case body; nil outside of one (`testing.core.protected`).
 ---@field eq fun(actual: any, expected: any, msg?: string): boolean Strict `==`; tables by identity.
 ---@field same fun(actual: any, expected: any, msg?: string): boolean Deep equality (keys sorted, metatables ignored).
