@@ -16,17 +16,30 @@ return function(H)
   if bash == "" or vim.fn.executable("nvim") == 0 then
     ok(true, "bash or nvim is not available: nothing to run here")
   else
-    -- a TMPDIR that cannot be written: `mktemp -d` fails, and so must the script (exit 3, infrastructure)
+    -- a TMPDIR that cannot be written: `mktemp -d` fails, and so must the script (exit 3, infrastructure). Not every
+    -- mktemp reads TMPDIR (the BSD one of macOS asks the system for the user's temp directory), so the failure is
+    -- only forced where this one fails with it.
     local missing = vim.fs.normalize(vim.fn.tempname()) .. "/no/such/dir"
-    local res = vim
-      .system({ bash, script, "--list" }, { cwd = repo, env = { TMPDIR = missing }, text = true })
+    local probe = vim
+      .system({ bash, "-c", "mktemp -d" }, { env = { TMPDIR = missing }, text = true })
       :wait(60000)
-    local out = (res.stdout or "") .. (res.stderr or "")
-    eq(res.code, 3, "no scratch directory: exit 3 and nothing runs: " .. out)
-    ok(
-      out:find("cannot create a scratch directory", 1, true) ~= nil,
-      "and the message says why: " .. out
-    )
+    if probe.code == 0 then
+      vim.fn.delete(vim.trim(probe.stdout or ""), "rf")
+      ok(
+        true,
+        "this mktemp ignores TMPDIR (macOS): the failure of the scratch directory cannot be forced here"
+      )
+    else
+      local res = vim
+        .system({ bash, script, "--list" }, { cwd = repo, env = { TMPDIR = missing }, text = true })
+        :wait(60000)
+      local out = (res.stdout or "") .. (res.stderr or "")
+      eq(res.code, 3, "no scratch directory: exit 3 and nothing runs: " .. out)
+      ok(
+        out:find("cannot create a scratch directory", 1, true) ~= nil,
+        "and the message says why: " .. out
+      )
+    end
   end
 
   -- every `actions/checkout` step of the workflow says `persist-credentials: false`; the job that pushes keeps the token
