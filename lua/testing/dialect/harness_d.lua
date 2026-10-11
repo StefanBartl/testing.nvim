@@ -28,7 +28,9 @@ local M = {}
 ---@field a Testing.Assert.Context
 ---@field t table The plugin's harness module.
 ---@field passed integer Passes already recorded.
----@field failed integer Failures already recorded.
+---@field list table The plugin's failure list at the last sync (a spec may replace it).
+---@field snapshot any[] Its entries at the last sync.
+---@field known table<string, integer> The messages in the plugin's failure list at the last sync, with their counts.
 ---@field listed table[] The failed assertions recorded from the plugin's failure list, oldest first (taken back when the spec trims the list).
 ---@field depth integer Nesting of wrapped calls.
 
@@ -77,6 +79,43 @@ local function call_site(skip)
   return nil, nil
 end
 
+---Messages of the plugin's failure list with how often each occurs.
+---@param failures table
+---@return table<string, integer>
+local function tally(failures)
+  local counts = {}
+  for i = 1, #failures do
+    local msg = tostring(failures[i])
+    counts[msg] = (counts[msg] or 0) + 1
+  end
+  return counts
+end
+
+---@param list table
+---@return any[]
+local function copy_list(list)
+  local out = {}
+  for i = 1, #list do
+    out[i] = list[i]
+  end
+  return out
+end
+
+---A failed assertion for entry `i` of the plugin's failure list.
+---@param run Testing.HarnessD.Run
+---@param case Testing.Result.Case|nil
+---@param msg string
+---@param file string|nil
+---@param line integer|nil
+local function add_failure(run, case, msg, file, line)
+  if not case then
+    return
+  end
+  local entry = { ok = false, kind = "ok", msg = msg, file = file, line = line }
+  case.assertions[#case.assertions + 1] = entry
+  run.listed[#run.listed + 1] = entry
+end
+
 ---Record what the counters gained since the last sync.
 ---@param run Testing.HarnessD.Run
 ---@param file string|nil
@@ -85,38 +124,68 @@ local function sync(run, file, line)
   local case = run.a.current()
   local t = run.t
   local passed, failures = t.passed, t.failures
-  if case then
-    -- a spec that tests the harness takes an EXPECTED failure back out of the list (`table.remove(t.failures)`):
-    -- the same number of failures that came from the list are withdrawn, newest first, and the count follows the
-    -- list, or the next real failure would go unseen
-    for _ = #failures + 1, run.failed do
-      local entry = table.remove(run.listed)
-      if entry then
-        for i = #case.assertions, 1, -1 do
-          if case.assertions[i] == entry then
-            table.remove(case.assertions, i)
+  local n = #run.snapshot
+  if
+    failures == run.list
+    and #failures >= n
+    and (n == 0 or rawequal(run.snapshot[n], failures[n]))
+  then
+    -- the common case: the list only grew at its end
+    for i = n + 1, #failures do
+      local msg = tostring(failures[i])
+      add_failure(run, case, msg, file, line)
+      run.snapshot[i] = failures[i]
+      run.known[msg] = (run.known[msg] or 0) + 1
+    end
+  else
+    local now = tally(failures)
+    if failures ~= run.list then
+      -- the spec replaced the list (`t.failures = {}`): the entries of the list it had are not in this one
+      run.known = {}
+      for _, entry in ipairs(run.listed) do
+        run.known[entry.msg] = (run.known[entry.msg] or 0) + 1
+      end
+    end
+    -- a spec that tests the harness takes an EXPECTED failure back out of the list (`table.remove(t.failures)`,
+    -- `t.failures = {}`): what is gone from the list is judged by WHAT is gone, not by how many entries there are
+    -- (it may be the oldest one, a failure of an earlier file, or go together with a new failure in the same step)
+    local gone = {}
+    for msg, count in pairs(run.known) do
+      if count > (now[msg] or 0) then
+        gone[msg] = count - (now[msg] or 0)
+      end
+    end
+    for i = #run.listed, 1, -1 do
+      local entry = run.listed[i]
+      if (gone[entry.msg] or 0) > 0 then
+        gone[entry.msg] = gone[entry.msg] - 1
+        table.remove(run.listed, i)
+        for j = case and #case.assertions or 0, 1, -1 do
+          if case.assertions[j] == entry then
+            table.remove(case.assertions, j)
             break
           end
         end
       end
     end
-    run.failed = math.min(run.failed, #failures)
+    local seen = {}
+    for i = 1, #failures do
+      local msg = tostring(failures[i])
+      seen[msg] = (seen[msg] or 0) + 1
+      -- the entries that were there before and still are (the file's own or earlier ones) are not new
+      if seen[msg] > math.min(run.known[msg] or 0, now[msg]) then
+        add_failure(run, case, msg, file, line)
+      end
+    end
+    run.known, run.list = now, failures
+    run.snapshot = copy_list(failures)
+  end
+  if case then
     for _ = run.passed + 1, passed do
       case.assertions[#case.assertions + 1] = { ok = true, kind = "ok", file = file, line = line }
     end
-    for i = run.failed + 1, #failures do
-      local entry = {
-        ok = false,
-        kind = "ok",
-        msg = tostring(failures[i]),
-        file = file,
-        line = line,
-      }
-      case.assertions[#case.assertions + 1] = entry
-      run.listed[#run.listed + 1] = entry
-    end
   end
-  run.passed, run.failed = passed, #failures
+  run.passed = passed
 end
 
 ---@param e any
@@ -221,7 +290,16 @@ function M.run_body(a, spec)
       )
     end
 
-    active = { a = a, t = t, passed = t.passed, failed = #t.failures, listed = {}, depth = 0 }
+    active = {
+      a = a,
+      t = t,
+      passed = t.passed,
+      list = t.failures,
+      snapshot = copy_list(t.failures),
+      known = tally(t.failures),
+      listed = {},
+      depth = 0,
+    }
     local run = active
     local ran, run_err = xpcall(mod.run, with_traceback)
     -- whatever was counted without passing through a wrapper (direct writes) is recorded with the spec's file

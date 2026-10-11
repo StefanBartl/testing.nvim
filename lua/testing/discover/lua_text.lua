@@ -18,6 +18,37 @@ local function blank(s)
   return (s:gsub("[^\n]", " "))
 end
 
+---Offset where the quoted string that opens at `i` (with the quote `c`) ends: its closing quote, or the line break
+---that ends an unterminated one (past `n` when the text ends first). One scanner for all callers: a backslash
+---escapes the next byte, `\z` skips the blanks and line breaks that follow, a backslash before CRLF is one escaped
+---line break.
+---@param text string
+---@param i integer Offset of the opening quote.
+---@param c string The quote character.
+---@param n integer Length of `text`.
+---@return integer j
+local function string_end(text, i, c, n)
+  local j = i + 1
+  while j <= n do
+    local d = text:sub(j, j)
+    if d == "\\" then
+      local nxt = text:sub(j + 1, j + 1)
+      if nxt == "z" then
+        j = text:find("[^%s]", j + 2) or (n + 1)
+      elseif nxt == "\r" and text:sub(j + 2, j + 2) == "\n" then
+        j = j + 3
+      else
+        j = j + 2
+      end
+    elseif d == c or d == "\n" then
+      break
+    else
+      j = j + 1
+    end
+  end
+  return j
+end
+
 ---Text without comments and string contents, same length and line structure as `text`.
 ---@param text string
 ---@return string
@@ -26,17 +57,7 @@ function M.code_only(text)
   while i <= n do
     local c = text:sub(i, i)
     if c == '"' or c == "'" then
-      local j = i + 1
-      while j <= n do
-        local d = text:sub(j, j)
-        if d == "\\" then
-          j = j + 2
-        elseif d == c or d == "\n" then
-          break
-        else
-          j = j + 1
-        end
-      end
+      local j = string_end(text, i, c, n)
       local stop = math.min(j, n)
       local closed = text:sub(stop, stop) == c and stop > i
       if closed then
@@ -84,25 +105,7 @@ function M.strip_comments(text)
   while i <= n do
     local c = text:sub(i, i)
     if c == '"' or c == "'" then
-      local j = i + 1
-      while j <= n do
-        local d = text:sub(j, j)
-        if d == "\\" then
-          -- `\z` skips the blanks and line breaks that follow, a backslash before CRLF is one escaped line break
-          local nxt = text:sub(j + 1, j + 1)
-          if nxt == "z" then
-            j = text:find("[^%s]", j + 2) or (n + 1)
-          elseif nxt == "\r" and text:sub(j + 2, j + 2) == "\n" then
-            j = j + 3
-          else
-            j = j + 2
-          end
-        elseif d == c or d == "\n" then
-          break
-        else
-          j = j + 1
-        end
-      end
+      local j = string_end(text, i, c, n)
       out[#out + 1] = text:sub(i, j)
       i = j + 1
     elseif c == "[" and text:match("^%[=*%[", i) then
@@ -144,17 +147,7 @@ function M.strings(text)
   while i <= n do
     local c = text:sub(i, i)
     if c == '"' or c == "'" then
-      local j = i + 1
-      while j <= n do
-        local d = text:sub(j, j)
-        if d == "\\" then
-          j = j + 2
-        elseif d == c or d == "\n" then
-          break
-        else
-          j = j + 1
-        end
-      end
+      local j = string_end(text, i, c, n)
       local stop = math.min(j, n)
       local closed = text:sub(stop, stop) == c and stop > i
       out[#out + 1] = {

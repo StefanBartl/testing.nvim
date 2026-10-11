@@ -573,4 +573,135 @@ return function(H)
     "fail",
     "comment fixture: a helper that is no assertion does not count as a check"
   )
+
+  -- a spec that tests the harness takes an expected failure back out of `H.failures`: what is taken back is judged by
+  -- WHAT is gone from the list, not by how many entries it has
+  local trim_root = vim.fs.normalize(vim.fn.tempname())
+  local collector = table.concat(vim.fn.readfile(here .. "/fixtures/hc/harness.lua"), "\n") .. "\n"
+  -- (the fixture harness of the collector convention, plus a helper that runs a callback and a reset)
+  collector = collector:gsub(
+    "\nreturn H%s*$",
+    "\nfunction H.group(fn)\n  fn()\nend\nfunction H.reset()\n  H.failures = {}\nend\nreturn H\n"
+  )
+  ---@param label string
+  ---@param body string Lines of the spec (inside `return function(H)`).
+  ---@param expect string[] Messages of the failed assertions that must remain (prefix match, in order).
+  ---@param prelude? string Lines that run at the end of the harness file (state when the file starts).
+  local function trims(label, body, expect, prelude)
+    local text = prelude and collector:gsub("\nreturn H%s*$", "\n" .. prelude .. "\nreturn H\n")
+      or collector
+    write(trim_root .. "/harness.lua", text)
+    write(trim_root .. "/row_spec.lua", "return function(H)\n" .. body .. "end\n")
+    -- (the collector prints `[FAIL]` lines, the adapter reads them from `print`: keep them out of the log)
+    local real_print = print
+    rawset(_G, "print", function() end)
+    local row_ok, row_cases = pcall(dialect.run_file, "h", assert_mod.new(), {
+      path = trim_root .. "/row_spec.lua",
+      rel = "TESTS/row_spec.lua",
+      root = trim_root,
+    })
+    rawset(_G, "print", real_print)
+    assert(row_ok, row_cases)
+    local row_case = row_cases[1]
+    local msgs = {}
+    for _, rec in ipairs(row_case.assertions) do
+      if not rec.ok then
+        msgs[#msgs + 1] = (rec.msg or ""):sub(1, #(expect[#msgs + 1] or ""))
+      end
+    end
+    eq(msgs, expect, label)
+    eq(row_case.status, #expect > 0 and "fail" or "pass", label .. ": verdict")
+  end
+  local FAILING = function(name)
+    return ('  H.check("%s", function()\n    H.eq(1, 2, "%s")\n  end)\n'):format(name, name)
+  end
+  trims(
+    "a trim inside a group: the failure line it printed goes with it",
+    "  H.group(function()\n"
+      .. FAILING("exp")
+      .. "  end)\n  table.remove(H.failures)\n  H.eq(1, 1, 'x')\n",
+    {}
+  )
+  trims(
+    "the oldest entry removed, the newer failure stays and is the one reported",
+    FAILING("expected") .. FAILING("real") .. "  table.remove(H.failures, 1)\n",
+    { "real: " }
+  )
+  trims(
+    "the list replaced after an expected failure, then a real one",
+    FAILING("expected") .. "  H.reset()\n" .. FAILING("real"),
+    { "real: " }
+  )
+  trims(
+    "a trim and a direct write in the same step: the direct write is seen",
+    FAILING("expected") .. "  table.remove(H.failures)\n  H.failures[#H.failures + 1] = 'direct'\n",
+    {
+      "the project's harness collected 1 failure(s) in H.failures that the adapter did not see: direct",
+    }
+  )
+  trims(
+    "an entry that was in the list when the file started is removed, a failure of the file stays",
+    FAILING("real") .. "  table.remove(H.failures, 1)\n",
+    { "real: " },
+    "H.failures[1] = 'earlier'"
+  )
+  trims(
+    "the list replaced although it held an entry of the same name before",
+    "  H.reset()\n" .. FAILING("same"),
+    { "same: " },
+    "H.failures[1] = 'same'"
+  )
+  vim.fn.delete(trim_root, "rf")
+
+  -- a failed check that escaped the spec's pcall is booked at the line of the check, also when another check with the
+  -- same text (the harness' error has no position of its own) was asked about before, or another question was
+  -- answered in between; a message that only starts with FAIL but never passed a helper of the harness is no check
+  local esc_root = vim.fs.normalize(vim.fn.tempname())
+  vim.fn.mkdir(esc_root, "p")
+  vim.fn.writefile(vim.fn.readfile(here .. "/fixtures/h/harness.lua"), esc_root .. "/harness.lua")
+  ---@param body string
+  ---@return Testing.Result.Case
+  local function escapes(body)
+    write(esc_root .. "/esc_spec.lua", "return function(H)\n" .. body .. "end\n")
+    return dialect.run_file("h", assert_mod.new(), {
+      path = esc_root .. "/esc_spec.lua",
+      rel = "TESTS/esc_spec.lua",
+      root = esc_root,
+    })[1]
+  end
+  local same_text = escapes(table.concat({
+    "  pcall(function() H.eq(1, 2, 'same') end)",
+    "  local ok, err = pcall(function()",
+    "    H.eq(1, 2, 'same')",
+    "  end)",
+    "  if not ok then error(err, 0) end",
+    "",
+  }, "\n"))
+  eq(same_text.status, "fail", "escaped check with the text of an answered one: a failure")
+  eq(
+    same_text.assertions[#same_text.assertions].line,
+    4,
+    "escaped check with the text of an answered one: at its own line"
+  )
+  local between = escapes(table.concat({
+    "  local ok, err = pcall(function() H.eq(1, 2, 'first') end)",
+    "  pcall(function() H.eq(3, 4, 'second') end)",
+    "  if not ok then error(err) end",
+    "",
+  }, "\n"))
+  eq(between.status, "fail", "escaped check, another question answered in between: a failure")
+  has(
+    between.assertions[#between.assertions].file,
+    "esc_spec.lua",
+    "... in the spec file, not a garbled path"
+  )
+  eq(between.assertions[#between.assertions].line, 2, "... at the line of the check")
+  local foreign =
+    escapes('  H.eq(1, 1, "holds")\n  error("FAIL: the plugin could not connect", 0)\n')
+  eq(
+    foreign.status,
+    "error",
+    "a message that starts with FAIL but never passed the harness is an error"
+  )
+  vim.fn.delete(esc_root, "rf")
 end

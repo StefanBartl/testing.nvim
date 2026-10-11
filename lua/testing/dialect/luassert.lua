@@ -79,6 +79,8 @@ local function outside_scope()
       return res, extra
     end
   end
+  -- the question is no assertion: `false` means "fn raised", not "the check failed" (see `A.error`)
+  scope.ask = ctx.ask
   return scope
 end
 

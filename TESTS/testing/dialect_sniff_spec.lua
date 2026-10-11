@@ -45,9 +45,33 @@ return function(H)
     "strip_comments keeps strings"
   )
 
+  -- one scanner for quoted strings: `\z` and a backslash before CRLF continue the string in code_only too
+  for _, row in ipairs({
+    {
+      'local s = "a\\z\n   b"; local t = "--[[ x"\ndescribe("x", function() end)\nlocal u = "]]"\n',
+      "\\z",
+    },
+    {
+      'local s = "a\\\r\nb"; local t = "--[[ x"\r\ndescribe("x", function() end)\r\nlocal u = "]]"\r\n',
+      "CRLF",
+    },
+  }) do
+    has(
+      lua_text.code_only(row[1]),
+      "describe",
+      "code_only after a string with " .. row[2] .. ": code goes on"
+    )
+    eq(sniff.sniff(row[1]).dialect, "busted", "sniff after a string with " .. row[2])
+  end
+
   -- ------------------------------------------------------------------ the dialects
   local CASES = {
     -- label, text, dialect
+    {
+      "a: the explicit question",
+      'return function(H)\n  local ok = H.ask(function() H.eq(1, 2, "x") end)\n  H.with_patched(t, "k", 1, function() end)\n  H.eq(ok, false, "asked")\nend\n',
+      "a",
+    },
     {
       "a: lib.nvim helpers",
       'return function(H)\n  local p = H.tmpfile(".x")\n  H.eq(#H.read_lines(p), 0, "m")\nend\n',

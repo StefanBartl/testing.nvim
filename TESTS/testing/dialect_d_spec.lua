@@ -127,6 +127,61 @@ return function(H)
   )
   eq(trim_passed, 1, "and the passing check")
 
+  -- what is taken back is judged by WHAT is gone, not by how many entries the list has: the oldest entry goes while a
+  -- newer failure stays, a list that already held an entry when the file started, a list the spec replaced, a trim and
+  -- a new entry in the same step. The failure that stays in the list is the one the case reports.
+  local trim_root = vim.fs.normalize(vim.fn.tempname())
+  vim.fn.mkdir(trim_root, "p")
+  local plain_harness = table.concat(vim.fn.readfile(here .. "/fixtures/d/harness.lua"), "\n")
+  for _, row in ipairs({
+    {
+      "oldest entry removed, a newer failure stays",
+      plain_harness,
+      '  t.ok("expected", false)\n  t.ok("real", false)\n  table.remove(t.failures, 1)\n  t.ok("holds", true)\n',
+      { "real: expected a truthy value" },
+    },
+    {
+      "an entry that was in the list before the file removed, a failure of the file stays",
+      plain_harness:gsub("\nreturn M%s*$", '\nM.failures[1] = "earlier: failed"\nreturn M\n'),
+      '  t.ok("real", false)\n  table.remove(t.failures, 1)\n  t.ok("holds", true)\n',
+      { "real: expected a truthy value" },
+    },
+    {
+      "the list replaced, then a failure",
+      plain_harness:gsub("\nreturn M%s*$", '\nM.failures[1] = "earlier: failed"\nreturn M\n'),
+      '  t.failures = {}\n  t.ok("real", false)\n  t.ok("holds", true)\n',
+      { "real: expected a truthy value" },
+    },
+    {
+      "a trim and a new entry in the same step",
+      plain_harness,
+      '  t.ok("expected", false)\n  table.remove(t.failures)\n  t.failures[#t.failures + 1] = "direct: failed"\n',
+      { "direct: failed" },
+    },
+  }) do
+    write(trim_root .. "/harness.lua", row[2])
+    write(
+      trim_root .. "/row_spec.lua",
+      'local t = require("harness")\nlocal M = {}\nfunction M.run()\n'
+        .. row[3]
+        .. "end\nreturn M\n"
+    )
+    local row_case = dialect.run_file(
+      "d",
+      assert_mod.new(),
+      { path = trim_root .. "/row_spec.lua", rel = "TESTS/row_spec.lua" }
+    )[1]
+    local msgs = {}
+    for _, rec in ipairs(row_case.assertions) do
+      if not rec.ok then
+        msgs[#msgs + 1] = rec.msg
+      end
+    end
+    eq(row_case.status, "fail", row[1] .. ": the failure that stays fails the file")
+    eq(msgs, row[4], row[1] .. ": and it is the one that is reported")
+  end
+  vim.fn.delete(trim_root, "rf")
+
   -- a module that checks nothing fails (P4); one that raises is an error with the earlier checks kept
   write(root .. "/none_spec.lua", "local M = {}\nfunction M.run()\nend\nreturn M\n")
   cases = dialect.run_file(

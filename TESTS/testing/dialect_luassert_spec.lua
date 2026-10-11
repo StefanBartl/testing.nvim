@@ -276,4 +276,27 @@ return function(H)
     end)
   end)
   eq(called, false, "has_no.errors outside a case raises when the function raises")
+  -- `has_error` with an expected error asks through the scope's `ask`, which the stand-in outside a case has too
+  called, err = pcall(function()
+    A_outside.has_error(function()
+      error("inner", 0)
+    end, "inner")
+  end)
+  eq(called, true, "has_error with the expected text holds outside a case: " .. tostring(err))
+  called = pcall(function()
+    A_outside.has_error(function()
+      error("other", 0)
+    end, "inner")
+  end)
+  eq(called, false, "has_error with another error raises outside a case")
+  called = pcall(function()
+    A_outside.has_error(function()
+      A_outside.are.equal(1, 2, "inner")
+    end, "FAIL inner: expected 1, got 2")
+  end)
+  eq(
+    called,
+    true,
+    "a failed check inside the question is the error it asks for, outside a case too"
+  )
 end

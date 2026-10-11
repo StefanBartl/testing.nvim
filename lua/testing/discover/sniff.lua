@@ -52,9 +52,9 @@ end
 ---`H` keys per dialect (what the shims in `testing.dialect.harness_*` provide).
 ---@type table<string, string[]>
 M.H_KEYS = {
-  a = { "eq", "ok", "tmpfile", "read_lines", "with_patched", "with_stdpath_config" },
-  b = { "eq", "ok", "scratch", "tmproot", "tmpdir", "canonical", "write_file" },
-  c = { "eq", "ok", "falsy", "contains", "scratch", "tmpdir", "write" },
+  a = { "eq", "ok", "ask", "tmpfile", "read_lines", "with_patched", "with_stdpath_config" },
+  b = { "eq", "ok", "ask", "scratch", "tmproot", "tmpdir", "canonical", "write_file" },
+  c = { "eq", "ok", "ask", "falsy", "contains", "scratch", "tmpdir", "write" },
 }
 
 ---@param list string[]

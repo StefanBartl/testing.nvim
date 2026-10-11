@@ -94,7 +94,9 @@ function M.scan_assertion_names(text)
   for pos, name in text:gmatch("()function%s+[%a_][%w_]*%.([%a_][%w_]*)%s*%(") do
     starts[#starts + 1] = { pos = pos, name = name }
   end
-  for pos, name in text:gmatch("()[%a_][%w_]*%.([%a_][%w_]*)%s*=%s*function") do
+  -- (`%f[%w_]`: a match starts at the beginning of a word only, or a long run of word characters (a base64 blob in a
+  -- string) would be tried from every position: quadratic)
+  for pos, name in text:gmatch("()%f[%w_][%a_][%w_]*%.([%a_][%w_]*)%s*=%s*function") do
     starts[#starts + 1] = { pos = pos, name = name }
   end
   table.sort(starts, function(x, y)
@@ -145,16 +147,18 @@ end
 ---@field in_assert integer Nesting of known assertion helpers (an assertion inside one is not recorded twice).
 ---@field depth integer Nesting of wrapped calls.
 ---@field recorded integer Assertions recorded so far (passed or failed): a helper that wraps a callback is told apart from an assertion by it.
----@field base table<string, integer> Length of every collected list when the file started.
----@field attributed table<string, integer> Failures per list that the adapter recorded itself.
+---@field base_items table<string, any[]> The entries of every collected list when the file started.
+---@field base_lists table<string, table|nil> The list tables themselves when the file started (a spec may replace one).
 ---@field base_fail integer Failure counters when the file started.
 ---@field generic_base table<string, integer> Size of every field that looks like a failure record when the file started.
----@field listed { entry: Testing.Result.Assertion, list: string, n: integer, printed: integer }[] Collector failures recorded from a failure list, oldest first.
+---@field listed { entry: Testing.Result.Assertion, printed: integer, values: table<string, any[]> }[] Collector failures recorded from a failure list, oldest first (`values`: what the call appended, per list).
 ---@field attributed_fail integer Failure-counter growth the adapter recorded itself.
 ---@field printed_fail integer Failure lines printed inside wrapped calls.
 ---@field printed_lines string[] The first of them.
 ---@field capture? Testing.Policy.Capture
----@field error_site? { err: string, file?: string, line?: integer } Where the spec called the helper that raised `err` (innermost first).
+---@field error_sites table<string, { file?: string, line?: integer, call: integer }> Where the spec called the helper that raised an error text (innermost first), per text.
+---@field error_site_count integer Entries of `error_sites`.
+---@field calls integer Outermost wrapped calls started so far (one raise passes the wrappers of ONE such call).
 
 ---File and line of the first frame that is neither C, this module nor the harness file.
 ---@param state Testing.HarnessProject.State
@@ -312,9 +316,11 @@ local function wrap(state, key, original)
       state.in_assert = state.in_assert + 1
     end
     local outermost = state.depth == 0
+    if outermost then
+      state.calls = state.calls + 1
+    end
     state.depth = state.depth + 1
     local printed_from = state.capture and #state.capture.lines or 0
-    local printed_fail_before = state.printed_fail
     local pass_before = pass_counter_sum(state)
     local recorded_before = state.recorded
     local fail_before = fail_counter_sum(state)
@@ -329,13 +335,18 @@ local function wrap(state, key, original)
     if known then
       state.in_assert = state.in_assert - 1
     end
-    if outermost and state.capture then
+    -- failure lines this call printed (a nested call counts its own, the outermost call adds them to the file's)
+    local own_printed = 0
+    if state.capture and (outermost or is_collector) then
       local lines = state.capture.lines
       for i = printed_from + 1, #lines do
         if resolved.fail_line(lines[i]) then
-          state.printed_fail = state.printed_fail + 1
-          if #state.printed_lines < 3 then
-            state.printed_lines[#state.printed_lines + 1] = lines[i]
+          own_printed = own_printed + 1
+          if outermost then
+            state.printed_fail = state.printed_fail + 1
+            if #state.printed_lines < 3 then
+              state.printed_lines[#state.printed_lines + 1] = lines[i]
+            end
           end
         end
       end
@@ -348,7 +359,6 @@ local function wrap(state, key, original)
           local delta = list_len(state, name) - lists_before[name]
           if delta > 0 then
             grew = grew + delta
-            state.attributed[name] = (state.attributed[name] or 0) + delta
           end
         end
         local fail_delta = fail_counter_sum(state) - fail_before
@@ -361,25 +371,27 @@ local function wrap(state, key, original)
           local msg = caught and ("%s: %s"):format(name, text)
             or ("%s: the project harness recorded a failure"):format(name)
           -- the innermost wrapper that saw the error knows where the spec called the assertion
-          local site = state.error_site
-          if caught and site and site.err == captured then
+          local site = type(captured) == "string" and state.error_sites[captured] or nil
+          if caught and site then
             efile, eline = site.file, site.line
           end
           local file, line = site_of(state, efile, eline)
           local entry = record(state, key, false, msg, file, line)
           if entry and grew > 0 then
             -- remembered so that a spec which takes the EXPECTED failure back out of the list can withdraw it
+            local values = {}
             for _, list_name in ipairs(resolved.lists) do
+              local list = rawget(state.harness, list_name)
               if list_len(state, list_name) > lists_before[list_name] then
-                state.listed[#state.listed + 1] = {
-                  entry = entry,
-                  list = list_name,
-                  n = grew,
-                  printed = state.printed_fail - printed_fail_before,
-                }
-                break
+                local added = {}
+                for i = lists_before[list_name] + 1, #list do
+                  added[#added + 1] = list[i]
+                end
+                values[list_name] = added
               end
             end
+            state.listed[#state.listed + 1] =
+              { entry = entry, printed = own_printed, values = values }
           end
         else
           local file, line = call_site(state)
@@ -418,9 +430,20 @@ local function wrap(state, key, original)
     end
     -- not a failure of a check here (an outer collector may judge it): remember where the spec called
     -- the helper, once per error value, innermost first
-    if type(err) == "string" and (not state.error_site or state.error_site.err ~= err) then
-      local file, line = call_site(state)
-      state.error_site = { err = err, file = file, line = line }
+    if type(err) == "string" then
+      local site = state.error_sites[err]
+      -- the same raise passes the wrappers of one outermost call; the same TEXT raised by a later call is another
+      -- raise (a loop, a helper called twice) and has its own place
+      if not site or site.call ~= state.calls then
+        if not site then
+          if state.error_site_count >= 64 then
+            state.error_sites, state.error_site_count = {}, 0
+          end
+          state.error_site_count = state.error_site_count + 1
+        end
+        local file, line = call_site(state)
+        state.error_sites[err] = { file = file, line = line, call = state.calls }
+      end
     end
     error(err, 0)
   end
@@ -481,7 +504,14 @@ local function harness_chunks(harness, file, root)
   end
   chunks["@" .. file] = true
   local dir = absolute(file):match("^(.*)/[^/]*$")
-  local at_root = dir ~= nil and root ~= nil and absolute(root) == dir
+  local at_root = false
+  if dir ~= nil and root ~= nil then
+    -- the same directory spelled differently (a symlinked project root, a case-insensitive file system) is still the
+    -- root: a root that is missed would let the code under test below the harness count as the harness
+    local uv = vim.uv or vim.loop
+    at_root = absolute(root) == dir
+      or (uv.fs_realpath(root) ~= nil and uv.fs_realpath(root) == uv.fs_realpath(dir))
+  end
   ---@param value any
   local function add(value)
     if type(value) ~= "function" or not dir then
@@ -536,17 +566,17 @@ function M.record_escaped(state, err)
   if type(err) ~= "string" then
     return false
   end
-  -- `error(err)` and `assert` in front of a rethrow put `file:line: ` before the text
+  -- `error(err)` and `assert` in front of a rethrow put `file:line: ` before the text, `xpcall(fn, debug.traceback)`
+  -- hangs a traceback behind it: the text of the check is the first line without the position
   local bare = err:gsub("^[^\n]-:%d+: ", "", 1)
-  for _, text in ipairs({ err, bare }) do
-    local failure = state.resolved.classify(text)
+  local head = err:match("^[^\n]*")
+  for _, text in ipairs({ err, bare, head, (head:gsub("^[^\n]-:%d+: ", "", 1)) }) do
+    -- only an error that passed a helper of the harness is a failed check of the spec: a plugin that raises a
+    -- message starting with `FAIL` (or a spec that does) is a broken file, not a failed check
+    local site = state.error_sites[text]
+    local failure = site and state.resolved.classify(text)
     if failure then
-      local file, line = failure.file, failure.line
-      local site = state.error_site
-      if site and (site.err == err or site.err == bare or site.err == text) then
-        file, line = site.file, site.line
-      end
-      record(state, "escaped", false, failure.msg, file, line)
+      record(state, "escaped", false, failure.msg, site.file, site.line)
       return true
     end
   end
@@ -577,18 +607,26 @@ function M.new(a, harness, assertions, opts)
     in_assert = 0,
     depth = 0,
     recorded = 0,
-    base = {},
-    attributed = {},
+    base_items = {},
+    base_lists = {},
     listed = {},
     base_fail = 0,
     generic_base = {},
     attributed_fail = 0,
     printed_fail = 0,
     printed_lines = {},
+    error_sites = {},
+    error_site_count = 0,
+    calls = 0,
     capture = opts.capture,
   }
   for _, name in ipairs(resolved.lists) do
-    state.base[name] = list_len(state, name)
+    local items, list = {}, rawget(harness, name)
+    for i = 1, list_len(state, name) do
+      items[i] = list[i]
+    end
+    state.base_items[name] = items
+    state.base_lists[name] = list
   end
   state.base_fail = fail_counter_sum(state)
   for key in pairs(harness) do
@@ -622,36 +660,72 @@ function M.reconcile(state)
     return
   end
   local resolved = state.resolved
+  -- what is in every list now, with counts. A spec that tests the harness takes an expected failure back out of a
+  -- list (`table.remove(H.failures)`, `H.failures = {}`): it is judged by WHAT is gone, not by how many entries there
+  -- are (the oldest one may be gone, an entry of an earlier file, a new one may have taken its place)
+  local present, lengths = {}, {}
   for _, name in ipairs(resolved.lists) do
-    -- a spec that tests the harness takes an expected failure back out of the list (`table.remove(H.failures)`):
-    -- the collector failures recorded for it are withdrawn, newest first, as far as the list is shorter now
-    local excess = (state.attributed[name] or 0)
-      - math.max(0, list_len(state, name) - state.base[name])
-    for i = #state.listed, 1, -1 do
-      local item = state.listed[i]
-      if excess <= 0 then
-        break
-      end
-      if item.list == name and item.n <= excess then
-        for j = #case.assertions, 1, -1 do
-          if case.assertions[j] == item.entry then
-            table.remove(case.assertions, j)
-            break
-          end
-        end
-        table.remove(state.listed, i)
-        -- the failure line it printed belongs to the failure that is gone
-        state.printed_fail = math.max(0, state.printed_fail - item.printed)
-        excess = excess - item.n
-        state.attributed[name] = state.attributed[name] - item.n
+    local list = rawget(state.harness, name)
+    local counts = {}
+    lengths[name] = type(list) == "table" and #list or 0
+    for i = 1, lengths[name] do
+      local v = list[i]
+      if v == v then
+        counts[v] = (counts[v] or 0) + 1
       end
     end
-    local list = rawget(state.harness, name)
-    local unseen = list_len(state, name) - state.base[name] - (state.attributed[name] or 0)
-    if unseen > 0 and type(list) == "table" then
-      local first = {}
-      for i = #list - unseen + 1, math.min(#list, #list - unseen + 3) do
-        first[#first + 1] = tostring(list[i]):sub(1, 200)
+    -- the entries that were in the list when the file started and still are belong to the project, not to this file
+    -- (a list the spec replaced (`H.failures = {}`) holds none of them)
+    for _, v in ipairs(list == state.base_lists[name] and state.base_items[name] or {}) do
+      if (counts[v] or 0) > 0 then
+        counts[v] = counts[v] - 1
+      end
+    end
+    present[name] = counts
+  end
+  -- a failure the adapter recorded whose entries are all gone from the lists was taken back: withdrawn
+  local kept = {}
+  for _, item in ipairs(state.listed) do
+    local alive = 0
+    for name, values in pairs(item.values) do
+      local counts = present[name]
+      for _, v in ipairs(values) do
+        if counts and v == v and (counts[v] or 0) > 0 then
+          counts[v] = counts[v] - 1
+          alive = alive + 1
+        end
+      end
+    end
+    if alive > 0 then
+      kept[#kept + 1] = item
+    else
+      for j = #case.assertions, 1, -1 do
+        if case.assertions[j] == item.entry then
+          table.remove(case.assertions, j)
+          break
+        end
+      end
+      -- the failure line it printed belongs to the failure that is gone
+      state.printed_fail = math.max(0, state.printed_fail - item.printed)
+    end
+  end
+  state.listed = kept
+  for _, name in ipairs(resolved.lists) do
+    -- what is left is in the list and nobody recorded it
+    local counts, unseen = present[name], 0
+    for _, count in pairs(counts) do
+      unseen = unseen + count
+    end
+    if unseen > 0 then
+      local list, first = rawget(state.harness, name), {}
+      for i = 1, lengths[name] do
+        local v = list[i]
+        if v == v and (counts[v] or 0) > 0 then
+          counts[v] = counts[v] - 1
+          if #first < 3 then
+            first[#first + 1] = tostring(v):sub(1, 200)
+          end
+        end
       end
       record(
         state,
