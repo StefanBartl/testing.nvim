@@ -835,6 +835,52 @@ return function(H)
     )
   end
 
+  -- a failed check the spec asked about whose raise gets out of the spec (cleanup in a pcall of its own, then the
+  -- error is raised again) is a failure of THAT check with its line; an error that is no such check stays an error
+  for label, rethrow in pairs({
+    ["error(err, 0)"] = function(caught)
+      error(caught, 0)
+    end,
+    ["error(err)"] = function(caught)
+      error(caught)
+    end,
+    ["assert(false, err)"] = function(caught)
+      assert(false, caught)
+    end,
+  }) do
+    local check_line
+    local escaped_case = run(new_ctx(), function(c)
+      local called, caught = pcall(function()
+        check_line = debug.getinfo(1, "l").currentline + 1
+        c.eq(1, 2, "the check that fails")
+      end)
+      if not called then
+        rethrow(caught)
+      end
+    end)
+    eq(escaped_case.status, "fail", label .. ": a check whose raise escaped is a fail")
+    eq(escaped_case.error, nil, label .. ": and not an error")
+    eq(#escaped_case.assertions, 1, label .. ": one failed assertion")
+    eq(escaped_case.assertions[1].line, check_line, label .. ": at the line of the check")
+    eq(escaped_case.assertions[1].expected, "2", label .. ": with what the check expected")
+  end
+  local boom_case = run(new_ctx(), function()
+    local called, caught = pcall(function()
+      error("boom", 0)
+    end)
+    if not called then
+      error(caught, 0)
+    end
+  end)
+  eq(boom_case.status, "error", "an error that is no failed check stays an error")
+  local other_case = run(new_ctx(), function(c)
+    pcall(function()
+      c.eq(1, 2, "a check that was asked about")
+    end)
+    error("a different error", 0)
+  end)
+  eq(other_case.status, "error", "a later, different error is not booked as the earlier check")
+
   -- a message that is no string (the loop index of `H.eq(got[i], want[i], i)`, a table) is stored as text: the IR
   -- holds strings only, and a message it rejects would end every run that writes a report as an infrastructure error
   local numeric = run(new_ctx(), function(c)

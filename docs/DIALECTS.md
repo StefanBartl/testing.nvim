@@ -97,9 +97,11 @@ What can still go missing, because the catch is not a Lua `pcall`:
   `pcall(assert.equal, 1, 2)`.
 * A plugin below the runner's own directory (testing.nvim testing its own modules) counts as the runner.
 
-A spec that wraps its body in `pcall` for cleanup and re-raises (`assert(ok, err)`) stops at its first
-failed check, as it did on the old runner; the file then ends as an `error` case carrying that check's
-message.
+A spec that wraps its body in `pcall` for cleanup and re-raises (`error(err, 0)`, `error(err)`, `assert(ok, err)`)
+stops at its first failed check, as it did on the old runner. The check is booked as a **failure** (verdict
+`fail`, the message of the check, the line of the check, not the line that raised it again); a later check of that
+file does not run. An error that is no failed check (`error("boom")`, a nil index) still ends the file as an
+`error`. This holds in every dialect that runs its checks through the kernel (a, b, c, h, busted).
 
 ## Matrix
 

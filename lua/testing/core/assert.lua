@@ -305,11 +305,7 @@ function M.new(opts)
   ---@param actual string
   ---@return boolean ok always false
   local function fail(file, line, kind, msg, fmt, expected, actual)
-    if protected.inside(a.entry) then
-      -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
-      error(("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual)), 0)
-    end
-    return append({
+    local entry = {
       ok = false,
       kind = kind,
       msg = msg or fmt:format(expected, actual),
@@ -317,7 +313,15 @@ function M.new(opts)
       actual = actual,
       file = file,
       line = line,
-    })
+    }
+    if protected.inside(a.entry) then
+      -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
+      local text = ("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual))
+      -- (remembered: should the raise get out of the spec, `run_case` books it as this failed check)
+      a.raised = { text = text, entry = entry }
+      error(text, 0)
+    end
+    return append(entry)
   end
 
   local EXPECTED_GOT = "expected %s, got %s"
@@ -453,6 +457,10 @@ function M.new(opts)
     local file, line = locate()
     if protected.inside(a.entry) then
       -- an explicit failure (the negated checks of the luassert shim end here) answers the spec's question too
+      a.raised = {
+        text = msg or "FAIL",
+        entry = { ok = false, kind = "fail", msg = msg, file = file, line = line },
+      }
       error(msg or "FAIL", 0)
     end
     return append({ ok = false, kind = "fail", msg = msg, file = file, line = line })
@@ -526,6 +534,7 @@ function M.new(opts)
 
   function a.run_case(case_opts, body, finish)
     local bound = a.begin_case(case_opts)
+    a.raised = nil
     local safe_call = require("lib.lua.error").safe_call
     -- Defensive: should safe_call ever raise itself (its `error.new` insists on a string message),
     -- the case still ends as an error instead of taking the runner down.
@@ -544,9 +553,20 @@ function M.new(opts)
       if kind then
         first = ("non-string error value (%s)"):format(kind)
       end
-      bound.status = "error"
-      bound.error = { message = first, traceback = traceback }
+      local raised = a.raised
+      -- A check the spec asked about whose raise got out of the spec (it cleaned up in a pcall of its own and raised
+      -- the error again, `error(err, 0)`, `error(err)` or `assert(ok, err)`): a failure of that check, with its
+      -- line, not a broken spec. `error(err)` and `assert` may put `file:line: ` in front of the text.
+      local escaped = raised ~= nil
+        and (first == raised.text or first:gsub("^[^\n]-:%d+: ", "", 1) == raised.text)
+      if escaped then
+        append(raised.entry)
+      else
+        bound.status = "error"
+        bound.error = { message = first, traceback = traceback }
+      end
     end
+    a.raised = nil
     return a.end_case(finish)
   end
 

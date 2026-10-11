@@ -218,6 +218,7 @@
 --- `H.eq` of dialect A.
 --- Plain dot calls: `a.eq(x, 1)`, they can be destructured (`local eq = a.eq`).
 ---@field depth integer Extra frames to skip when locating the caller (a wrapper that does not tail call sets 1).
+---@field raised? { text: string, entry: Testing.Result.Assertion } The last failed check that was RAISED (a spec's pcall asked); `run_case` books it as a failure when the raise gets out of the spec.
 ---@field entry? Testing.Protected.Entry Where `run_case` entered the case body; nil outside of one (`testing.core.protected`).
 ---@field eq fun(actual: any, expected: any, msg?: string): boolean Strict `==`; tables by identity.
 ---@field same fun(actual: any, expected: any, msg?: string): boolean Deep equality (keys sorted, metatables ignored).

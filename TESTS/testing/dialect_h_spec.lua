@@ -447,6 +447,53 @@ return function(H)
     vim.fn.delete(dir, "rf")
   end
 
+  -- a failed check that escaped the spec's own pcall (cleanup, then the error is raised again) is a failure of that
+  -- check with its line, not an error of the file; an error that is no failed check stays an error
+  local escaped_dir = here .. "/fixtures/h_escaped"
+  for _, row in ipairs({
+    { "rethrow0", "e1", "error(err, 0)" },
+    { "rethrow1", "e2", "error(err)" },
+    { "rethrow_assert", "e3", "assert(ok, err)" },
+  }) do
+    local escaped_cases = dialect.run_file("h", assert_mod.new(), {
+      path = escaped_dir .. "/" .. row[1] .. ".fixture.lua",
+      rel = "TESTS/" .. row[1] .. "_spec.lua",
+      harness = here .. "/fixtures/h/harness.lua",
+    })
+    local escaped = escaped_cases[1]
+    eq(escaped.status, "fail", row[3] .. ": a failed check that escaped is a fail, not an error")
+    eq(escaped.error, nil, row[3] .. ": the file has no error")
+    local escaped_failed = {}
+    for _, rec in ipairs(escaped.assertions) do
+      if not rec.ok then
+        escaped_failed[#escaped_failed + 1] = rec
+      end
+    end
+    eq(#escaped_failed, 1, row[3] .. ": one failed check")
+    ok(
+      escaped_failed[1]
+        and (escaped_failed[1].msg or ""):find("the check that fails", 1, true) ~= nil,
+      row[3] .. ": the message is the check's own, without a traceback"
+    )
+    eq(
+      escaped_failed[1] and escaped_failed[1].line,
+      line_of(escaped_dir .. "/" .. row[1] .. ".fixture.lua", row[2]),
+      row[3] .. ": the line is the check's, not the line that raised it again"
+    )
+  end
+  for _, name in ipairs({ "boom", "nilindex" }) do
+    local plain = dialect.run_file("h", assert_mod.new(), {
+      path = escaped_dir .. "/" .. name .. ".fixture.lua",
+      rel = "TESTS/" .. name .. "_spec.lua",
+      harness = here .. "/fixtures/h/harness.lua",
+    })[1]
+    eq(
+      plain.status,
+      "error",
+      name .. ": an error that is no failed check stays an error of the file"
+    )
+  end
+
   -- the doc comment of the NEXT function is not part of the body of a helper: a cleanup helper that throws its
   -- callback's error away is no assertion because a comment below it says "FAIL" and "error("
   local comment_dir = here .. "/fixtures/h_comment"

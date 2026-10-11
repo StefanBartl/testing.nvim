@@ -502,6 +502,36 @@ end
 ---@type table<string, true>
 local spec_chunks = {}
 
+---A failed check that reached the top of the file: the spec wrapped its body in a `pcall` of its own, cleaned up
+---and raised the error again (`error(err, 0)`, `error(err)`, `assert(ok, err)`), so the file stopped at its first
+---failed check. It is a failure of that check, not a broken spec: recorded like any failed assertion, with the
+---position of the check (the innermost wrapper that saw the error knows where the spec called it).
+---A text that is no failure of the project's convention (`nil` indexed, `error("boom")`) is not one: `false`, the
+---caller raises it and the file ends as an `error`.
+---@param state Testing.HarnessProject.State
+---@param err any The error as it was raised, without the traceback.
+---@return boolean recorded
+function M.record_escaped(state, err)
+  if type(err) ~= "string" then
+    return false
+  end
+  -- `error(err)` and `assert` in front of a rethrow put `file:line: ` before the text
+  local bare = err:gsub("^[^\n]-:%d+: ", "", 1)
+  for _, text in ipairs({ err, bare }) do
+    local failure = state.resolved.classify(text)
+    if failure then
+      local file, line = failure.file, failure.line
+      local site = state.error_site
+      if site and (site.err == err or site.err == bare or site.err == text) then
+        file, line = site.file, site.line
+      end
+      record(state, "escaped", false, failure.msg, file, line)
+      return true
+    end
+  end
+  return false
+end
+
 ---Wrap the project's harness in place and return the table the spec receives as `H`.
 ---@param a Testing.Assert.Context|table Context (needs `current()`).
 ---@param harness table The table the project's `harness.lua` returned (it is modified in place).
@@ -712,6 +742,8 @@ function M.run_file(a, spec, opts)
             state.transparent[chunk] = nil
           end
         end
+        -- the error as it was raised: the handler below hangs a traceback on it, which would hide the text of a check
+        local raw_err
         local ran, run_err = xpcall(function()
           local run = dofile(spec.path)
           if type(run) ~= "function" then
@@ -725,11 +757,12 @@ function M.run_file(a, spec, opts)
           end
           run(H)
         end, function(e)
+          raw_err = e
           -- keep the traceback of a raise of the spec itself; other error values travel untouched
           return type(e) == "string" and debug.traceback(e, 2) or e
         end)
         M.reconcile(state)
-        if not ran then
+        if not ran and not M.record_escaped(state, raw_err) then
           error(run_err, 0)
         end
       end
