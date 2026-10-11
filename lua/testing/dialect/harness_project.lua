@@ -156,6 +156,7 @@ end
 ---@field listed { entry: Testing.Result.Assertion, printed: integer, values: table<string, any[]> }[] Collector failures recorded from a failure list, oldest first (`values`: what the call appended, per list).
 ---@field attributed_fail integer Failure-counter growth the adapter recorded itself.
 ---@field printed_fail integer Failure lines printed inside wrapped calls.
+---@field claimed_printed integer Failure lines that finished collector calls have claimed for their items.
 ---@field printed_lines string[] The first of them.
 ---@field capture? Testing.Policy.Capture
 ---@field error_sites table<string, { file?: string, line?: integer, call: integer }> Where the spec called the helper that raised an error text (innermost first), per text.
@@ -323,6 +324,7 @@ local function wrap(state, key, original)
     end
     state.depth = state.depth + 1
     local printed_from = state.capture and #state.capture.lines or 0
+    local claimed_before = state.claimed_printed
     local pass_before = pass_counter_sum(state)
     local recorded_before = state.recorded
     local fail_before = fail_counter_sum(state)
@@ -352,6 +354,13 @@ local function wrap(state, key, original)
           end
         end
       end
+    end
+
+    -- (the lines of a collector that ran inside this call are its own: this call's item keeps the rest, or taking both
+    -- items back out would subtract those lines twice)
+    local item_printed = own_printed - (state.claimed_printed - claimed_before)
+    if is_collector then
+      state.claimed_printed = claimed_before + own_printed
     end
 
     if res[1] then
@@ -393,7 +402,7 @@ local function wrap(state, key, original)
               end
             end
             state.listed[#state.listed + 1] =
-              { entry = entry, printed = own_printed, values = values }
+              { entry = entry, printed = item_printed, values = values }
           end
         else
           local file, line = call_site(state)
@@ -577,7 +586,16 @@ function M.record_escaped(state, err)
   -- hangs a traceback behind it: the text of the check is the first line without the position
   local bare = err:gsub("^[^\n]-:%d+: ", "", 1)
   local head = err:match("^[^\n]*")
-  for _, text in ipairs({ err, bare, head, (head:gsub("^[^\n]-:%d+: ", "", 1)) }) do
+  -- (a message with line breaks and a traceback behind it: the traceback is cut off the whole text, not the first line)
+  local untraced = err:gsub("\nstack traceback:.*$", "")
+  for _, text in ipairs({
+    err,
+    bare,
+    head,
+    (head:gsub("^[^\n]-:%d+: ", "", 1)),
+    untraced,
+    (untraced:gsub("^[^\n]-:%d+: ", "", 1)),
+  }) do
     -- only an error that passed a helper of the harness is a failed check of the spec: a plugin that raises a
     -- message starting with `FAIL` (or a spec that does) is a broken file, not a failed check
     local site = state.error_sites[text]
@@ -621,6 +639,7 @@ function M.new(a, harness, assertions, opts)
     generic_base = {},
     attributed_fail = 0,
     printed_fail = 0,
+    claimed_printed = 0,
     printed_lines = {},
     error_sites = {},
     error_site_count = 0,
@@ -677,15 +696,18 @@ function M.reconcile(state)
     lengths[name] = type(list) == "table" and #list or 0
     for i = 1, lengths[name] do
       local v = list[i]
-      if v == v then
+      if v ~= nil and v == v then
         counts[v] = (counts[v] or 0) + 1
       end
     end
     -- the entries that were in the list when the file started and still are belong to the project, not to this file
     -- (a list the spec replaced (`H.failures = {}`) holds none of them)
-    for _, v in ipairs(list == state.base_lists[name] and state.base_items[name] or {}) do
-      if (counts[v] or 0) > 0 then
-        counts[v] = counts[v] - 1
+    -- (by position: an old entry the spec took out in place is gone, and a new entry with the same text is not it)
+    if list == state.base_lists[name] then
+      for i, v in ipairs(state.base_items[name]) do
+        if rawequal(list[i], v) and (counts[v] or 0) > 0 then
+          counts[v] = counts[v] - 1
+        end
       end
     end
     present[name] = counts
@@ -697,7 +719,7 @@ function M.reconcile(state)
     for name, values in pairs(item.values) do
       local counts = present[name]
       for _, v in ipairs(values) do
-        if counts and v == v and (counts[v] or 0) > 0 then
+        if counts and v ~= nil and v == v and (counts[v] or 0) > 0 then
           counts[v] = counts[v] - 1
           alive = alive + 1
         end
@@ -727,7 +749,7 @@ function M.reconcile(state)
       local list, first = rawget(state.harness, name), {}
       for i = 1, lengths[name] do
         local v = list[i]
-        if v == v and (counts[v] or 0) > 0 then
+        if v ~= nil and v == v and (counts[v] or 0) > 0 then
           counts[v] = counts[v] - 1
           if #first < 3 then
             first[#first + 1] = tostring(v):sub(1, 200)

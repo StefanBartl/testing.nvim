@@ -158,6 +158,66 @@ return function(H)
       '  t.ok("expected", false)\n  table.remove(t.failures)\n  t.failures[#t.failures + 1] = "direct: failed"\n',
       { "direct: failed" },
     },
+    {
+      "a list replaced by one that holds an entry equal to an earlier one: the entry is new",
+      plain_harness:gsub("\nreturn M%s*$", '\nM.failures[1] = "earlier: failed"\nreturn M\n'),
+      '  t.failures = { "earlier: failed" }\n  t.ok("holds", true)\n',
+      { "earlier: failed" },
+    },
+    {
+      "the same failure twice, then the list replaced: both are gone",
+      plain_harness,
+      '  t.ok("same", false)\n  t.ok("same", false)\n  t.failures = {}\n  t.ok("holds", true)\n',
+      {},
+    },
+    {
+      "the same failure twice, the oldest taken back: one stays",
+      plain_harness,
+      '  t.ok("same", false)\n  t.ok("same", false)\n  table.remove(t.failures, 1)\n  t.ok("holds", true)\n',
+      { "same: expected a truthy value" },
+    },
+    {
+      "an entry taken back when the list was replaced comes back with the next list",
+      plain_harness,
+      '  t.failures[#t.failures + 1] = "back: failed"\n  t.ok("sync", true)\n  t.failures = { "other: failed" }\n  t.ok("sync", true)\n  t.failures = { "back: failed" }\n  t.ok("sync", true)\n',
+      { "back: failed" },
+    },
+    {
+      "a list replaced, then a failure: it is counted once",
+      plain_harness,
+      '  t.failures = {}\n  t.ok("n1", false)\n',
+      { "n1: expected a truthy value" },
+    },
+    {
+      "a list replaced, then a failure taken back",
+      plain_harness,
+      '  t.failures = {}\n  t.ok("n2", false)\n  table.remove(t.failures)\n  t.ok("holds", true)\n',
+      {},
+    },
+    {
+      "an earlier entry stays: only the failure of the file is reported",
+      plain_harness:gsub("\nreturn M%s*$", '\nM.failures[1] = "earlier: failed"\nreturn M\n'),
+      '  t.ok("holds", true)\n  t.ok("n2", false)\n',
+      { "n2: expected a truthy value" },
+    },
+    {
+      "an earlier entry stays: a failure of the file taken back leaves a pass",
+      plain_harness:gsub("\nreturn M%s*$", '\nM.failures[1] = "earlier: failed"\nreturn M\n'),
+      '  t.ok("n3", false)\n  table.remove(t.failures)\n  t.ok("holds", true)\n',
+      {},
+    },
+    {
+      "the oldest entry taken back while a new failure has the text of the last one",
+      plain_harness,
+      '  t.ok("a", false)\n  t.ok("b", false)\n  table.remove(t.failures, 1)\n  t.ok("b", false)\n',
+      { "b: expected a truthy value", "b: expected a truthy value" },
+    },
+    {
+      "a list replaced by one with the same entry twice, then a failure taken back",
+      plain_harness,
+      '  t.failures = { "dup: failed", "dup: failed" }\n  t.ok("n2", false)\n  table.remove(t.failures)\n',
+      { "dup: failed", "dup: failed" },
+    },
   }) do
     write(trim_root .. "/harness.lua", row[2])
     write(
@@ -177,7 +237,11 @@ return function(H)
         msgs[#msgs + 1] = rec.msg
       end
     end
-    eq(row_case.status, "fail", row[1] .. ": the failure that stays fails the file")
+    eq(
+      row_case.status,
+      #row[4] > 0 and "fail" or "pass",
+      row[1] .. ": the failure that stays fails the file, none that stays passes it"
+    )
     eq(msgs, row[4], row[1] .. ": and it is the one that is reported")
   end
   vim.fn.delete(trim_root, "rf")
@@ -220,6 +284,38 @@ return function(H)
   eq(#cases[1].assertions, 2, "the load-time check and the one of run() are both recorded")
   eq(cases[1].assertions[1].msg, "at load time: expected a truthy value", "the load-time failure")
   eq(cases[1].assertions[1].line, 2, "its line is the spec's own line")
+
+  -- an entry written into the list by hand at the top level of the file is a failure of the file as well
+  write(
+    root .. "/load_direct_spec.lua",
+    'local t = require("harness")\nt.failures[#t.failures + 1] = "direct at load: failed"\nlocal M = {}\nfunction M.run()\n  t.ok("fine", true)\nend\nreturn M\n'
+  )
+  cases = dialect.run_file(
+    "d",
+    assert_mod.new(),
+    { path = root .. "/load_direct_spec.lua", rel = "TESTS/load_direct_spec.lua" }
+  )
+  eq(cases[1].status, "fail", "an entry written at load time fails the file")
+  local direct_msgs = {}
+  for _, rec in ipairs(cases[1].assertions) do
+    if not rec.ok then
+      direct_msgs[#direct_msgs + 1] = rec.msg
+    end
+  end
+  eq(direct_msgs, { "direct at load: failed" }, "and is the failure that is reported")
+
+  -- a counter raised by hand at the top level of the file counts as well
+  write(
+    root .. "/load_passed_spec.lua",
+    'local t = require("harness")\nt.passed = t.passed + 2\nlocal M = {}\nfunction M.run()\nend\nreturn M\n'
+  )
+  cases = dialect.run_file(
+    "d",
+    assert_mod.new(),
+    { path = root .. "/load_passed_spec.lua", rel = "TESTS/load_passed_spec.lua" }
+  )
+  eq(cases[1].status, "pass", "checks counted at load time are checks of the file")
+  eq(#cases[1].assertions, 2, "one assertion per counted check")
 
   -- a module that checks nothing fails (P4); one that raises is an error with the earlier checks kept
   write(root .. "/none_spec.lua", "local M = {}\nfunction M.run()\nend\nreturn M\n")

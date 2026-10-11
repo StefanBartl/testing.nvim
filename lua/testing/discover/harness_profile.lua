@@ -35,12 +35,14 @@ local M = {}
 ---@type table<string, table<string, string[]>>
 M.REFERENCE = {
   a = {
+    ask = { "fn", "..." },
     tmpfile = { "suffix" },
     read_lines = { "path" },
     with_patched = { "target", "key", "value", "fn" },
     with_stdpath_config = { "link", "fn" },
   },
   b = {
+    ask = { "fn", "..." },
     scratch = { "ft" },
     tmproot = { "name" },
     tmpdir = {},
@@ -48,6 +50,7 @@ M.REFERENCE = {
     write_file = { "path", "lines" },
   },
   c = {
+    ask = { "fn", "..." },
     falsy = { "v", "msg" },
     contains = { "haystack", "needle", "msg" },
     scratch = { "lines", "ft" },

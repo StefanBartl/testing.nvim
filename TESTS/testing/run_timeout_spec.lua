@@ -187,6 +187,57 @@ return function(H)
   eq(g:stop(), false, "a case timeout is not a file timeout")
   restored("after cases")
 
+  -- suspend: no deadline inside, both back afterwards, a window that the callback opened stays, an error goes on, a
+  -- guard that was stopped inside stays off
+  do
+    local tick = 1000
+    local gs = timeout.start({
+      file_ms = 5000,
+      case_ms = 100,
+      label = "suspend",
+      clock = function()
+        return tick
+      end,
+    })
+    local file_deadline, case_deadline = gs.file_deadline, gs.case_deadline
+    local inside_file, inside_case
+    local r1, r2 = gs:suspend(function()
+      inside_file, inside_case = gs.file_deadline, gs.case_deadline
+      return "a", "b"
+    end)
+    ok(inside_file == nil and inside_case == nil, "suspend: no deadline while the callback runs")
+    eq({ r1, r2 }, { "a", "b" }, "suspend: hands on the first two results")
+    eq(
+      { gs.file_deadline, gs.case_deadline },
+      { file_deadline, case_deadline },
+      "suspend: both deadlines are back afterwards"
+    )
+    tick = 1050
+    gs:suspend(function()
+      tick = 1200
+      gs:arm_case()
+    end)
+    eq(gs.case_deadline, 1300, "suspend: a window that the callback opened stays")
+    eq(gs.file_deadline, file_deadline, "suspend: and the file deadline is back")
+    local raised, why = pcall(gs.suspend, gs, function()
+      error("inside", 0)
+    end)
+    eq({ raised, why }, { false, "inside" }, "suspend: the error of the callback goes on")
+    eq(
+      { gs.file_deadline, gs.case_deadline },
+      { file_deadline, 1300 },
+      "suspend: and the deadlines are back"
+    )
+    gs:suspend(function()
+      gs:stop()
+    end)
+    ok(
+      gs.file_deadline == nil and gs.case_deadline == nil,
+      "suspend: a guard stopped inside stays off"
+    )
+    restored("after suspend")
+  end
+
   -- guards nest: the inner one fires, the outer one survives it
   local outer = timeout.start({ file_ms = 60000, label = "outer" })
   local inner = timeout.start({ file_ms = 80, label = "inner" })

@@ -152,7 +152,8 @@ end
 ---@param asked? boolean `entry` is the point of an explicit question (`a.ask`): when no protected call lies in between
 ---  the question itself catches the raise (true), but one of the code under test, a message handler or a C frame still
 ---  says "record", as everywhere else.
----@return boolean
+---@return boolean raises
+---@return boolean decided True when a protected call of the spec (a guess) decided, false when nothing lay between.
 function M.inside(entry, transparent, asked)
   if not entry or (running() or false) ~= entry.thread then
     return false
@@ -206,7 +207,7 @@ function M.inside(entry, transparent, asked)
     end
   end
   if not catcher then
-    return asked == true
+    return asked == true, false
   end
   if catcher_is_xpcall then
     -- A C function between the check and an `xpcall` (a `coroutine.wrap` that rethrows, `require`, `string.gsub`)
@@ -238,7 +239,7 @@ function M.inside(entry, transparent, asked)
       end
     end
   end
-  return catcher == spec_source
+  return catcher == spec_source, true
 end
 
 return M

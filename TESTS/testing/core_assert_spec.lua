@@ -900,6 +900,20 @@ return function(H)
       c.ok(true, "keeps the case valid")
     end)
     eq(guessed.status, "pass", "a guessed question is answered")
+    -- a pcall of the spec between the check and an explicit question is a guess too: the note says so
+    local between = run(new_ctx(), function(c)
+      local saw_no_error = c.ask(function()
+        pcall(function()
+          c.eq(1, 2, "swallowed by a spec pcall inside the ask")
+        end)
+      end)
+      c.ok(saw_no_error, "the question saw no error")
+    end)
+    has(
+      between.notes[1],
+      "1 failed check(s) were raised into a pcall of the spec",
+      "a raise into a spec pcall inside an ask leaves the note as well"
+    )
     has(
       guessed.notes[1],
       "1 failed check(s) were raised into a pcall of the spec",
@@ -1608,5 +1622,193 @@ return function(H)
     end
     assert_mod.inspect(head)
     eq(sorted, 0, "the keys behind an array that used the budget up are not sorted")
+  end
+
+  -- mutation gaps of the explicit question: accounting of guessed raises, leftovers, depth limit, nesting
+  do
+    -- a swallowed guess stays hinted at when a raise of an explicit question gets out of the spec afterwards
+    local hinted = run(new_ctx(), function(c)
+      pcall(function()
+        c.eq(1, 2, "swallowed")
+      end)
+      local _, raised_text = c.ask(function()
+        c.eq(3, 4, "asked")
+      end)
+      error(raised_text, 0)
+    end)
+    eq(hinted.status, "fail", "the asked check whose raise escaped is booked")
+    eq(#hinted.assertions, 1, "as the only assertion (the swallowed guess left nothing)")
+    eq(#hinted.notes, 1, "and the guess that was swallowed is still hinted at")
+
+    -- two guesses, the second one booked when it escapes: the first one is still counted
+    local two_guesses = run(new_ctx(), function(c)
+      pcall(function()
+        c.eq(1, 2, "swallowed")
+      end)
+      local called, caught = pcall(function()
+        c.eq(3, 4, "escapes")
+      end)
+      if not called then
+        error(caught, 0)
+      end
+    end)
+    eq(#two_guesses.notes, 1, "of two guessed raises one is booked, the other one is hinted at")
+    has(two_guesses.notes[1], "1 failed check(s)", "and the note counts one")
+
+    -- an explicit failure that escapes after a guess is booked, and does not leave a hint behind
+    local fail_escape = run(new_ctx(), function(c)
+      local called, caught = pcall(function()
+        c.fail("by hand")
+      end)
+      if not called then
+        error(caught, 0)
+      end
+    end)
+    eq(fail_escape.status, "fail", "an escaped explicit failure is a fail")
+    eq(#fail_escape.notes, 0, "and nothing is hinted at: the failure is in the case")
+
+    -- the text of the check is compared by its first line, and as a whole (not as a part of another error)
+    local multi_line = run(new_ctx(), function(c)
+      local called, caught = pcall(function()
+        c.eq(1, 2, "first line\nsecond line")
+      end)
+      if not called then
+        error(caught, 0)
+      end
+    end)
+    eq(
+      multi_line.status,
+      "fail",
+      "a check with a multi-line message is booked when its raise escapes"
+    )
+    local wrapped_text = run(new_ctx(), function(c)
+      local _, caught = pcall(function()
+        c.eq(1, 2, "x")
+      end)
+      error("while cleaning up: " .. caught, 0)
+    end)
+    eq(wrapped_text.status, "error", "another error that merely contains the text stays an error")
+
+    -- the comparison gives up below 100 levels and says so (the check that negates it must not read "differs")
+    local function chain(levels)
+      local value = 1
+      for _ = 1, levels do
+        value = { value }
+      end
+      return value
+    end
+    local same_101, raised_101 = assert_mod.deep_equal(chain(101), chain(101))
+    eq({ same_101, raised_101 }, { true, false }, "101 nested tables are still compared")
+    local same_102, raised_102 = assert_mod.deep_equal(chain(102), chain(102))
+    eq({ same_102, raised_102 }, { false, true }, "102 are undecided: not equal, and raised")
+
+    -- a question left open by an error between its `pcall` and its end (a count hook) does not reach the next case
+    local ctx = new_ctx()
+    local old_hook, old_mask, old_count = debug.gethook()
+    run(ctx, function(c)
+      pcall(function()
+        c.ask(function()
+          debug.sethook(function()
+            if debug.getinfo(2, "S").source:find("core/assert.lua", 1, true) then
+              debug.sethook()
+              error("deadline", 2)
+            end
+          end, "", 1)
+        end)
+      end)
+      debug.sethook(old_hook, old_mask, old_count)
+      c.ok(true, "keeps the case valid")
+    end)
+    debug.sethook(old_hook, old_mask, old_count)
+    local after = run(ctx, function(c)
+      c.eq(1, 2, "recorded, not raised")
+      c.eq(3, 4, "and the body goes on")
+    end)
+    eq(after.status, "fail", "the next case records its failed check")
+    eq(
+      #after.assertions,
+      2,
+      "and its body is not ended by the raise of a question that was left open"
+    )
+
+    -- nested: the inner question ends at the inner `ask`, not at the outer one (a plugin's pcall in between is not seen)
+    local plugin_pcall =
+      plugin("local cb = ...; local ok, err = pcall(cb); return ok, err", "=plugin_pcall")
+    local inner_answer
+    local nested = run(new_ctx(), function(c)
+      c.ask(function()
+        plugin_pcall(function()
+          inner_answer = c.ask(function()
+            c.eq(1, 2, "inner")
+          end)
+        end)
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(
+      inner_answer,
+      false,
+      "the inner question is answered although a plugin's pcall lies outside it"
+    )
+    eq(nested.status, "pass", "and nothing is recorded")
+
+    -- the question takes the spec's chunk from the case, not from whoever calls `ask`
+    local plugin_asker = plugin(
+      [[
+      local c = ...
+      c.ask(function()
+        pcall(function()
+          c.eq(1, 2, "inside the plugin")
+        end)
+      end)
+    ]],
+      "=plugin_asker"
+    )
+    local foreign = new_ctx().run_case({
+      file = "TESTS/foreign_spec.lua",
+      name = "foreign",
+      spec_path = "/home/dev/proj/TESTS/foreign_spec.lua",
+    }, function(c)
+      plugin_asker(c)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(
+      foreign.status,
+      "fail",
+      "a pcall of a plugin inside a question is not the spec's: the check is recorded"
+    )
+    -- the context does not keep a coroutine alive that yielded inside a question and is never resumed
+    local seen_threads = setmetatable({}, { __mode = "v" })
+    local keeper = new_ctx() -- (the context itself stays alive: it is what must not hold the coroutine)
+    run(keeper, function(c)
+      local suspended = coroutine.create(function()
+        c.ask(function()
+          coroutine.yield()
+        end)
+      end)
+      coroutine.resume(suspended)
+      seen_threads[1] = suspended
+      c.ok(true, "keeps the case valid")
+    end)
+    collectgarbage()
+    collectgarbage()
+    eq(seen_threads[1], nil, "a coroutine that is left inside a question can be collected")
+    eq(keeper.depth, 0, "(the context was alive all the time)")
+
+    -- a spec that replaces the global `pcall` does not change what `ask` answers
+    local real_pcall = pcall
+    local stubbed_answer
+    run(new_ctx(), function(c)
+      _G.pcall = function()
+        return true, "stubbed"
+      end
+      stubbed_answer = { c.ask(function()
+        error("inside", 0)
+      end) }
+      _G.pcall = real_pcall
+      c.ok(true, "keeps the case valid")
+    end)
+    _G.pcall = real_pcall
+    eq(stubbed_answer, { false, "inside" }, "ask uses the pcall of its own, not the global one")
   end
 end

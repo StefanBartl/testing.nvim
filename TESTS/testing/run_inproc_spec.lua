@@ -590,10 +590,11 @@ return function(H)
   eq(report.exit_code, 1, "red")
 
   -- the runner's own work after a case (streaming it to the parent) is not the next case's time: it may take longer
-  -- than the case window without the remaining its of the file being cut off
+  -- than the case window without the remaining its of the file being cut off (each it works for a while: the hook of
+  -- the guard looks at the clock only every few thousand instructions, a body that is over sooner is never cut off)
   write(
     T .. "a_hang_spec.lua",
-    "describe('w', function()\n  it('1', function() assert.are.equal(1, 1) end)\n  it('2', function() assert.are.equal(1, 1) end)\n  it('3', function() assert.are.equal(1, 1) end)\nend)\n"
+    "describe('w', function()\n  local function work()\n    local t = vim.uv.hrtime()\n    while vim.uv.hrtime() - t < 20e6 do end\n  end\n  it('1', function() work() assert.are.equal(1, 1) end)\n  it('2', function() work() assert.are.equal(1, 1) end)\n  it('3', function() work() assert.are.equal(1, 1) end)\nend)\n"
   )
   report = run_root(root, {
     timeouts = { case_ms = 200, file_ms = 30000 },

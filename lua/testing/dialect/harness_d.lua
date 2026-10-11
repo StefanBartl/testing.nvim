@@ -116,6 +116,21 @@ local function add_failure(run, case, msg, file, line)
   run.listed[#run.listed + 1] = entry
 end
 
+---Are the first `n` entries of `list` the ones of `snapshot`? (A list that lost an early entry and got a new one with the text
+---of the last one it had looks unchanged by its last entry alone.)
+---@param snapshot any[]
+---@param list any[]
+---@param n integer
+---@return boolean
+local function same_prefix(snapshot, list, n)
+  for i = 1, n do
+    if not rawequal(snapshot[i], list[i]) then
+      return false
+    end
+  end
+  return true
+end
+
 ---Record what the counters gained since the last sync.
 ---@param run Testing.HarnessD.Run
 ---@param file string|nil
@@ -125,11 +140,7 @@ local function sync(run, file, line)
   local t = run.t
   local passed, failures = t.passed, t.failures
   local n = #run.snapshot
-  if
-    failures == run.list
-    and #failures >= n
-    and (n == 0 or rawequal(run.snapshot[n], failures[n]))
-  then
+  if failures == run.list and #failures >= n and same_prefix(run.snapshot, failures, n) then
     -- the common case: the list only grew at its end
     for i = n + 1, #failures do
       local msg = tostring(failures[i])

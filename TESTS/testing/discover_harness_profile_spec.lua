@@ -172,4 +172,12 @@ return function(H)
   )
   eq(p.collects, true, "check plus failures: the harness collects itself")
   eq(profile_mod.profile("").funcs, {}, "an empty text has no functions")
+  -- a long run of word characters is scanned in linear time: a definition is looked for at the start of a word only
+  local blob = ("a"):rep(40000)
+  local started = vim.uv.hrtime()
+  local long = profile_mod.profile(
+    "local " .. blob .. " = 1\nfunction H.ok(v) if not v then end end\n" .. blob .. "\n"
+  )
+  ok((vim.uv.hrtime() - started) / 1e6 < 1500, "a long word does not make the scan quadratic")
+  eq(long.ok, "truthy", "and the definition behind it is found")
 end

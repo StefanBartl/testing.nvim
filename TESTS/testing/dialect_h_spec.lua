@@ -828,4 +828,360 @@ return function(H)
     "a message that starts with FAIL but never passed the harness is an error"
   )
   vim.fn.delete(esc_root, "rf")
+
+  -- gaps found by mutating the fixes: sites of nested helpers, the shapes of an escaped error, baseline entries that
+  -- come back, unseen entries, root harnesses (also through a symlink), memory bound of the sites
+  do
+    local gap_root = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(gap_root, "p")
+    local h_text = table.concat(vim.fn.readfile(here .. "/fixtures/h/harness.lua"), "\n") .. "\n"
+    local hc_text = table.concat(vim.fn.readfile(here .. "/fixtures/hc/harness.lua"), "\n") .. "\n"
+    ---@param text string
+    ---@param extra string Lines added before the harness returns its table.
+    ---@return string
+    local function with_extra(text, extra)
+      -- (a function as the replacement: the text is taken literally, `%s` in it is no capture)
+      return (
+        text:gsub("\nreturn H%s*$", function()
+          return "\n" .. extra .. "\nreturn H\n"
+        end)
+      )
+    end
+    ---@param harness_text string
+    ---@param body string
+    ---@param dir? string
+    ---@return Testing.Result.Case
+    local function gap_case(harness_text, body, dir)
+      dir = dir or gap_root
+      write(dir .. "/harness.lua", harness_text)
+      write(dir .. "/gap_spec.lua", "return function(H)\n" .. body .. "end\n")
+      local real_print = print
+      rawset(_G, "print", function() end)
+      local done, gap_cases = pcall(dialect.run_file, "h", assert_mod.new(), {
+        path = dir .. "/gap_spec.lua",
+        rel = "TESTS/gap_spec.lua",
+        root = dir,
+      })
+      rawset(_G, "print", real_print)
+      assert(done, gap_cases)
+      return gap_cases[1]
+    end
+    ---@param gap Testing.Result.Case
+    ---@return string[] msgs
+    ---@return integer[] lines
+    local function failures_of(gap)
+      local msgs, lines = {}, {}
+      for _, rec in ipairs(gap.assertions) do
+        if not rec.ok then
+          msgs[#msgs + 1] = rec.msg or ""
+          lines[#lines + 1] = rec.line or -1
+        end
+      end
+      return msgs, lines
+    end
+    -- a harness whose error carries the position of the harness itself (level 1)
+    local positioned = with_extra(
+      h_text,
+      "function H.eq1(a, b, msg)\n  if a ~= b then\n    error(('FAIL %s: expected %q, got %q'):format(msg or '', tostring(b), tostring(a)), 1)\n  end\nend"
+    )
+    -- a helper of the harness that calls another one after the raise: the nested check keeps the place it was made at
+    local tidy = with_extra(
+      h_text,
+      "function H.tidy(fn)\n  local ran, err = pcall(fn)\n  H.ok(true, 'cleaned up')\n  if not ran then\n    error(err, 0)\n  end\nend"
+    )
+    local nested_body = table.concat({
+      "  local ran, err = pcall(function()",
+      "    H.tidy(function()",
+      '      H.eq(1, 2, "inner") -- MARK',
+      "    end)",
+      "  end)",
+      "  if not ran then",
+      "    error(err, 0)",
+      "  end",
+      "",
+    }, "\n")
+    local nested = gap_case(tidy, nested_body)
+    local nested_msgs, nested_lines = failures_of(nested)
+    eq(nested.status, "fail", "nested helper: the check that escaped is a failure")
+    eq(
+      nested_lines,
+      { 4 },
+      "nested helper: at the line of the inner check, not of the helper that ran it"
+    )
+    has(nested_msgs[1], "inner", "nested helper: with its own message")
+
+    -- the shapes of an error that got out of the spec's protected call: whole text, a position in front, a traceback
+    -- behind it, both; the message may have line breaks
+    for _, row in ipairs({
+      {
+        "multi-line message, error(err, 0)",
+        'H.eq(1, 2, "first\\nsecond")',
+        "pcall(function()",
+        "error(err, 0)",
+      },
+      {
+        "multi-line message, error(err)",
+        'H.eq(1, 2, "first\\nsecond")',
+        "pcall(function()",
+        "error(err)",
+      },
+      {
+        "message positioned by the harness, error(err, 0)",
+        'H.eq1(1, 2, "first\\nsecond")',
+        "pcall(function()",
+        "error(err, 0)",
+        true,
+      },
+      {
+        "traceback of a multi-line message, error(err)",
+        'H.eq(1, 2, "first\\nsecond")',
+        "xpcall(function()",
+        "error(err)",
+      },
+      { "traceback, error(err, 0)", 'H.eq(1, 2, "traced")', "xpcall(function()", "error(err, 0)" },
+      { "traceback, error(err)", 'H.eq(1, 2, "traced")', "xpcall(function()", "error(err)" },
+    }) do
+      local close = row[3]:find("^xpcall") and "end, debug.traceback)" or "end)"
+      local body = table.concat({
+        "  local ran, err = " .. row[3],
+        "    " .. row[2],
+        "  " .. close,
+        "  if not ran then",
+        "    " .. row[4],
+        "  end",
+        "",
+      }, "\n")
+      local escaped = gap_case(row[5] and positioned or h_text, body)
+      local escaped_msgs, lines = failures_of(escaped)
+      eq(escaped.status, "fail", row[1] .. ": a failed check that escaped is a fail, not an error")
+      eq(escaped.error, nil, row[1] .. ": and the file has no error")
+      eq(lines, { 3 }, row[1] .. ": booked at the line of the check")
+      ok(
+        not (escaped_msgs[1] or ""):find("stack traceback", 1, true),
+        row[1] .. ": the message is the check's, without the traceback"
+      )
+    end
+
+    -- many other checks were answered in between: the one that escapes is still known
+    local crowded = gap_case(
+      h_text,
+      table.concat({
+        '  local ran, err = pcall(function() H.eq(1, 2, "first") end)',
+        "  for i = 1, 10 do",
+        '    pcall(function() H.eq(1, 2, "other " .. i) end)',
+        "  end",
+        "  if not ran then",
+        "    error(err, 0)",
+        "  end",
+        "",
+      }, "\n")
+    )
+    local _, crowded_lines = failures_of(crowded)
+    eq(crowded.status, "fail", "an escaped check among many answered ones is a failure")
+    eq(crowded_lines, { 2 }, "at its own line")
+
+    -- the entries of the list when the file started: an equal one added by the file is new, one that stays is not
+    local function entry_messages(prelude, body)
+      local text = with_extra(hc_text, prelude)
+      local msgs = failures_of(gap_case(text, body))
+      return msgs
+    end
+    eq(
+      entry_messages(
+        "H.failures[1] = 'e1'",
+        '  H.eq(1, 1, "anchor")\n  H.failures[#H.failures + 1] = "e1"\n'
+      ),
+      {
+        "the project's harness collected 1 failure(s) in H.failures that the adapter did not see: e1",
+      },
+      "an entry equal to one of the list at the start is still a new entry, shown once"
+    )
+    eq(
+      entry_messages(
+        "",
+        '  H.eq(1, 1, "anchor")\n  H.failures[#H.failures + 1] = "d2"\n  H.check("n1", function() H.eq(1, 2, "m") end)\n'
+      ),
+      {
+        "n1: m: expected 2, got 1",
+        "the project's harness collected 1 failure(s) in H.failures that the adapter did not see: d2",
+      },
+      "an entry written by hand before a check that fails is not taken for the entry of the check"
+    )
+    eq(
+      entry_messages(
+        "",
+        '  H.eq(1, 1, "anchor")\n  H.failures[#H.failures + 1] = ("x"):rep(300)\n  H.failures[#H.failures + 1] = "d2"\n  H.failures[#H.failures + 1] = "d3"\n  H.failures[#H.failures + 1] = "d4"\n'
+      ),
+      {
+        "the project's harness collected 4 failure(s) in H.failures that the adapter did not see: "
+          .. ("x"):rep(200)
+          .. "; d2; d3",
+      },
+      "of the entries nobody saw the first three are shown, each cut at 200 characters"
+    )
+    eq(
+      gap_case(
+        with_extra(hc_text, ""),
+        '  H.eq(1, 1, "anchor")\n  H.failures[#H.failures + 1] = 0 / 0\n'
+      ).error,
+      nil,
+      "an entry that is not equal to itself does not end the file"
+    )
+    -- a check that put three entries into the list: when the spec takes one back, the check stays a failure of the file
+    local multi = with_extra(
+      hc_text,
+      "function H.check(name, fn)\n  if not pcall(fn) then\n    H.failures[#H.failures + 1] = name\n  end\nend"
+    )
+    eq(
+      failures_of(
+        gap_case(
+          multi,
+          '  H.eq(1, 1, "anchor")\n  H.check("n", function()\n    H.failures[#H.failures + 1] = "x1"\n    H.failures[#H.failures + 1] = "x2"\n    error("boom", 0)\n  end)\n  table.remove(H.failures, 1)\n'
+        )
+      ),
+      { "n: boom" },
+      "a check that appended several entries stays recorded while one of them is still in the list"
+    )
+    -- a failure that is counted but not listed stays a failure
+    local counted = with_extra(
+      hc_text,
+      "H.failed = 0\nfunction H.check(name, fn)\n  if not pcall(fn) then\n    H.failed = H.failed + 1\n  end\nend"
+    )
+    local counted_msgs = failures_of(
+      gap_case(
+        counted,
+        '  H.eq(1, 1, "anchor")\n  H.check("x", function() H.eq(1, 2, "boom") end)\n'
+      )
+    )
+    eq(
+      counted_msgs,
+      { "x: boom: expected 2, got 1" },
+      "a failure the harness only counts is recorded"
+    )
+
+    -- a harness in the root: its own file is the harness (its pcall passes the error on)
+    local own = gap_case(
+      h_text,
+      table.concat({
+        "  local ran = pcall(function()",
+        "    H.guarded(function()",
+        '      H.eq(1, 2, "q")',
+        "    end)",
+        "  end)",
+        '  H.ok(not ran, "answered")',
+        "",
+      }, "\n")
+    )
+    eq(
+      own.status,
+      "pass",
+      "a root harness: its own helper that cleans up and raises again is passed over"
+    )
+
+    -- ... also when the root is reached through a symlink
+    local real_root = vim.fs.normalize(vim.fn.tempname())
+    local link_root = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(real_root, "p")
+    write(
+      real_root .. "/emit.lua",
+      table.concat(vim.fn.readfile(here .. "/fixtures/h_rootfile/emit.lua"), "\n")
+    )
+    if vim.uv.fs_symlink(real_root, link_root) then
+      local link_harness =
+        table.concat(vim.fn.readfile(here .. "/fixtures/h_rootfile/harness.lua"), "\n")
+      write(real_root .. "/harness.lua", link_harness)
+      write(
+        real_root .. "/gap_spec.lua",
+        table.concat(vim.fn.readfile(here .. "/fixtures/h_rootfile/h_rootfile.fixture.lua"), "\n")
+      )
+      local via_link = dialect.run_file("h", assert_mod.new(), {
+        path = real_root .. "/gap_spec.lua",
+        rel = "TESTS/gap_spec.lua",
+        harness = real_root .. "/harness.lua",
+        root = link_root,
+      })[1]
+      eq(
+        via_link.status,
+        "fail",
+        "a root reached through a symlink is the root: the plugin in a file next to the harness is not the harness"
+      )
+      vim.uv.fs_unlink(link_root)
+    end
+    vim.fn.delete(real_root, "rf")
+
+    -- the places remembered for the texts of answered checks are bounded
+    local bounded = gap_case(
+      h_text,
+      table.concat({
+        "  collectgarbage()",
+        "  collectgarbage()",
+        '  local before = collectgarbage("count")',
+        "  for i = 1, 1500 do",
+        '    pcall(function() H.eq(1, 2, ("x"):rep(8000) .. i) end)',
+        "  end",
+        "  collectgarbage()",
+        "  collectgarbage()",
+        '  H.ok(collectgarbage("count") - before < 4000, "the places of answered checks are not kept without limit")',
+        "",
+      }, "\n")
+    )
+    eq(bounded.status, "pass", "the memory of the places of answered checks is bounded")
+    -- a long run of word characters (a blob in a harness file) is scanned in linear time
+    local blob = ("a"):rep(40000)
+    local started = vim.uv.hrtime()
+    project.scan_assertion_names(
+      "local " .. blob .. " = 1\nfunction H.eq() error('FAIL') end\n" .. blob .. "\n"
+    )
+    ok(
+      (vim.uv.hrtime() - started) / 1e6 < 1500,
+      "the scan for assertion names does not start at every letter of a long word"
+    )
+    vim.fn.delete(gap_root, "rf")
+  end
+
+  -- failure lines that a nested collector printed are given back once when the spec takes both failures out of the list
+  do
+    local root_f1 = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(root_f1, "p")
+    write(
+      root_f1 .. "/harness.lua",
+      table.concat(vim.fn.readfile(here .. "/fixtures/hc/harness.lua"), "\n") .. "\n"
+    )
+    write(
+      root_f1 .. "/nested_spec.lua",
+      table.concat({
+        "return function(H)",
+        '  H.eq(1, 1, "anchor")',
+        '  H.check("outer", function()',
+        '    H.check("inner", function() H.eq(1, 2, "in") end)',
+        '    H.eq(1, 2, "out")',
+        "  end)",
+        "  H.failures = {}",
+        '  H.shout("lost")',
+        "end",
+        "",
+      }, "\n")
+    )
+    local real_print = print
+    rawset(_G, "print", function() end)
+    local done, nested_cases = pcall(dialect.run_file, "h", assert_mod.new(), {
+      path = root_f1 .. "/nested_spec.lua",
+      rel = "TESTS/nested_spec.lua",
+      root = root_f1,
+    })
+    rawset(_G, "print", real_print)
+    assert(done, nested_cases)
+    eq(
+      nested_cases[1].status,
+      "fail",
+      "nested collectors taken back: a failure line nobody recorded is still seen"
+    )
+    local shouted = false
+    for _, rec in ipairs(nested_cases[1].assertions) do
+      shouted = shouted
+        or (not rec.ok and (rec.msg or ""):find("printed 1 failure line", 1, true) ~= nil)
+    end
+    ok(shouted, "and it is reported as the one failure line that was printed and not recorded")
+    vim.fn.delete(root_f1, "rf")
+  end
 end

@@ -96,6 +96,21 @@ return function(H)
       'return function(H)\n  H.write_file(H.canonical("x"), {})\nend\n',
       "b",
     },
+    {
+      "a: the explicit question alone",
+      'return function(H)\n  H.ask(function() H.eq(1, 2, "x") end)\nend\n',
+      "a",
+    },
+    {
+      "b: the explicit question next to a key of b",
+      'return function(H)\n  H.ask(function() H.scratch("lua") end)\nend\n',
+      "b",
+    },
+    {
+      "c: the explicit question next to a key of c",
+      'return function(H)\n  H.ask(function() H.falsy(nil, "x") end)\nend\n',
+      "c",
+    },
     { "c: falsy", 'return function(H)\n  H.falsy(nil, "x")\nend\n', "c" },
     { "c: contains", 'return function(H)\n  H.contains("abc", "b", "x")\nend\n', "c" },
     { "c: scratch(lines, ft)", 'return function(H)\n  H.scratch({ "a" }, "lua")\nend\n', "c" },

@@ -238,10 +238,12 @@ function M.new(opts)
   local a = {}
   a.depth = 0
   -- the explicit question (`a.ask`): thread -> `protected.entry()` of the innermost question that runs on it. Per thread,
-  -- weak: a coroutine that yields inside a question and is never resumed takes its entry along, and a question that
-  -- started on one thread can never leave another thread (the main one) in "asking" mode
+  -- weak in keys AND values (the entry points back at its thread, and a weak key whose value points at it is never
+  -- collected): the frame of `a.ask` keeps the entry of a running question alive, so a coroutine that yields inside a
+  -- question and is never resumed takes its entry along, and a question that started on one thread can never leave
+  -- another thread (the main one) in "asking" mode
   ---@type table<thread|table, Testing.Protected.Entry>
-  local ASKS = setmetatable({}, { __mode = "k" })
+  local ASKS = setmetatable({}, { __mode = "kv" })
   local MAIN = {}
   -- failed checks raised only because the stack heuristic took a `pcall` of the spec for a question (this case)
   a.guessed = 0
@@ -332,7 +334,12 @@ function M.new(opts)
   local function raises()
     local question = ASKS[running() or MAIN]
     if question then
-      return protected.inside(question, nil, true), false
+      local raise, by_pcall = protected.inside(question, nil, true)
+      -- a pcall of the spec between the check and the ask is only a guess: should it swallow the raise, the note says so
+      if raise and by_pcall then
+        a.guessed = a.guessed + 1
+      end
+      return raise, raise and by_pcall or false
     end
     if protected.inside(a.entry) then
       a.guessed = a.guessed + 1
@@ -468,7 +475,7 @@ function M.new(opts)
   end
 
   ---Leave the question: restore the outer one of this thread and hand the results of `pcall` on.
-  local function end_ask(key, outer, ...)
+  local function end_ask(key, outer, _mine, ...)
     ASKS[key] = outer
     return ...
   end
@@ -483,9 +490,11 @@ function M.new(opts)
   function a.ask(fn, ...)
     local key = running() or MAIN
     local outer = ASKS[key]
-    ASKS[key] = protected.entry(a.entry and a.entry.spec or nil)
-    -- (the results of pcall go through a function: no table, so a nil in the middle or at the end survives)
-    return end_ask(key, outer, pcall(fn, ...))
+    local mine = protected.entry(a.entry and a.entry.spec or nil)
+    ASKS[key] = mine
+    -- (the results of pcall go through a function: no table, so a nil in the middle or at the end survives; `mine` goes
+    -- along so that this frame keeps the entry alive while the question runs)
+    return end_ask(key, outer, mine, pcall(fn, ...))
   end
 
   a["error"] = function(fn, pattern, msg)

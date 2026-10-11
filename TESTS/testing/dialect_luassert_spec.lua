@@ -187,6 +187,47 @@ return function(H)
   end)
   eq(rich_case.assertions[1].msg, "rich message", "a message object with __tostring: its own text")
   eq(rich_case.assertions[2].msg, "{code = 7}", "a plain table: its content, not an address")
+  -- a message object whose printing does not give a text is shown by its content: never an address, never an error
+  local function shown(object)
+    local shown_case = run(function(A)
+      A.is_true(false, object)
+    end)
+    return shown_case.assertions[1].msg
+  end
+  eq(shown(setmetatable({ a = 1 }, {})), "{a = 1}", "a table with a metatable but no __tostring")
+  eq(
+    shown(setmetatable({}, {
+      __tostring = function()
+        return 5
+      end,
+    })),
+    "{}",
+    "a __tostring that does not return a text"
+  )
+  eq(
+    shown(setmetatable({}, {
+      __tostring = function()
+        error("no text today")
+      end,
+    })),
+    "{}",
+    "a __tostring that raises"
+  )
+  eq(
+    shown(setmetatable(
+      {},
+      setmetatable({}, {
+        __index = {
+          __tostring = function()
+            return "inherited"
+          end,
+        },
+      })
+    )),
+    "{}",
+    "a __tostring that only the metatable's own metatable knows is no __tostring"
+  )
+  eq(shown(vim.NIL), "<userdata>", "a userdata is shown as what it is")
   eq(case.assertions[2].msg, "custom true", "is_true: caller message")
   eq(case.assertions[3].msg, "custom negation", "negated equal: caller message")
   has(case.assertions[4].msg, "expected values to differ", "negated equal: generated message")
