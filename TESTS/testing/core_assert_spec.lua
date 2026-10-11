@@ -942,6 +942,112 @@ return function(H)
   end)
   eq(other_case.status, "error", "a later, different error is not booked as the earlier check")
 
+  -- an explicit question does not look at the stack, but it does not hand a check to a protected call of the code under
+  -- test (it may keep the error) nor to a message handler (a raise there is lost): there the check is recorded
+  do
+    ---@param finished Testing.Result.Case
+    ---@return string[]
+    local function failed_msgs(finished)
+      local out = {}
+      for _, assertion in ipairs(finished.assertions) do
+        if not assertion.ok then
+          out[#out + 1] = assertion.msg
+        end
+      end
+      return out
+    end
+    local event_bus = plugin(
+      "local M = {}; function M.emit(listeners) for _, l in ipairs(listeners) do pcall(l) end end; return M",
+      "@/home/dev/proj/lua/event_bus.lua"
+    )()
+    for label, ask in pairs({
+      ask = function(c, fn)
+        return c.ask(fn)
+      end,
+      no_error = function(c, fn)
+        return c.no_error(fn)
+      end,
+      error = function(c, fn)
+        return c.error(function()
+          fn()
+          error("boom", 0)
+        end)
+      end,
+    }) do
+      local swallowed = run(new_ctx(), function(c)
+        ask(c, function()
+          event_bus.emit({
+            function()
+              c.eq(1, 2, "listener")
+            end,
+          })
+        end)
+      end)
+      eq(
+        failed_msgs(swallowed),
+        { "listener" },
+        label .. ": a failed check kept by the code under test is not lost"
+      )
+      local handled = run(new_ctx(), function(c)
+        ask(c, function()
+          xpcall(function()
+            error("boom", 0)
+          end, function(e)
+            c.eq(e, "other", "handler")
+            return e
+          end)
+        end)
+      end)
+      eq(
+        failed_msgs(handled),
+        { "handler" },
+        label .. ": a failed check in a message handler is not lost"
+      )
+    end
+  end
+
+  -- a coroutine that asks and yields leaves no question open on the main thread, neither while it is suspended nor
+  -- after the question of the main thread ended first; a pcall that was stubbed does not leave one open either
+  do
+    local shared = new_ctx()
+    local suspended
+    local first = run(shared, function(c)
+      c.ask(function()
+        suspended = coroutine.create(function()
+          c.ask(function()
+            coroutine.yield()
+          end)
+        end)
+        coroutine.resume(suspended)
+      end)
+      c.ok(true, "valid")
+    end)
+    eq(first.status, "pass", "the question of the main thread ended")
+    local after = run(shared, function(c)
+      c.eq(1, 2, "recorded, not raised")
+      c.ok(true, "the body goes on")
+    end)
+    eq(
+      #after.assertions,
+      2,
+      "a failed check outside of a question is recorded and the body goes on"
+    )
+    local real_pcall = pcall
+    run(shared, function(c)
+      _G.pcall = function()
+        error("no pcall")
+      end
+      real_pcall(c.no_error, function() end)
+      _G.pcall = real_pcall
+      c.ok(true, "valid")
+    end)
+    local stubbed = run(shared, function(c)
+      c.eq(1, 2, "recorded, not raised")
+      c.ok(true, "the body goes on")
+    end)
+    eq(#stubbed.assertions, 2, "and so after a stubbed pcall")
+  end
+
   -- a message that is no string (the loop index of `H.eq(got[i], want[i], i)`, a table) is stored as text: the IR
   -- holds strings only, and a message it rejects would end every run that writes a report as an infrastructure error
   local numeric = run(new_ctx(), function(c)
@@ -1228,9 +1334,11 @@ return function(H)
     end
     local function formats_for(value)
       calls = 0
+      -- (the hook of an enclosing timeout guard is put back: a bare `debug.sethook()` would switch the guard off)
+      local hook, mask, count = debug.gethook()
       debug.sethook(count_format, "c")
       local finished, problem = pcall(assert_mod.inspect, value)
-      debug.sethook()
+      debug.sethook(hook, mask, count)
       assert(finished, problem)
       return calls
     end

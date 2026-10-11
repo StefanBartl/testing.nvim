@@ -26,6 +26,9 @@ local result = require("testing.core.result")
 -- endless walk) the location search of every assertion it makes
 local getinfo = debug.getinfo
 local running = coroutine.running
+-- (same name on purpose: `protected.inside` recognises the `pcall` of `a.ask` by the name of its call site; a spec that
+-- stubs the global must not make `a.ask` raise before it has left the question)
+local pcall = pcall
 
 local M = {}
 
@@ -123,8 +126,12 @@ local function deep_eq(a, b, seen, depth)
   if a == b then
     return true
   end
-  if type(a) ~= "table" or type(b) ~= "table" or depth > 100 then
+  if type(a) ~= "table" or type(b) ~= "table" then
     return false
+  end
+  if depth > 100 then
+    -- undecided, not "different": `deep_equal` reports it as raised, so a negated check does not pass on it
+    error("compared more than 100 levels deep", 0)
   end
   if seen[a] and seen[a][b] then
     return true
@@ -230,10 +237,12 @@ function M.new(opts)
 
   local a = {}
   a.depth = 0
-  -- the explicit question (`a.ask`): while it runs on this thread a failed check RAISES, whatever the stack looks like
-  a.asking = 0
-  ---@type thread|false
-  a.ask_thread = false
+  -- the explicit question (`a.ask`): thread -> `protected.entry()` of the innermost question that runs on it. Per thread,
+  -- weak: a coroutine that yields inside a question and is never resumed takes its entry along, and a question that
+  -- started on one thread can never leave another thread (the main one) in "asking" mode
+  ---@type table<thread|table, Testing.Protected.Entry>
+  local ASKS = setmetatable({}, { __mode = "k" })
+  local MAIN = {}
   -- failed checks raised only because the stack heuristic took a `pcall` of the spec for a question (this case)
   a.guessed = 0
 
@@ -315,12 +324,14 @@ function M.new(opts)
     return append({ ok = true, kind = kind, msg = msg, file = file, line = line })
   end
 
-  ---Does a failed check raise now? Yes inside an explicit question (`a.ask`); else when the protected call that would
-  ---catch the raise is one the spec wrote (`testing.core.protected`, a guess from the stack, counted).
+  ---Does a failed check raise now? Yes inside an explicit question (`a.ask`) unless a protected call of the code under
+  ---test lies between the check and the question (it may keep the error: the failed check would vanish); else when the
+  ---protected call that would catch the raise is one the spec wrote (`testing.core.protected`, a guess, counted).
   ---@return boolean
   local function raises()
-    if a.asking > 0 and (running() or false) == a.ask_thread then
-      return true
+    local question = ASKS[running() or MAIN]
+    if question then
+      return protected.inside(question, nil, true)
     end
     if protected.inside(a.entry) then
       a.guessed = a.guessed + 1
@@ -454,10 +465,9 @@ function M.new(opts)
     )
   end
 
-  ---Leave the question: restore the mode of the outer one and hand the results of `pcall` on.
-  local function end_ask(outer_thread, ...)
-    a.asking = a.asking - 1
-    a.ask_thread = outer_thread
+  ---Leave the question: restore the outer one of this thread and hand the results of `pcall` on.
+  local function end_ask(key, outer, ...)
+    ASKS[key] = outer
     return ...
   end
 
@@ -469,11 +479,11 @@ function M.new(opts)
   ---@return boolean ok
   ---@return any ... What `fn` returned, or the error.
   function a.ask(fn, ...)
-    local outer_thread = a.ask_thread
-    a.ask_thread = running() or false
-    a.asking = a.asking + 1
+    local key = running() or MAIN
+    local outer = ASKS[key]
+    ASKS[key] = protected.entry(a.entry and a.entry.spec or nil)
     -- (the results of pcall go through a function: no table, so a nil in the middle or at the end survives)
-    return end_ask(outer_thread, pcall(fn, ...))
+    return end_ask(key, outer, pcall(fn, ...))
   end
 
   a["error"] = function(fn, pattern, msg)
@@ -576,6 +586,11 @@ function M.new(opts)
     end
     case = result.new_case(case_opts)
     case_started = clock()
+    -- no question outlives its case: one that was left open (an error from a count hook of the deadline guard can fire
+    -- between the `pcall` of `a.ask` and the line that leaves the question) must not change the checks of the next case
+    for thread in pairs(ASKS) do
+      ASKS[thread] = nil
+    end
     return case
   end
 
@@ -615,8 +630,10 @@ function M.new(opts)
       -- A check the spec asked about whose raise got out of the spec (it cleaned up in a pcall of its own and raised
       -- the error again, `error(err, 0)`, `error(err)` or `assert(ok, err)`): a failure of that check, with its
       -- line, not a broken spec. `error(err)` and `assert` may put `file:line: ` in front of the text.
-      local escaped = raised ~= nil
-        and (first == raised.text or first:gsub("^[^\n]-:%d+: ", "", 1) == raised.text)
+      -- (`first` is one line: a message with line breaks is compared by its first line)
+      local want = raised ~= nil and type(raised.text) == "string" and raised.text:match("^[^\n]*")
+        or nil
+      local escaped = want ~= nil and (first == want or first:gsub("^[^\n]-:%d+: ", "", 1) == want)
       if escaped then
         append(raised.entry)
       else

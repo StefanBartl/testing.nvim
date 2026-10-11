@@ -48,7 +48,8 @@
 --- 500 entries, so a case that prints about that many more messages afterwards loses the error (a `vim.schedule`
 --- callback is remembered by the guard itself). A mock inside the spec that protects a callback and throws the
 --- error away cannot be told from a question either. The explicit question (`a.ask`, and `a.error`, `a.no_error` and luassert
---- `has_error`, which are built on it) does not use this module at all. A helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
+--- `has_error`, which are built on it) uses this module with the `ask` as the end of the search: with no protected call
+--- in between the `ask` itself catches the raise, any of the rules above still says "record". A helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
 --- callback is recorded, the helper sees success and the case ends red, never green. A plugin that lives below the
 --- runner's own directory (testing.nvim testing its own modules) counts as the runner. Code is told apart by the
 --- name of its chunk (`source`), which is all a frame carries: text that is loaded under the name of the spec
@@ -147,8 +148,11 @@ end
 ---Is the caller running inside a protected call that the SPEC wrote above the entry point?
 ---@param entry Testing.Protected.Entry|nil `entry()` of the function that started the spec; nil = unknown (no)
 ---@param transparent? table<string, true> Chunks (`source`) of the project's harness: their protected calls pass the error on.
+---@param asked? boolean `entry` is the point of an explicit question (`a.ask`): when no protected call lies in between
+---  the question itself catches the raise (true), but one of the code under test, a message handler or a C frame still
+---  says "record", as everywhere else.
 ---@return boolean
-function M.inside(entry, transparent)
+function M.inside(entry, transparent, asked)
   if not entry or (running() or false) ~= entry.thread then
     return false
   end
@@ -201,7 +205,7 @@ function M.inside(entry, transparent)
     end
   end
   if not catcher then
-    return false
+    return asked == true
   end
   if catcher_is_xpcall then
     -- A C function between the check and an `xpcall` (a `coroutine.wrap` that rethrows, `require`, `string.gsub`)

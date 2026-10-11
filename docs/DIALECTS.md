@@ -13,10 +13,12 @@ the reason, never green; red under `--strict`). Nothing is a quiet pass.
 ## A spec that asks "does this check fail?"
 
 **The recommended way to ask is explicit**: `local ok, err = H.ask(function() H.eq(1, 2) end)` (dialects a, b and
-c; in the kernel `a.ask(fn, ...)`). A failed check inside `ask` raises, whatever the stack looks like, is caught
-there and leaves nothing in the case. `a.error`, `a.no_error` and luassert `has_error` / `has_no.errors` are built on
+c; in the kernel `a.ask(fn, ...)`). A failed check inside `ask` raises (also when no `pcall` of the spec stands between it and the `ask`, and
+whatever else is further out), is caught there and leaves nothing in the case. It is **recorded** instead when a
+protected call of the code under test, a message handler or a C function (`xpcall` only) lies between the check and
+the `ask`: that call may keep the error, and a failed check must never vanish. `a.error`, `a.no_error` and luassert `has_error` / `has_no.errors` are built on
 it, so `assert.has_error(function() assert.equal(1, 2) end)` passes in busted style, as in luassert, with or without
-a `pcall` further out. Nothing below applies to a question asked with `ask`.
+a `pcall` further out. Which protected call counts as the spec's own is decided by the rules below also inside an `ask`.
 
 What follows is the **fallback for specs written before `ask`** (the project's own `pcall` idiom keeps working, and
 `lib.nvim`'s specs use it). There is one exception to "recorded", because it is the only way a spec can ask that
