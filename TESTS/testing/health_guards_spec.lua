@@ -5,6 +5,11 @@
 
 return function(H)
   local ok = H.ok
+  -- (`false` stands for "was not set": a nil value would drop the key from the table)
+  local env_before = {}
+  for _, name in ipairs({ "LIB_NVIM_ROOTS_EXPORTED", "NVIM_CONFIG_DIR" }) do
+    env_before[name] = vim.env[name] or false
+  end
   local function has(haystack, needle, msg)
     return ok(
       type(haystack) == "string" and haystack:find(needle, 1, true) ~= nil,
@@ -121,6 +126,15 @@ return function(H)
 
   health.project_dir = real_project_dir
   vim.fn.delete(tmp, "rf")
+  -- `:checkhealth` loads lib.nvim's roots, which export their registry to child editors through the environment;
+  -- the file leaves the environment as it found it (the state guard names what a spec leaves behind)
+  for name, value in pairs(env_before) do
+    if value == false then
+      vim.env[name] = nil
+    else
+      vim.env[name] = value
+    end
+  end
   if not finished then
     error(failure, 0)
   end
