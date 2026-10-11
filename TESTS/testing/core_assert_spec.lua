@@ -835,6 +835,67 @@ return function(H)
     )
   end
 
+  -- the explicit question: a failed check inside `ask` RAISES whatever the stack looks like, is caught there, and
+  -- leaves nothing in the case; `error` / `no_error` use it, so their answer no longer depends on a pcall further out
+  do
+    local ask_result
+    local ask_case = run(new_ctx(), function(c)
+      local question_ok, question_text = c.ask(function()
+        c.eq(1, 2, "asked")
+      end)
+      ask_result = { question_ok, question_text }
+      -- nests: the inner question ends, the outer one still holds
+      local outer_called = c.ask(function()
+        c.ask(function() end)
+        c.eq(3, 4, "outer still asks")
+      end)
+      c.ok(outer_called == false, "the outer question still raised")
+      -- and results travel like pcall's, nils included
+      local r1, r2, r3, r4 = c.ask(function(x)
+        return x, nil, nil
+      end, "arg")
+      c.same({ r1, r2, r3, r4 }, { true, "arg" }, "ask hands the results on")
+      c.ok(
+        c.error(function()
+          c.eq(1, 2, "inside error")
+        end),
+        "error: a failed check inside is an error"
+      )
+      c.error(function()
+        c.eq(1, 2, "inside error")
+      end, "inside error")
+      local ok_value = c.no_error(function()
+        return 5
+      end)
+      c.ok(ok_value, "no_error still passes")
+    end)
+    eq(
+      ask_result,
+      { false, "FAIL asked: expected 2, got 1" },
+      "ask returns pcall's results, the raise is the old text"
+    )
+    eq(ask_case.status, "pass", "nothing of the asked checks is recorded")
+    eq(#ask_case.notes, 0, "an explicit question leaves no note (nothing was guessed)")
+    local noted = run(new_ctx(), function(c)
+      pcall(function()
+        c.eq(1, 2, "guessed")
+      end)
+    end)
+    eq(noted.status, "fail", "(a case of only a guessed question has no assertion of its own)")
+    local guessed = run(new_ctx(), function(c)
+      pcall(function()
+        c.eq(1, 2, "guessed")
+      end)
+      c.ok(true, "keeps the case valid")
+    end)
+    eq(guessed.status, "pass", "a guessed question is answered")
+    has(
+      guessed.notes[1],
+      "1 failed check(s) were raised into a pcall of the spec",
+      "and leaves a note"
+    )
+  end
+
   -- a failed check the spec asked about whose raise gets out of the spec (cleanup in a pcall of its own, then the
   -- error is raised again) is a failure of THAT check with its line; an error that is no such check stays an error
   for label, rethrow in pairs({

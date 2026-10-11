@@ -47,9 +47,8 @@
 --- these into a red case with the message, not into a check with `file:line`; it reads `:messages`, which keeps
 --- 500 entries, so a case that prints about that many more messages afterwards loses the error (a `vim.schedule`
 --- callback is remembered by the guard itself). A mock inside the spec that protects a callback and throws the
---- error away cannot be told from a question either. The runner's own questions (`a.error`, `a.no_error`, luassert
---- `has_error`) catch what they are given but count as the runner, which passes errors on, and so does a
---- helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
+--- error away cannot be told from a question either. The explicit question (`a.ask`, and `a.error`, `a.no_error` and luassert
+--- `has_error`, which are built on it) does not use this module at all. A helper of the harness that catches on purpose (`H.throws(fn)`, a retry or poll helper): a check inside their
 --- callback is recorded, the helper sees success and the case ends red, never green. A plugin that lives below the
 --- runner's own directory (testing.nvim testing its own modules) counts as the runner. Code is told apart by the
 --- name of its chunk (`source`), which is all a frame carries: text that is loaded under the name of the spec

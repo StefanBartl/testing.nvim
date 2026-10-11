@@ -62,10 +62,31 @@ end
 ---and the verdict would depend on the wording of a comment ("raises FAIL through error(...)").
 M.strip_comments = require("testing.discover.lua_text").strip_comments
 
+-- harness text -> names found in it: every spec file of a project reads the same harness again
+---@type table<string, table<string, boolean>>
+local NAMES_OF = {}
+local names_cached = 0
+
 ---Names of the functions in the harness source whose body raises a message mentioning `FAIL` (static scan).
+---A copy: the adapter learns names while it runs and adds them to what it was given.
 ---@param text string
 ---@return table<string, boolean>
 function M.assertion_names(text)
+  local cached = NAMES_OF[text]
+  if cached then
+    return vim.deepcopy(cached)
+  end
+  local found = M.scan_assertion_names(text)
+  if names_cached >= 32 then
+    NAMES_OF, names_cached = {}, 0
+  end
+  NAMES_OF[text], names_cached = found, names_cached + 1
+  return vim.deepcopy(found)
+end
+
+---@param text string
+---@return table<string, boolean>
+function M.scan_assertion_names(text)
   local names = {}
   text = M.strip_comments(text)
   -- `function H.name(`, `function M.name(` and `H.name = function(`

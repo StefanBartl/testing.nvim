@@ -242,7 +242,7 @@ A.error = function(S, neg, fn, expected, msg)
   if expected == nil then
     return S.error(fn, nil, msg_of(msg))
   end
-  local called, err = pcall(fn)
+  local called, err = S.ask(fn)
   if called then
     return S.fail(msg_of(msg) or ("expected an error %s, got no error"):format(inspect(expected)))
   end

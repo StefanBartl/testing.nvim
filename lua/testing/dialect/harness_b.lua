@@ -31,6 +31,7 @@ function M.new(a)
 
   H.eq = a.eq
   H.ok = a.ok
+  H.ask = a.ask
 
   ---Fresh scratch buffer, made current, with an optional filetype.
   ---@param ft? string

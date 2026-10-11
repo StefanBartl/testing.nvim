@@ -25,6 +25,7 @@ local result = require("testing.core.result")
 -- taken now, like in `testing.core.protected`: a spec that stubs `debug.getinfo` must not break (or send into an
 -- endless walk) the location search of every assertion it makes
 local getinfo = debug.getinfo
+local running = coroutine.running
 
 local M = {}
 
@@ -216,6 +217,7 @@ local SCOPED = {
   "has",
   "error",
   "no_error",
+  "ask",
   "fail",
 }
 
@@ -228,10 +230,19 @@ function M.new(opts)
 
   local a = {}
   a.depth = 0
+  -- the explicit question (`a.ask`): while it runs on this thread a failed check RAISES, whatever the stack looks like
+  a.asking = 0
+  ---@type thread|false
+  a.ask_thread = false
+  -- failed checks raised only because the stack heuristic took a `pcall` of the spec for a question (this case)
+  a.guessed = 0
 
   ---@type Testing.Result.Case|nil
   local case
   local case_started = 0
+
+  -- chunk name -> normalized file name: every assertion walks the stack and would normalize the same few names again
+  local FILES, files_seen = {}, 0
 
   ---File and line of the code that called an assertion function. Must be called directly from
   ---the assertion function (frame 1 = here, 2 = the assertion, 3 = its caller); `a.depth` adds
@@ -250,7 +261,17 @@ function M.new(opts)
         return nil, nil
       end
       local src = info.source
-      local file = (src:sub(1, 1) == "@" and src:sub(2) or info.short_src):gsub("\\", "/")
+      local file = FILES[src]
+      if not file then
+        file = (src:sub(1, 1) == "@" and src:sub(2) or info.short_src):gsub("\\", "/")
+        -- (a chunk name maps to the same file every time; few exist, but a generator of chunks must not grow this)
+        if src:sub(1, 1) == "@" then
+          if files_seen >= 1024 then
+            FILES, files_seen = {}, 0
+          end
+          FILES[src], files_seen = file, files_seen + 1
+        end
+      end
       if source_in(file, BOUNDARY_SOURCES) then
         return nil, nil
       end
@@ -294,6 +315,20 @@ function M.new(opts)
     return append({ ok = true, kind = kind, msg = msg, file = file, line = line })
   end
 
+  ---Does a failed check raise now? Yes inside an explicit question (`a.ask`); else when the protected call that would
+  ---catch the raise is one the spec wrote (`testing.core.protected`, a guess from the stack, counted).
+  ---@return boolean
+  local function raises()
+    if a.asking > 0 and (running() or false) == a.ask_thread then
+      return true
+    end
+    if protected.inside(a.entry) then
+      a.guessed = a.guessed + 1
+      return true
+    end
+    return false
+  end
+
   ---Record a failure. `expected`/`actual` are printable strings; without a caller message the
   ---generated one is `fmt:format(expected, actual)`.
   ---@param file string|nil
@@ -314,7 +349,7 @@ function M.new(opts)
       file = file,
       line = line,
     }
-    if protected.inside(a.entry) then
+    if raises() then
       -- the spec asked "does this fail?": answer with the raise of the old harnesses, record nothing
       local text = ("FAIL %s: %s"):format(msg or "", fmt:format(expected, actual))
       -- (remembered: should the raise get out of the spec, `run_case` books it as this failed check)
@@ -419,9 +454,31 @@ function M.new(opts)
     )
   end
 
+  ---Leave the question: restore the mode of the outer one and hand the results of `pcall` on.
+  local function end_ask(outer_thread, ...)
+    a.asking = a.asking - 1
+    a.ask_thread = outer_thread
+    return ...
+  end
+
+  ---The explicit question "does this fail?": runs `fn(...)` like `pcall` does, and a failed check inside it RAISES (and
+  ---is caught here) whether or not a `pcall` stands further out and whatever the stack looks like. The recommended way
+  ---to ask; the stack heuristic stays for specs written before it. Nests; a check on another thread is not asked.
+  ---@param fn function
+  ---@param ... any
+  ---@return boolean ok
+  ---@return any ... What `fn` returned, or the error.
+  function a.ask(fn, ...)
+    local outer_thread = a.ask_thread
+    a.ask_thread = running() or false
+    a.asking = a.asking + 1
+    -- (the results of pcall go through a function: no table, so a nil in the middle or at the end survives)
+    return end_ask(outer_thread, pcall(fn, ...))
+  end
+
   a["error"] = function(fn, pattern, msg)
     local file, line = locate()
-    local called, err = pcall(fn)
+    local called, err = a.ask(fn)
     if called then
       local want = pattern ~= nil and ("an error matching " .. M.inspect(pattern)) or "an error"
       return fail(file, line, "error", msg, EXPECTED_GOT, want, "no error")
@@ -444,7 +501,7 @@ function M.new(opts)
 
   function a.no_error(fn, msg)
     local file, line = locate()
-    local called, res = pcall(fn)
+    local called, res = a.ask(fn)
     if called then
       pass(file, line, "no_error", msg)
       return true, res
@@ -455,7 +512,7 @@ function M.new(opts)
 
   function a.fail(msg)
     local file, line = locate()
-    if protected.inside(a.entry) then
+    if raises() then
       -- an explicit failure (the negated checks of the luassert shim end here) answers the spec's question too
       a.raised = {
         text = msg or "FAIL",
@@ -535,6 +592,7 @@ function M.new(opts)
   function a.run_case(case_opts, body, finish)
     local bound = a.begin_case(case_opts)
     a.raised = nil
+    a.guessed = 0
     local safe_call = require("lib.lua.error").safe_call
     -- Defensive: should safe_call ever raise itself (its `error.new` insists on a string message),
     -- the case still ends as an error instead of taking the runner down.
@@ -567,6 +625,13 @@ function M.new(opts)
       end
     end
     a.raised = nil
+    if a.guessed > 0 and bound.status ~= "error" then
+      -- a raised check leaves no trace in the case: if something swallowed it, this is the only hint
+      bound.notes[#bound.notes + 1] = ("%d failed check(s) were raised into a pcall of the spec (guessed from the stack: `ask` makes the question explicit)"):format(
+        a.guessed
+      )
+    end
+    a.guessed = 0
     return a.end_case(finish)
   end
 

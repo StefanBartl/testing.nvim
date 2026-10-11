@@ -12,8 +12,15 @@ the reason, never green; red under `--strict`). Nothing is a quiet pass.
 
 ## A spec that asks "does this check fail?"
 
-There is one exception to "recorded", because it is the only way a spec can ask that question:
-a failed check inside a `pcall` / `xpcall` **that the spec wrote**
+**The recommended way to ask is explicit**: `local ok, err = H.ask(function() H.eq(1, 2) end)` (dialects a, b and
+c; in the kernel `a.ask(fn, ...)`). A failed check inside `ask` raises, whatever the stack looks like, is caught
+there and leaves nothing in the case. `a.error`, `a.no_error` and luassert `has_error` / `has_no.errors` are built on
+it, so `assert.has_error(function() assert.equal(1, 2) end)` passes in busted style, as in luassert, with or without
+a `pcall` further out. Nothing below applies to a question asked with `ask`.
+
+What follows is the **fallback for specs written before `ask`** (the project's own `pcall` idiom keeps working, and
+`lib.nvim`'s specs use it). There is one exception to "recorded", because it is the only way a spec can ask that
+question without `ask`: a failed check inside a `pcall` / `xpcall` **that the spec wrote**
 (`pcall(function() H.eq(1, 2) end)`, `pcall(H.with_patched, t, k, v, function() H.eq(1, 2) end)`) is not
 recorded but **raised** (`FAIL <msg>: expected X, got Y`), as on the projects' own runners. Checks that
 pass are recorded everywhere.
@@ -90,11 +97,9 @@ What can still go missing, because the catch is not a Lua `pcall`:
 * Code is told apart by the name of its chunk (`debug.getinfo(...).source`), the only thing a frame
   carries. Code that is loaded under the name of the spec file or of the harness
   (`load(text, "@" .. spec_path)`) is taken for it. Only a deliberate construct does that.
-* The runner's own questions (`a.error`, `a.no_error`, luassert `has_error`) catch what they are given
-  but are passed over like the rest of the runner: a check inside their callback is recorded when no
-  `pcall` of the spec is further out, and raised (and answered) when one is. In busted style,
-  `assert.has_error(function() assert.equal(1, 2) end)` therefore reports two failures; ask with
-  `pcall(assert.equal, 1, 2)`.
+* A guessed question leaves a trace: a case that raised failed checks only because the stack looked like a
+  question carries the note "N failed check(s) were raised into a pcall of the spec", so a swallowed failure (a
+  mock, a handler, a callback of Neovim) is not completely invisible. A question asked with `ask` leaves none.
 * A plugin below the runner's own directory (testing.nvim testing its own modules) counts as the runner.
 
 A spec that wraps its body in `pcall` for cleanup and re-raises (`error(err, 0)`, `error(err)`, `assert(ok, err)`)

@@ -36,6 +36,8 @@ function M.new(a)
 
   H.eq = a.eq
   H.ok = a.ok
+  -- the explicit question "does this check fail?": `local ok, err = H.ask(function() H.eq(1, 2) end)`
+  H.ask = a.ask
 
   ---Fresh temp file path (not created on disk).
   ---@param suffix? string

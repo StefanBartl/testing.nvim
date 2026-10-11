@@ -109,6 +109,21 @@ return function(H)
       "A.has_error(function() error({ code = 1 }) end, { code = 1 })",
       true,
     },
+    {
+      "has_error with a failing check inside holds (as in luassert)",
+      "A.has_error(function() A.are.equal(1, 2) end)",
+      true,
+    },
+    {
+      "has_error with a failing check inside and the expected text",
+      'A.has_error(function() A.are.equal(1, 2, "inner") end, "FAIL inner: expected 1, got 2")',
+      true,
+    },
+    {
+      "has_no.errors with a failing check inside fails",
+      "A.has_no.errors(function() A.are.equal(1, 2) end)",
+      false,
+    },
     { "has_no.errors holds", "A.has_no.errors(function() end)", true },
     { "has_no.errors fails", 'A.has_no.errors(function() error("x") end)', false },
     { "has_no.errors with a message", 'A.has_no.errors(function() end, "should not throw")', true },

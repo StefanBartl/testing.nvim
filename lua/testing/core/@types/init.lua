@@ -218,6 +218,10 @@
 --- `H.eq` of dialect A.
 --- Plain dot calls: `a.eq(x, 1)`, they can be destructured (`local eq = a.eq`).
 ---@field depth integer Extra frames to skip when locating the caller (a wrapper that does not tail call sets 1).
+---@field asking integer Depth of the explicit question (`ask`) that is running; a failed check raises while it is above 0.
+---@field ask_thread thread|false The thread the question runs on (`false`: the main thread); a check on another thread is not asked.
+---@field guessed integer Failed checks of the open case raised only because the stack heuristic took a pcall for a question.
+---@field ask fun(fn: function, ...: any): boolean, ... The explicit question "does this fail?": like `pcall`, but a failed check inside raises (see `testing.core.assert`).
 ---@field raised? { text: string, entry: Testing.Result.Assertion } The last failed check that was RAISED (a spec's pcall asked); `run_case` books it as a failure when the raise gets out of the spec.
 ---@field entry? Testing.Protected.Entry Where `run_case` entered the case body; nil outside of one (`testing.core.protected`).
 ---@field eq fun(actual: any, expected: any, msg?: string): boolean Strict `==`; tables by identity.

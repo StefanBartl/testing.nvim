@@ -25,6 +25,7 @@ function M.new(a)
 
   H.eq = a.eq
   H.ok = a.ok
+  H.ask = a.ask
   H.falsy = a.not_ok
   H.contains = a.has
 
