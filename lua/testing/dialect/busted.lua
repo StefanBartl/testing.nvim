@@ -395,6 +395,22 @@ function M.run_file(a, spec, opts)
     is_spec_frame = function(source)
       return source == spec_source
     end,
+    on_outside_failure = function(orphan)
+      -- the private context of the shim saw only the shim's frames: the call site is the first frame of the spec file
+      local level = 2
+      while true do
+        local info = debug.getinfo(level, "Sl")
+        if not info then
+          break
+        end
+        if info.source == spec_source then
+          orphan.file, orphan.line = info.source:sub(2):gsub("\\", "/"), info.currentline
+          break
+        end
+        level = level + 1
+      end
+      a.orphans[#a.orphans + 1] = orphan
+    end,
   })
 
   ---@type table<string, any>

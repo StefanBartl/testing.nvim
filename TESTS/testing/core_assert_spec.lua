@@ -261,9 +261,17 @@ return function(H)
   -- Case binding
   a = new_ctx()
   eq(a.current(), nil, "no case bound initially")
-  local ok_call, err = pcall(a.eq, 1, 1, "orphan")
+  local ok_call, err = pcall(a.eq, 1, 2, "orphan")
   eq(ok_call, false, "an assertion outside a case raises (a silent drop would hide failures)")
   has(err, "outside a case", "with a clear message")
+  eq(
+    #a.orphans,
+    1,
+    "the failed check outside a case is kept for the runner (a pcall may swallow the raise)"
+  )
+  eq(a.orphans[1].kind, "eq", "with its kind")
+  pcall(a.ok, true, "held")
+  eq(#a.orphans, 1, "a held check is not an orphan")
   local end_raised, end_err = pcall(a.end_case)
   eq(end_raised, false, "end_case without begin_case raises")
   has(end_err, "without an open case", "with a clear message")

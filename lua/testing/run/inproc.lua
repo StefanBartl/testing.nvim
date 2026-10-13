@@ -200,6 +200,44 @@ local function synthetic_case(a, rel, status, message)
   return a.end_case()
 end
 
+---The failed case of a file whose checks failed while no case was open. A raise that got out of the file is already an
+---`error` case with the same location in its message: those checks are not listed twice, and no case is added when all
+---of them are.
+---@param a Testing.Assert.Context
+---@param rel string
+---@param orphans Testing.Assert.Orphan[]
+---@param cases Testing.Result.Case[]
+---@return Testing.Result.Case|nil
+local function orphan_case(a, rel, orphans, cases)
+  local lines = {}
+  for _, o in ipairs(orphans) do
+    local where = ("(%s:%s)"):format(tostring(o.file), tostring(o.line))
+    local seen = false
+    for _, c in ipairs(cases) do
+      local text = c.error and c.error.message
+      if text and (text:find(where, 1, true) or (o.msg ~= nil and text == o.msg)) then
+        seen = true
+        break
+      end
+    end
+    if not seen then
+      lines[#lines + 1] = ("check '%s' failed outside a case %s: %s"):format(
+        o.kind,
+        where,
+        tostring(o.msg)
+      )
+    end
+  end
+  if #lines == 0 then
+    return nil
+  end
+  a.begin_case({ file = rel, name = "checks outside a case" })
+  for _, line in ipairs(lines) do
+    a.fail(line)
+  end
+  return a.end_case()
+end
+
 ---Details of a non-passing case for messages of the driver itself.
 ---@param case Testing.Result.Case
 ---@return string
@@ -392,6 +430,7 @@ local function run_files(opts, holder)
           case_ms = is_busted and timeouts.case_ms or nil,
         })
         file_guard = guard
+        a.orphans = {}
         local seen_in_file = 0
         ---@type Testing.Result.Case[]|nil
         local cases
@@ -478,6 +517,17 @@ local function run_files(opts, holder)
           cases[#cases + 1] = case
         end
         cases = cases or {}
+
+        -- a check that failed with no case open (describe body, top level) raised into whatever called it; if a `pcall`
+        -- of the code under test kept the raise, the file would be green: the failure is booked here
+        if #a.orphans > 0 then
+          local orphans = a.orphans
+          a.orphans = {}
+          local extra = orphan_case(a, rel, orphans, cases)
+          if extra then
+            cases[#cases + 1] = extra
+          end
+        end
 
         if file_fired then
           -- the file deadline passed: whatever the file did, it is a timeout, never a pass

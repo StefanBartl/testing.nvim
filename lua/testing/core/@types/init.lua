@@ -239,7 +239,14 @@
 ---@field current fun(): Testing.Result.Case|nil The bound case, if any.
 ---@field scope fun(): table Assertion functions bound to the case open now; a call after that case ended is recorded in `late` and raises.
 ---@field late { case_id: string, kind: string, file: string|nil, line: integer|nil, msg: string }[] Assertions that arrived after their case ended.
+---@field orphans Testing.Assert.Orphan[] Failed checks made while no case was open (the runner drains them after each file).
 ---@field run_case fun(opts: Testing.Assert.RunCaseOpts, body: Testing.Assert.CaseBody, finish?: Testing.Result.FinishOpts): Testing.Result.Case Run `body(a)` as one case.
+
+---@class Testing.Assert.Orphan
+---@field kind string
+---@field msg string|nil
+---@field file string|nil
+---@field line integer|nil
 
 ---@class Testing.Assert.Module
 ---@field new fun(opts?: Testing.Assert.Opts): Testing.Assert.Context

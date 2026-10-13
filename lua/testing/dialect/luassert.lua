@@ -46,9 +46,10 @@ local NEGATORS = { ["not"] = true, no = true }
 -- =========================================================
 
 ---Assertion functions for code that runs outside any case. A held check is silent, a failed one
----raises its message.
+---raises its message; `on_fail` is told about it first, because a `pcall` of the code under test may keep the raise.
+---@param on_fail? fun(orphan: Testing.Assert.Orphan)
 ---@return Testing.Luassert.Scope
-local function outside_scope()
+local function outside_scope(on_fail)
   local ctx = assert_mod.new()
   local case = ctx.begin_case({ file = "<outside a case>", name = "outside" })
   local scope = {}
@@ -74,6 +75,14 @@ local function outside_scope()
         case.assertions[i] = nil
       end
       if res == false then
+        if on_fail then
+          on_fail({
+            kind = last and last.kind or "fail",
+            msg = last and last.msg,
+            file = last and last.file,
+            line = last and last.line,
+          })
+        end
         error(last and last.msg or "assertion failed", 0)
       end
       return res, extra
@@ -345,6 +354,7 @@ end
 
 ---@class Testing.Luassert.Opts
 ---@field scope fun(): Testing.Luassert.Scope|nil Scoped assertions of the open case (nil: none open).
+---@field on_outside_failure? fun(orphan: Testing.Assert.Orphan) A check failed with no case open (it raises; the runner books it in case a `pcall` keeps the raise).
 ---@field is_spec_frame fun(source: string): boolean Is a `debug.getinfo` source the spec file being run (plain `assert(...)` from it counts)?
 
 ---Build the `assert` object of one busted run.
@@ -358,7 +368,7 @@ function M.new(opts)
     if s then
       return s
     end
-    outside = outside or outside_scope()
+    outside = outside or outside_scope(opts.on_outside_failure)
     return outside
   end
 

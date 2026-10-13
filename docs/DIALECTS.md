@@ -115,6 +115,13 @@ stops at its first failed check, as it did on the old runner. The check is booke
 body does not run (in busted: the rest of that `it`, the next one runs). An error that is no failed check (`error("boom")`, a nil index) still ends the file as an
 `error`. This holds in every dialect that runs its checks through the kernel (a, b, c, h, busted).
 
+**A failed check outside any case** (a `describe` body, the top level of a file) has no case to be recorded in, so it
+raises. Should a `pcall` of the code under test (an emit / safe-call wrapper) keep that raise, the file would be green.
+The kernel therefore also keeps every such failed check, and the runner books them after the file as one failed case,
+`checks outside a case`, with the message and the call site of each check (a raise that got out of the file is
+reported once, as the `error` case it already is). The same holds for the `busted` dialect's `assert` in a
+`describe` body.
+
 ## Matrix
 
 | Dialect | Spec shape | Cases per file | Used by | `H` / globals provided |

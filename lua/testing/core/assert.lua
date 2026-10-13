@@ -299,6 +299,17 @@ function M.new(opts)
   ---@return boolean ok
   local function append(entry)
     if not case then
+      if not entry.ok then
+        -- no case to record the failure in: the raise below is all the spec sees, and a `pcall` of the code under test
+        -- (an emit / safe-call wrapper) may keep it. The runner reads this list once the file is done.
+        local orphans = a.orphans
+        orphans[#orphans + 1] = {
+          kind = entry.kind,
+          msg = entry.msg,
+          file = entry.file,
+          line = entry.line,
+        }
+      end
       error(
         ("testing: assertion '%s' called outside a case (%s:%s); bind one with begin_case/run_case"):format(
           entry.kind,
@@ -585,6 +596,11 @@ function M.new(opts)
     end
     return scoped
   end
+
+  ---Failed checks made while no case was open (a describe body, the top level of a file): the check raises, and a
+  ---`pcall` of the code under test may swallow that. The runner drains the list after each file and fails the file.
+  ---@type Testing.Assert.Orphan[]
+  a.orphans = {}
 
   ---Assertions that arrived after their case ended (see `scope`).
   ---@type { case_id: string, kind: string, file: string|nil, line: integer|nil, msg: string }[]

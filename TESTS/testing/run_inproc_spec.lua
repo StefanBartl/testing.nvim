@@ -676,4 +676,28 @@ return function(H)
   report = run_root(root, { assertions = "warn", strict = true })
   eq(report.exit_code, 1, "under --strict that skip is never green")
   vim.fn.delete(root, "rf")
+
+  -- a failed check in a describe body (no case open) that a pcall of the spec keeps: the file must not be green
+  root = new_root("orphan")
+  write(
+    root .. "/TESTS/orphan_spec.lua",
+    "describe('o', function()\n"
+      .. "  pcall(function() assert.are.equal(1, 2, 'kept by a pcall') end)\n"
+      .. "  it('fine', function() assert.is_true(true) end)\n"
+      .. "end)\n"
+  )
+  report = run_root(root)
+  eq(report.exit_code, 1, "a failed check outside a case that a pcall swallowed: red")
+  local orphan
+  for _, oc in ipairs(report.result.cases) do
+    if oc.id:find("checks outside a case", 1, true) then
+      orphan = oc
+    end
+  end
+  ok(orphan ~= nil, "a case of its own books it")
+  eq(orphan and orphan.status, "fail", "as a failure")
+  has(orphan and orphan.assertions[1].msg, "kept by a pcall", "with the message of the check")
+  has(orphan and orphan.assertions[1].msg, "orphan_spec.lua", "and its location")
+  eq(report.result.summary.pass, 1, "the case of the file itself still passes")
+  vim.fn.delete(root, "rf")
 end
