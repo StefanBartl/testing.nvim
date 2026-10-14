@@ -697,7 +697,69 @@ return function(H)
   ok(orphan ~= nil, "a case of its own books it")
   eq(orphan and orphan.status, "fail", "as a failure")
   has(orphan and orphan.assertions[1].msg, "kept by a pcall", "with the message of the check")
-  has(orphan and orphan.assertions[1].msg, "orphan_spec.lua", "and its location")
+  eq(
+    orphan and orphan.assertions[1].file,
+    "TESTS/orphan_spec.lua",
+    "located in the spec file (relative)"
+  )
+  eq(orphan and orphan.assertions[1].line, 2, "at the line of the check")
   eq(report.result.summary.pass, 1, "the case of the file itself still passes")
+  valid, problems = require("testing.core.result").validate(report.result, { leak_warnings = {} })
+  ok(valid, "the IR validates: " .. vim.inspect(problems))
+  vim.fn.delete(root, "rf")
+
+  -- a user case with the name of the orphan case: the orphan case takes a free id (duplicate ids refuse the IR)
+  root = new_root("orphan-name")
+  write(
+    root .. "/TESTS/orphan_spec.lua",
+    "pcall(function() assert.are.equal(1, 2, 'kept') end)\n"
+      .. "describe('d', function()\n"
+      .. "  it('checks outside a case', function() assert.is_true(true) end)\n"
+      .. "end)\n"
+  )
+  report = run_root(root)
+  eq(report.exit_code, 1, "a file whose case is named like the orphan case is red")
+  valid, problems = require("testing.core.result").validate(report.result, { leak_warnings = {} })
+  ok(valid, "and its IR validates: " .. vim.inspect(problems))
+  eq(#report.result.cases, 2, "both cases are there")
+  vim.fn.delete(root, "rf")
+
+  -- a raise that got out of the file is the `error` case already; busted keeps only the first line of a multi-line
+  -- message, and the check is not booked a second time
+  root = new_root("orphan-once")
+  write(
+    root .. "/TESTS/once_spec.lua",
+    "describe('o', function()\n"
+      .. "  assert.are.equal(1, 2, 'line1\\nline2')\n"
+      .. "  it('fine', function() assert.is_true(true) end)\n"
+      .. "end)\n"
+  )
+  report = run_root(root)
+  eq(report.exit_code, 1, "an unswallowed failure in a describe body is red")
+  eq(report.result.summary.error + report.result.summary.fail, 1, "and counted once")
+  vim.fn.delete(root, "rf")
+
+  -- the file deadline is stamped on a case of the file that ran, not on the case that books the outside-case checks
+  root = new_root("orphan-deadline")
+  write(
+    root .. "/TESTS/slow_spec.lua",
+    "describe('d', function()\n"
+      .. "  pcall(function() assert.are.equal(1, 2, 'kept') end)\n"
+      .. "  it('slow', function()\n"
+      .. "    pcall(function() while true do end end)\n"
+      .. "  end)\n"
+      .. "end)\n"
+  )
+  report = run_root(root, { timeouts = { file_ms = 300 } })
+  local by_name = {}
+  for _, oc in ipairs(report.result.cases) do
+    by_name[oc.id:match("[^:]+$")] = oc
+  end
+  eq(
+    by_name["checks outside a case"] and by_name["checks outside a case"].status,
+    "fail",
+    "the orphan case keeps its status"
+  )
+  ok(by_name["slow"] and by_name["slow"].status ~= "pass", "and the case that hung is not a pass")
   vim.fn.delete(root, "rf")
 end

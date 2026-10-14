@@ -47,6 +47,8 @@ local NEGATORS = { ["not"] = true, no = true }
 
 ---Assertion functions for code that runs outside any case. A held check is silent, a failed one
 ---raises its message; `on_fail` is told about it first, because a `pcall` of the code under test may keep the raise.
+---There is no entry point here to tell that `pcall` from one the spec wrote around the check (the `protected` rule needs a
+---case), so both are booked: a false red at worst. The plain `assert(value, msg)` is the builtin's contract and not booked.
 ---@param on_fail? fun(orphan: Testing.Assert.Orphan)
 ---@return Testing.Luassert.Scope
 local function outside_scope(on_fail)

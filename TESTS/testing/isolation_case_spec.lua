@@ -358,5 +358,32 @@ end)
   has(labels[1], "TESTS/out_spec.lua [o::talks]|", "labelled with file and case")
   has(labels[1], "hello from the child", "with what it printed")
 
+  -- a failed check in a describe body that a pcall keeps: every case child re-runs the body and sees it, the file reports it ONCE
+  -- (copies would be duplicate ids: the IR is refused and the run is an infrastructure error)
+  local orphan_root = S.new_root()
+  local orphan_entries = S.project(orphan_root, {
+    ["TESTS/orphan_spec.lua"] = table.concat({
+      'describe("d", function()',
+      '  pcall(function() assert.are.equal(1, 2, "kept by a pcall") end)',
+      '  it("one", function() assert.is_true(true) end)',
+      '  it("two", function() assert.is_true(true) end)',
+      '  it("three", function() assert.is_true(true) end)',
+      "end)",
+      "",
+    }, "\n"),
+  }, { "TESTS/orphan_spec.lua" }, "busted")
+  local orphan_report = S.run(orphan_root, orphan_entries, { options = case_options() })
+  local orphan_cases = 0
+  for _, c in ipairs(orphan_report.result.cases) do
+    if c.id == "TESTS/orphan_spec.lua::checks outside a case" then
+      orphan_cases = orphan_cases + 1
+    end
+  end
+  eq(orphan_cases, 1, "isolated=case: the file-level failure is one case, not one per child")
+  eq(orphan_report.result.summary.pass, 3, "the three cases pass")
+  eq(orphan_report.exit_code, 1, "and the run is red")
+  valid, problems = result.validate(orphan_report.result, { leak_warnings = {} })
+  ok(valid, "the IR validates (no duplicate id): " .. vim.inspect(problems))
+
   S.cleanup()
 end

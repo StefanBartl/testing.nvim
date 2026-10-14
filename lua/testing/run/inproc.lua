@@ -200,40 +200,62 @@ local function synthetic_case(a, rel, status, message)
   return a.end_case()
 end
 
+---Name of the case that carries the checks which failed while no case was open (one per file; the isolated driver in
+---case mode keeps only the first of the copies its children each book).
+M.ORPHAN_NAME = "checks outside a case"
+
 ---The failed case of a file whose checks failed while no case was open. A raise that got out of the file is already an
----`error` case with the same location in its message: those checks are not listed twice, and no case is added when all
----of them are.
+---`error` case: those checks are not listed twice (its message holds the location, or is the message of the check or
+---its first line, which is all busted keeps of a multi-line message), and no case is added when all of them are.
 ---@param a Testing.Assert.Context
 ---@param rel string
 ---@param orphans Testing.Assert.Orphan[]
 ---@param cases Testing.Result.Case[]
 ---@return Testing.Result.Case|nil
 local function orphan_case(a, rel, orphans, cases)
-  local lines = {}
+  local booked = {}
+  local taken = {}
+  for _, c in ipairs(cases) do
+    taken[c.id] = true
+  end
   for _, o in ipairs(orphans) do
     local where = ("(%s:%s)"):format(tostring(o.file), tostring(o.line))
+    local msg = o.msg ~= nil and tostring(o.msg) or nil
+    local first = msg and msg:match("^[^\n]*")
     local seen = false
     for _, c in ipairs(cases) do
       local text = c.error and c.error.message
-      if text and (text:find(where, 1, true) or (o.msg ~= nil and text == o.msg)) then
+      if
+        text and (text:find(where, 1, true) or (msg ~= nil and (text == msg or text == first)))
+      then
         seen = true
         break
       end
     end
     if not seen then
-      lines[#lines + 1] = ("check '%s' failed outside a case %s: %s"):format(
-        o.kind,
-        where,
-        tostring(o.msg)
-      )
+      booked[#booked + 1] = o
     end
   end
-  if #lines == 0 then
+  if #booked == 0 then
     return nil
   end
-  a.begin_case({ file = rel, name = "checks outside a case" })
-  for _, line in ipairs(lines) do
-    a.fail(line)
+  local name, n = M.ORPHAN_NAME, 1
+  while taken[rel .. "::" .. name] do
+    n = n + 1
+    name = ("%s#%d"):format(M.ORPHAN_NAME, n)
+  end
+  a.begin_case({ file = rel, name = name })
+  local case = a.current() --[[@as Testing.Result.Case]]
+  for _, o in ipairs(booked) do
+    -- the location is a field of the assertion (the reporters print `file:line  message`), not part of the message
+    local in_spec = o.file ~= nil and o.file:sub(-#rel) == rel
+    case.assertions[#case.assertions + 1] = {
+      ok = false,
+      kind = "fail",
+      msg = ("check '%s' failed outside a case: %s"):format(o.kind, tostring(o.msg)),
+      file = in_spec and rel or o.file,
+      line = o.line,
+    }
   end
   return a.end_case()
 end
@@ -518,17 +540,6 @@ local function run_files(opts, holder)
         end
         cases = cases or {}
 
-        -- a check that failed with no case open (describe body, top level) raised into whatever called it; if a `pcall`
-        -- of the code under test kept the raise, the file would be green: the failure is booked here
-        if #a.orphans > 0 then
-          local orphans = a.orphans
-          a.orphans = {}
-          local extra = orphan_case(a, rel, orphans, cases)
-          if extra then
-            cases[#cases + 1] = extra
-          end
-        end
-
         if file_fired then
           -- the file deadline passed: whatever the file did, it is a timeout, never a pass
           local marked = false
@@ -571,6 +582,18 @@ local function run_files(opts, holder)
         end
         if #findings > 0 or effects ~= nil then
           vim.list_extend(unattached, prefixed(rel, guards_mod.attach(cases, findings, effects)))
+        end
+
+        -- a check that failed with no case open (describe body, top level) raised into whatever called it; if a `pcall`
+        -- of the code under test kept the raise, the file would be green: the failure is booked here. After the deadline
+        -- and guard handling above, which act on the last real case of the file.
+        if #a.orphans > 0 then
+          local orphans = a.orphans
+          a.orphans = {}
+          local extra = orphan_case(a, rel, orphans, cases)
+          if extra then
+            cases[#cases + 1] = extra
+          end
         end
 
         for _, c in ipairs(cases) do

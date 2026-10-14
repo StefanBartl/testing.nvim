@@ -1442,11 +1442,16 @@ function M.run(opts)
     if slot.note and slot.cases and slot.cases[1] then
       slot.cases[1].notes[#slot.cases[1].notes + 1] = slot.note
     end
+    local orphan_id = slot.not_first and (slot.entry.rel .. "::" .. inproc.ORPHAN_NAME) or nil
     for _, c in ipairs(slot.cases or {}) do
-      record(c)
-      if maxfail and bad_total >= maxfail then
-        state.stopped = true
-        break
+      -- every case child re-runs the file's describe bodies and books the same file-level failure: the first slot's
+      -- copy is the report, a repeat would be a duplicate id (the IR is refused) and one failure counted per case
+      if c.id ~= orphan_id then
+        record(c)
+        if maxfail and bad_total >= maxfail then
+          state.stopped = true
+          break
+        end
       end
     end
   end

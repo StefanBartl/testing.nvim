@@ -119,8 +119,15 @@ body does not run (in busted: the rest of that `it`, the next one runs). An erro
 raises. Should a `pcall` of the code under test (an emit / safe-call wrapper) keep that raise, the file would be green.
 The kernel therefore also keeps every such failed check, and the runner books them after the file as one failed case,
 `checks outside a case`, with the message and the call site of each check (a raise that got out of the file is
-reported once, as the `error` case it already is). The same holds for the `busted` dialect's `assert` in a
-`describe` body.
+reported once, as the `error` case it already is; in `isolated = "case"` every case child sees the same failure and the
+file still reports it once). The same holds for the `busted` dialect's luassert chain (`assert.is_true(...)`,
+`assert.are.equal(...)`) in a `describe` body or in `setup` / `teardown`.
+
+Two limits, both on purpose. Outside a case there is no stack boundary that tells a `pcall` of the code under test from
+a `pcall` the spec wrote itself, so a spec's own `pcall` around a check at that level is booked as well (a false red,
+never a false green): ask with `assert.has_error(...)` there, or move the question into an `it`. And the plain call
+`assert(value, msg)` keeps the contract of Lua's builtin: it raises its message, and a `pcall` that keeps the raise keeps
+it, in a `describe` body as in an `it`.
 
 ## Matrix
 
