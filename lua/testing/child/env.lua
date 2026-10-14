@@ -65,10 +65,6 @@ M.ALLOW = {
   "COMMONPROGRAMFILES",
   "COMMONPROGRAMFILES(X86)",
   "COMMONPROGRAMW6432",
-  -- where PowerShell finds its modules. Without it Windows PowerShell 5.1 rebuilds its module cache on the first call:
-  -- 22 to 31 s on a hosted runner, longer than a 30 s wait, so a spec that runs PowerShell looked hung (insights.nvim,
-  -- filetree.nvim). A list of directories, not a secret.
-  "PSMODULEPATH",
   -- locale, terminal, time
   "LANG",
   "LANGUAGE",
