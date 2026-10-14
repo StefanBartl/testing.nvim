@@ -314,6 +314,17 @@ M.rules = {
     run = function(ctx)
       local items, total = {}, 0
       for _, src in ipairs(ctx.sources("lua")) do
+        -- a path rebound to its glob-safe spelling earlier in the file (`dir = globbable(dir)`, lib.nvim.fs) is safe
+        local safe = {}
+        for _, line in ipairs(src.lines) do
+          if not util.is_comment(line) then
+            local name = line:match("^%s*local%s+([%w_]+)%s*=%s*[%w_%.]*globbable%(")
+              or line:match("^%s*([%w_]+)%s*=%s*[%w_%.]*globbable%(")
+            if name then
+              safe[name] = true
+            end
+          end
+        end
         for n, line in ipairs(src.lines) do
           if not util.is_comment(line) and not line:find("globbable", 1, true) then
             local call = line:match("vim%.fn%.glob%((.*)")
@@ -322,7 +333,13 @@ M.rules = {
             -- command completion globs what the user typed: `glob(arg_lead .. "*")` is the point of it
             local completion = call
               and (call:find("%f[%w_]arg_?[Ll]ead%f[^%w_]") or call:find("%f[%w_]lead%f[^%w_]"))
-            if call and call:find("..", 1, true) and not completion then
+            local root = call and call:match("^%s*([%w_]+)%s*%.%.")
+            if
+              call
+              and call:find("..", 1, true)
+              and not completion
+              and not (root and safe[root])
+            then
               total = push(items, {
                 message = "glob/globpath reads its argument as a pattern, not as a path: "
                   .. util.show(vim.trim(line), 80),

@@ -430,6 +430,18 @@ return function(H)
     )
     S.write(exempt .. "/.luacheckrc", 'std = "luajit"\nexclude_files = { "TESTS/**" }\n')
     S.write(exempt .. "/lua/goodp/dyn.lua", 'return require("goodp.x." .. "y")\n')
+    -- a directory rebound to its glob-safe spelling is not read as a pattern (lib.nvim.fs.globbable)
+    S.write(
+      exempt .. "/lua/goodp/safeglob.lua",
+      table.concat({
+        'local globbable = require("lib.nvim.fs").globbable',
+        "return function(dir)",
+        "  dir = globbable(dir)",
+        '  return vim.fn.glob(dir .. "/**/*.md", false, true)',
+        "end",
+        "",
+      }, "\n")
+    )
     local rep = run(exempt, { "K1", "K15" })
     ok(S.check(rep, "K15").status == "pass", "exemptions hold " .. S.messages(rep, "K15"))
     ok(
