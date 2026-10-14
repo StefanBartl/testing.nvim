@@ -1086,7 +1086,7 @@ return function(H)
       real_root .. "/emit.lua",
       table.concat(vim.fn.readfile(here .. "/fixtures/h_rootfile/emit.lua"), "\n")
     )
-    if vim.uv.fs_symlink(real_root, link_root) then
+    if vim.uv.fs_symlink(real_root, link_root, { dir = true, junction = true }) then
       local link_harness =
         table.concat(vim.fn.readfile(here .. "/fixtures/h_rootfile/harness.lua"), "\n")
       write(real_root .. "/harness.lua", link_harness)

@@ -170,6 +170,22 @@ return function(H)
   eq(unknown.dialect, "unknown", "describe AND a top-level return function(H): unknown")
   has(unknown.reason, "cannot tell busted", "with the reason")
 
+  -- a harness spec with its own describe/it helpers (lib.nvim TESTS/shell_quote_spec.lua) is not busted
+  eq(
+    sniff.sniff(
+      'return function(H)\n  local function describe(n, f)\n    f()\n  end\n  local it = function(n, f) f() end\n  describe("x", function()\n    it("y", function() H.eq(1, 1, "x") end)\n  end)\nend\n'
+    ).dialect,
+    "a",
+    "locally declared describe/it in a harness spec are its own helpers"
+  )
+  eq(
+    sniff.sniff(
+      'local it, describe = a, b\ndescribe("x", function() end)\nreturn function(H)\n  H.eq(1, 1, "x")\nend\n'
+    ).dialect,
+    "a",
+    "a local list declaration counts too"
+  )
+
   unknown = sniff.sniff('local t = require("harness")\nreturn {}\n')
   eq(unknown.dialect, "unknown", "a harness require without run(): unknown")
   has(unknown.reason, "run", "the reason names run")

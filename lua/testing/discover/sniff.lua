@@ -196,6 +196,22 @@ local function param_escapes(code, param)
   return total - dotted > 1
 end
 
+---Is `name` declared as a local of the file (`local function name`, `local name = ...`, `local a, name = ...`)?
+---@param code string
+---@param name string
+---@return boolean
+local function declared_locally(code, name)
+  if code:find("local%s+function%s+" .. name .. "%f[^%w_]") then
+    return true
+  end
+  for list in code:gmatch("local%s+([%w_,%s]-)=") do
+    if (" " .. list:gsub("[,%s]+", " ") .. " "):find(" " .. name .. " ", 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
 ---Does any statement in the code start with a busted call (`describe(`, `it(`, ...)?
 ---@param code string
 ---@return table<string, integer> heads How often each head was seen.
@@ -210,6 +226,12 @@ local function busted_heads(code)
   local first = code:match("^%s*([%a_][%w_]*)%s*%(")
   if first and BUSTED_HEADS[first] then
     heads[first] = (heads[first] or 0) + 1
+  end
+  -- a harness spec that brings its own `describe`/`it` helpers calls them like busted does, but they are its own
+  for head in pairs(heads) do
+    if declared_locally(code, head) then
+      heads[head] = nil
+    end
   end
   return heads
 end
