@@ -446,8 +446,24 @@ local function eq_always(a, b)
   return a == b
 end
 
+---The callback of a map as the PLUGIN set it: surface tracking (`surface.track`) wraps every Lua callback that goes
+---through `nvim_set_keymap`, so putting the same function back (a restore, a plugin that re-sets the default it
+---replaced) would otherwise look like a different keymap and be reported as "replaces keymap".
+---@param f any
+---@return any
+local function plain_callback(f)
+  local track = package.loaded["testing.surface.track"]
+  if type(f) == "function" and track and track.unwrap then
+    return track.unwrap(f)
+  end
+  return f
+end
+
 local function same_map(a, b)
-  return a.rhs == b.rhs and a.callback == b.callback and a.desc == b.desc and a.expr == b.expr
+  return a.rhs == b.rhs
+    and plain_callback(a.callback) == plain_callback(b.callback)
+    and a.desc == b.desc
+    and a.expr == b.expr
 end
 
 local DIFF = {}
