@@ -194,6 +194,25 @@ Output: a text table (default), `--markdown`, `--json`; `--out FILE` also writes
 baseline: a crash leaves the old file or the new one, never half of it). Text from the plugin
 (names, descriptions, paths) is scrubbed of control characters and bidi overrides.
 
+## Gating a repository by baseline
+
+A percentage is a claim most plugins of a fleet cannot meet yet (keymaps are rarely pressed by specs). A baseline gate
+asks less and holds more: what the specs exercise today must stay exercised.
+
+1. `.testing.lua`: `surface = { track = true }` (the runner counts what the specs exercise).
+2. `scripts/test.sh surface ...` (the `test.sh` of `testing init` has the subcommand; older copies need the same
+   four lines as the `conformance` branch).
+3. Let CI write the IR of one Linux run (`scripts/test.sh --json "$RUNNER_TEMP/testing-ir.json"`) and upload it
+   (`actions/upload-artifact`, name `surface-ir`). Write the baseline **from that artifact**, not from your machine: a
+   spec that behaves differently on the runner (a missing tool, another OS) would turn an entry into a false
+   regression: `scripts/test.sh surface --from <downloaded ir> --write-baseline surface.baseline.json`; commit it.
+4. CI step on that one Linux leg: `bash scripts/test.sh surface --from "$RUNNER_TEMP/testing-ir.json" --baseline
+   surface.baseline.json --require-signed-baseline`. A regression is exit 1, a baseline edited by hand is exit 1.
+5. To accept an intended change (a command removed, a spec dropped on purpose), rewrite the file from a green Linux run
+   and review the diff.
+
+Pilot: fileops.nvim (`surface.baseline.json`, the "Surface baseline gate" step of its `ci.yml`).
+
 ## Honest limits
 
 * **Aliases.** A handler is counted when the *wrapper* runs. A keymap that holds its own reference to a
