@@ -38,6 +38,8 @@ return {
   -- `testing conformance .` on this repository: the two entry scripts of the child editor end the editor when they
   -- are required (that is what an entry script of a child is), which K1 reports as a module that cannot be required.
   conformance = {
+    -- gated (pilot of conformance-gate-per-repo): a failed check makes `scripts/test.sh conformance` exit 1
+    gate = true,
     waivers = {
       {
         check = "K1",

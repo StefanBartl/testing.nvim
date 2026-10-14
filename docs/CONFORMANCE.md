@@ -188,6 +188,23 @@ day in UTC; after that day ends in UTC the waiver no longer applies and `problem
 `file`, `text` or `level` that hides an error finding is named in `problems` ("narrow it"). A key that is invalid or an unknown check id in `skip`
 is a problem that names it, and the default stays (a typo must not silently switch a check off).
 
+## Gating a repository
+
+A repository becomes gated one at a time, after its report has no `fail` (an error finding that is neither fixed nor
+waived with a reason). `warn` and `info` never trip the gate, so a repo with open warnings can be gated; they are
+cleaned up on their own schedule.
+
+1. `testing conformance .` (or `scripts/test.sh conformance`) shows verdict `pass` or `warn`, never `fail` or `error`.
+2. `.testing.lua`: `conformance = { gate = true, ... }`.
+3. CI runs the suite once, next to the specs (it needs no matrix: one OS is enough, the checks are not platform
+   specific, except K6 and K10 which depend on the machine): a step `scripts/test.sh conformance`. The wrapper starts
+   the same isolated environment as the spec run (throwaway state and cache, long Windows temp path) and exits 1
+   when the repo is gated and a check failed, 2 on an unusable `.testing.lua`, 3 when the runner cannot start.
+4. A new finding of error level then fails the build; the answer is a fix, or a waiver with a reason and an `expires`
+   date (see above), never `gate = false`.
+
+testing.nvim itself is the pilot (`.testing.lua`, `.github/workflows/ci.yml`).
+
 ## The rules.nvim bridge (soft)
 
 `conformance.rules_bridge(root, opts)` / `--bridge` runs rules.nvim's own `check_family_json` for the families

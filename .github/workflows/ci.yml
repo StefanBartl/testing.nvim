@@ -84,6 +84,9 @@ jobs:
         run: |
           exec > >(tee -a "$RUNNER_TEMP/test-output.log") 2>&1
           scripts/test.sh --cached --github --json "$RUNNER_TEMP/self-ir.json" --junit "$RUNNER_TEMP/self-junit.xml"
+      # The conformance gate (docs/CONFORMANCE.md): `conformance.gate = true` in .testing.lua, so a failed check is exit 1.
+      - name: Conformance gate
+        run: scripts/test.sh conformance
       - uses: actions/cache/save@v4
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:

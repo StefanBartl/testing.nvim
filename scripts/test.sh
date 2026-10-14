@@ -17,6 +17,10 @@
 #   TESTING_CACHE_HOME=~/.cache/tn scripts/test.sh --cached
 #   scripts/test.sh --changed          only the specs the working tree can reach (a partial run)
 #
+#   scripts/test.sh conformance        the conformance suite K1..K15 (docs/CONFORMANCE.md) in the same isolated
+#                                      environment; extra options go to `testing conformance .`; exit 1 when the
+#                                      repo is gated (`conformance.gate = true`, or `--gate`) and a check failed
+#
 # Exit code: 0 all green, 1 a spec failed, 2 usage or configuration error, 3 infrastructure error
 # (nvim is not on PATH, or lib.nvim was not found: the runner then names all four places it looked
 # in: $LIB_NVIM_DIR, <repo>/.deps/lib.nvim, <repo>/../lib.nvim, stdpath('data')/lazy/lib.nvim).
@@ -64,5 +68,10 @@ fi
 export XDG_CACHE_HOME="$scratch/cache"
 
 # No `exec`: the trap must remove the scratch directory afterwards.
+if [ "${1:-}" = "conformance" ]; then
+  shift
+  nvim -n -i NONE --headless -u NONE -l scripts/testing.lua conformance . "$@"
+  exit $?
+fi
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua . ${cache_args[@]+"${cache_args[@]}"} "$@"
 exit $?
