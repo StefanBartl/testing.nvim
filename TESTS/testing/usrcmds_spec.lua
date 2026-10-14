@@ -443,8 +443,8 @@ return function(H)
   do
     local saved_run = usrcmds.terminal_run
     local got
-    usrcmds.terminal_run = function(argv, opts)
-      got = { argv = argv, opts = opts }
+    usrcmds.terminal_run = function(run_argv, opts)
+      got = { argv = run_argv, opts = opts }
       return true
     end
     with_notify(function()
@@ -477,8 +477,8 @@ return function(H)
     with_notify(function()
       usrcmds.last_run = nil
       got = nil
-      usrcmds.terminal_run = function(argv, opts)
-        got = { argv = argv, opts = opts }
+      usrcmds.terminal_run = function(run_argv, opts)
+        got = { argv = run_argv, opts = opts }
         return true
       end
       vim.cmd("Testing terminal")
