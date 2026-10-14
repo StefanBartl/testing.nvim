@@ -219,6 +219,48 @@ local function start(sub, opts)
   notify.info(("testing %s: %s"):format(sub, opts.root))
 end
 
+---Where `:Testing terminal` hands the command to: terminal.nvim's `run` (a soft dependency, asked only
+---when the command is used); a spec replaces it.
+---@type fun(argv: string[], opts: table): boolean|nil, string|nil
+M.terminal_run = function(argv, opts)
+  local loaded, terminal = pcall(require, "terminal")
+  if not loaded or type(terminal.run) ~= "function" then
+    return false, "terminal.nvim is not installed"
+  end
+  return terminal.run(argv, opts)
+end
+
+---The last `run` (the project's specs when there was none) as the job of a terminal.nvim terminal,
+---with the reporter's own output instead of the verdict this plugin reads back: for looking at a
+---red case at leisure, scrolling, copying, rerunning by hand. Nothing is parsed, no quickfix list.
+function M.in_terminal()
+  local notify = require("testing.notify").get()
+  local last = M.last_run
+  local opts
+  if last then
+    opts = vim.tbl_extend("force", {}, last.opts)
+    opts.json, opts.system = nil, nil
+  else
+    opts = { root = M.resolve_root(nil, vim.api.nvim_buf_get_name(0)), flags = {} }
+  end
+  local argv, err = require("testing.bindings.child").build_argv("run", opts)
+  if err then
+    notify.error(("cannot build the test command: %s"):format(err))
+    return
+  end
+  local started, rerr = M.terminal_run(argv, {
+    direct = true,
+    name = "testing",
+    cwd = opts.root,
+    close = "never",
+  })
+  if started == false then
+    notify.error(("cannot open the terminal: %s"):format(tostring(rerr)))
+    return
+  end
+  notify.info(("testing run in a terminal: %s"):format(opts.root))
+end
+
 ---The relative spec path of the current buffer, or nil with the reason.
 ---@param path? string Explicit file (else the current buffer's name).
 ---@return string|nil root
@@ -353,6 +395,11 @@ function M.routes()
         end
         start(last.sub, last.opts)
       end,
+    },
+    {
+      path = { "terminal" },
+      desc = "Repeat the last run (else run the project) in a terminal.nvim terminal",
+      run = M.in_terminal,
     },
     {
       path = { "list" },

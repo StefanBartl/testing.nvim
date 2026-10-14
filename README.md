@@ -332,6 +332,7 @@ summary: 1 pass, 1 fail, 1 skip (3 case(s)) in 0.00 s
 :Testing run          " run the specs of the current project in a headless child
 :Testing file         " the spec of the current buffer
 :Testing last         " repeat the last run
+:Testing terminal     " the same run as a terminal.nvim terminal (output to scroll and copy)
 :Testing health       " same as :checkhealth testing
 :Testing conformance  " the conformance checks of the current project
 :Testing cache clear  " delete the result cache of the project

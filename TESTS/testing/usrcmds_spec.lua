@@ -67,6 +67,7 @@ return function(H)
     "migrate",
     "run",
     "surface",
+    "terminal",
   }
   eq(sorted(complete("Testing ")), subcommands, "every subcommand is offered")
   eq(complete("Testing r"), { "run" }, "a prefix narrows the subcommands")
@@ -437,6 +438,56 @@ return function(H)
     eq(captured.opts.cwd, proj, "in the same root")
     ok(vim.tbl_contains(captured.argv, "--file=a"), "with the same flags")
   end)
+
+  -- :Testing terminal hands the stored run, as the plain reporter, to terminal.nvim's run
+  do
+    local saved_run = usrcmds.terminal_run
+    local got
+    usrcmds.terminal_run = function(argv, opts)
+      got = { argv = argv, opts = opts }
+      return true
+    end
+    with_notify(function()
+      usrcmds.last_run = {
+        sub = "run",
+        opts = { root = proj, json = "kept.json", system = fake_system, flags = { file = { "a" } } },
+      }
+      vim.cmd("Testing terminal")
+      ok(got ~= nil, ":Testing terminal calls the terminal")
+      eq(
+        got.opts,
+        { direct = true, name = "testing", cwd = proj, close = "never" },
+        "as a direct job"
+      )
+      ok(vim.tbl_contains(got.argv, "--file=a"), "with the stored flags")
+      ok(
+        not vim.tbl_contains(got.argv, "--json=kept.json"),
+        "without the machine-readable output this plugin reads back"
+      )
+    end)
+
+    usrcmds.terminal_run = function()
+      return false, "no terminal"
+    end
+    with_notify(function()
+      vim.cmd("Testing terminal")
+      has(all_messages(), "no terminal", "a refused terminal is reported")
+    end)
+
+    with_notify(function()
+      usrcmds.last_run = nil
+      got = nil
+      usrcmds.terminal_run = function(argv, opts)
+        got = { argv = argv, opts = opts }
+        return true
+      end
+      vim.cmd("Testing terminal")
+      ok(got ~= nil, "without an earlier run the terminal is still called")
+      eq(got.argv[10], "run", "with the run subcommand")
+      ok(got.argv[11] ~= nil and got.argv[11] ~= "", "on a project root")
+    end)
+    usrcmds.terminal_run = saved_run
+  end
 
   -- :Testing init through the command line
   local target = tmp .. "/initme"

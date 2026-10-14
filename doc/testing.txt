@@ -100,6 +100,7 @@ keymaps ~
         partial run, never the "all green" last line).
 :Testing file [{spec}]    Run the spec of the current buffer.
 :Testing last             Repeat the last run.
+:Testing terminal         Repeat the last run in a terminal.nvim terminal.
 :Testing list [{root}]    List what would run.
 :Testing init [{root}] [--force] [--plugin={name}]
         Generate the test setup of a plugin repository. An existing file is
