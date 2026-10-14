@@ -234,6 +234,7 @@ return function(H)
   has(sh, "#!/usr/bin/env bash", "test.sh has a shebang")
   has(sh, "set -euo pipefail", "test.sh stops at the first error")
   has(sh, "exit 1", "test.sh fails with exit code 1")
+  has(sh, '"$DRIVER" conformance .', "test.sh has the conformance subcommand")
   has(sh, "nvim is not on PATH", "test.sh names a missing nvim")
   for _, place in ipairs({
     "1. \\$$envname",

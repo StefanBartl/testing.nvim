@@ -124,4 +124,10 @@ export XDG_STATE_HOME="$scratch/state"
 export XDG_CACHE_HOME="$scratch/cache"
 
 # No `exec`: the trap must remove the scratch directory afterwards (`set -e` keeps the exit code).
+# `scripts/test.sh conformance`: the conformance suite K1..K15 in the same environment (docs/CONFORMANCE.md of testing.nvim)
+if [ "${1:-}" = "conformance" ]; then
+  shift
+  nvim -n -i NONE --headless -u NONE -l "$DRIVER" conformance . "$@"
+  exit $?
+fi
 nvim -n -i NONE --headless -u NONE -l "$DRIVER" run .@@RUN_ARGS|raw@@ "$@"
