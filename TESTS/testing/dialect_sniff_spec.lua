@@ -185,6 +185,25 @@ return function(H)
     "a",
     "a local list declaration counts too"
   )
+  -- ... but a real busted spec that aliases its helpers has no harness entry and stays busted
+  eq(
+    sniff.sniff(
+      'local describe, it = require("plenary.busted").describe, require("plenary.busted").it\ndescribe("x", function()\n  it("y", function() end)\nend)\n'
+    ).dialect,
+    "busted",
+    "an aliased describe/it without a harness entry is still busted"
+  )
+  -- a long run of bare `local x` lines must not make the declaration scan quadratic
+  local bare = ("local x\n"):rep(4000)
+  local t0 = vim.uv.hrtime()
+  eq(
+    sniff.sniff(
+      bare .. 'return function(H)\n  describe("x", function() end)\n  H.eq(1, 1, "x")\nend\n'
+    ).dialect,
+    "unknown",
+    "bare locals do not declare describe"
+  )
+  ok((vim.uv.hrtime() - t0) / 1e9 < 0.5, "the declaration scan is linear in the file size")
 
   unknown = sniff.sniff('local t = require("harness")\nreturn {}\n')
   eq(unknown.dialect, "unknown", "a harness require without run(): unknown")

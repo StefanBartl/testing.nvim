@@ -19,7 +19,9 @@
 --- Rules that keep the sniffer honest:
 ---   * an explicit override always wins and is reported as such;
 ---   * nothing matches -> `unknown`, with the reason. The caller reports it; nobody guesses silently;
----   * conflicting evidence (busted and `return function(H)`, helpers of b and c at once) -> `unknown`;
+---   * conflicting evidence (busted and `return function(H)`, helpers of b and c at once) -> `unknown`; except a
+---     `describe`/`it` the harness file declares itself (`local function describe`, `local it = ...`), which is its own
+---     helper, not busted (text based and scope-blind: globals and parameters are not recognised);
 ---   * a file that only uses `H.eq` / `H.ok` is `a`: those two behave the same in a, b and c;
 ---   * a file that uses a key that only b or c have is NEVER `a`: helpers with several call forms
 ---     (`scratch`, `tmpdir`) are decided by the form of each call (`scratch()`, `scratch("lua")`,
@@ -204,18 +206,27 @@ local function declared_locally(code, name)
   if code:find("local%s+function%s+" .. name .. "%f[^%w_]") then
     return true
   end
-  for list in code:gmatch("local%s+([%w_,%s]-)=") do
-    if (" " .. list:gsub("[,%s]+", " ") .. " "):find(" " .. name .. " ", 1, true) then
+  local pos = 1
+  while true do
+    local _, e = code:find("%f[%w_]local%s+", pos)
+    if not e then
+      return false
+    end
+    -- bounded look-ahead: a run of bare `local x` lines must not be rescanned from every `local`
+    local chunk = (code:sub(e + 1, e + 200):gsub(",%s*\n", ", "))
+    local list = chunk:match("^([%w_, \t]-)=[^=]")
+    if list and (" " .. list:gsub("[,%s]+", " ") .. " "):find(" " .. name .. " ", 1, true) then
       return true
     end
+    pos = e + 1
   end
-  return false
 end
 
 ---Does any statement in the code start with a busted call (`describe(`, `it(`, ...)?
 ---@param code string
+---@param harness_style boolean The file has the harness entry `return function(<param>)`.
 ---@return table<string, integer> heads How often each head was seen.
-local function busted_heads(code)
+local function busted_heads(code, harness_style)
   local heads = {}
   for head in code:gmatch("\n%s*([%a_][%w_]*)%s*%(") do
     if BUSTED_HEADS[head] then
@@ -227,10 +238,13 @@ local function busted_heads(code)
   if first and BUSTED_HEADS[first] then
     heads[first] = (heads[first] or 0) + 1
   end
-  -- a harness spec that brings its own `describe`/`it` helpers calls them like busted does, but they are its own
-  for head in pairs(heads) do
-    if declared_locally(code, head) then
-      heads[head] = nil
+  -- a harness spec that brings its own `describe`/`it` helpers calls them like busted does, but they are its own.
+  -- Only a file with the harness entry can be one: a busted spec that aliases `local it = ...` stays busted.
+  if harness_style then
+    for head in pairs(heads) do
+      if declared_locally(code, head) then
+        heads[head] = nil
+      end
     end
   end
   return heads
@@ -249,9 +263,9 @@ function M.sniff(text)
     evidence[#evidence + 1] = s
   end
 
-  local heads = busted_heads(code)
-  local has_describe_it = (heads.describe or 0) + (heads.it or 0) + (heads.context or 0) > 0
   local param = harness_param(code)
+  local heads = busted_heads(code, param ~= nil)
+  local has_describe_it = (heads.describe or 0) + (heads.it or 0) + (heads.context or 0) > 0
   -- the string contents are blanked in `code`: look for the require in the text minus comments
   local requires_harness = lua_text
     .strip_comments(text)

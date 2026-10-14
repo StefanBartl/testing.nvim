@@ -153,7 +153,7 @@ provides (or provides with different semantics, e.g. a deep-equal `H.eq`), in a 
 * An explicit override always wins and is reported as such.
 * Comments and the contents of strings are not evidence: a commented-out `describe(` does not make a
   file a busted file.
-* Top-level `describe(` / `it(` means `busted`; `require("harness")` plus a `run` function means `d`;
+* Top-level `describe(` / `it(` means `busted`, unless a file with the harness entry `return function(H)` declares the helper itself (`local function describe`, `local it = ...`): that is its own helper, not busted (text based, so globals and parameters are not recognised); `require("harness")` plus a `run` function means `d`;
   `return function(H)` is `a`, `b`, `c` or `h` by the `H` keys it uses.
 * Conflicting evidence (busted and `return function(H)` in one file, helpers of `b` and `c` at once)
   and no evidence at all give `unknown`. An `unknown` file is an error finding with the reason and

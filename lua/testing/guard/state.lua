@@ -453,7 +453,7 @@ end
 ---@return any
 local function plain_callback(f)
   local track = package.loaded["testing.surface.track"]
-  if type(f) == "function" and track and track.unwrap then
+  if type(f) == "function" and type(track) == "table" and type(track.unwrap) == "function" then
     return track.unwrap(f)
   end
   return f

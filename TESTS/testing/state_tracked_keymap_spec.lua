@@ -57,8 +57,23 @@ return function(H)
       "a different callback is still reported as replaced: " .. vim.inspect(changed)
     )
   end)
+  -- a stubbed or half-loaded surface module must not make the comparison throw (and so hide a real replacement)
+  local saved = package.loaded["testing.surface.track"]
+  package.loaded["testing.surface.track"] = true
+  local sok, serr = pcall(function()
+    set(other)
+    local stubbed = keymap_diff(before, capture())
+    ok(
+      #stubbed == 1 and stubbed[1].op == "changed",
+      "a non-table surface module still lets a replacement be reported: " .. vim.inspect(stubbed)
+    )
+  end)
+  package.loaded["testing.surface.track"] = saved
   pcall(vim.api.nvim_del_keymap, "n", lhs)
   handle:uninstall()
+  if not sok then
+    error(serr, 0)
+  end
   if not pok then
     error(perr, 0)
   end
