@@ -62,7 +62,7 @@ A child does **not** inherit the environment. It gets:
   `COMSPEC`, `SystemRoot`, `SystemDrive`, `windir`, `OS`, `PROCESSOR_ARCHITECTURE`,
   `PROCESSOR_ARCHITEW6432`, `NUMBER_OF_PROCESSORS`, `ProgramFiles`, `ProgramFiles(x86)`,
   `ProgramW6432`, `ProgramData`, `CommonProgramFiles`, `CommonProgramFiles(x86)`,
-  `CommonProgramW6432`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TERM`, `COLORTERM`, `NO_COLOR`,
+  `CommonProgramW6432`, `PSModulePath`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TERM`, `COLORTERM`, `NO_COLOR`,
   `FORCE_COLOR`, `CLICOLOR_FORCE`, `VIM`, `VIMRUNTIME`, `CI`, `GITHUB_ACTIONS`, `DISPLAY`,
   `WAYLAND_DISPLAY` (names are matched case-insensitively);
 * what the project asks for: `.testing.lua` `env_allow = { "MAGICK_*", "MY_VAR" }` and

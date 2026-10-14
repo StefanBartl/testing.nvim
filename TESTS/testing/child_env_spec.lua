@@ -29,6 +29,7 @@ return function(H)
     MY_FLAG = "1",
     SystemRoot = "C:\\Windows",
     TEMP = "C:\\real\\temp",
+    PSModulePath = "C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\Modules",
   }
 
   -- default: only the allowlist (+ LC_*) survives, whatever the case of the name
@@ -38,6 +39,11 @@ return function(H)
   eq(r.env.LANG, "de_AT.UTF-8", "LANG is kept")
   eq(r.env.LC_TIME, "C", "LC_* is kept")
   eq(r.env.SystemRoot, "C:\\Windows", "SystemRoot is kept in its own spelling")
+  eq(
+    r.env.PSModulePath,
+    "C:\\Windows\\system32\\WindowsPowerShell\\v1.0\\Modules",
+    "PSModulePath is kept: without it the first PowerShell call of a child takes 20+ s"
+  )
   eq(r.env.GITHUB_TOKEN, nil, "GITHUB_TOKEN is dropped")
   eq(r.env.OPENAI_API_KEY, nil, "*_API_KEY is dropped")
   eq(r.env.AWS_SECRET_ACCESS_KEY, nil, "cloud credentials are dropped")
