@@ -218,6 +218,30 @@ return function(H)
       end
     end
 
+    -- K13: a prefix inside the plugin's own command family is info; a command of another plugin makes it a warn
+    local k13 = require("testing.conformance.checks.k13_key_risks")
+    eq(
+      k13.prefix_level(
+        { short = "Diff", longer = { "DiffClear", "DiffExit" } },
+        { Diff = true, DiffClear = true, DiffExit = true }
+      ),
+      "info",
+      "K13 an own family is info"
+    )
+    eq(
+      k13.prefix_level(
+        { short = "Diff", longer = { "DiffClear", "DiffTool" } },
+        { Diff = true, DiffClear = true }
+      ),
+      "warn",
+      "K13 a longer foreign command is a warn"
+    )
+    eq(
+      k13.prefix_level({ short = "Git", longer = { "GitsuiteX" } }, { GitsuiteX = true }),
+      "warn",
+      "K13 a foreign short command is a warn"
+    )
+
     -- K14: a registered command the documentation does not mention
     expect(
       report,

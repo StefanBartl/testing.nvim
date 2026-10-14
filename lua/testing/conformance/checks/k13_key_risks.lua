@@ -7,6 +7,8 @@
 ---     "CSI u" or a GUI; `common`: layout- or terminal-dependent). Fragile is a warning, common is info.
 ---   * `prefix_ambiguities()`: a command name that is a strict prefix of another (`<Tab>` after the short
 ---     name also offers the longer one). Only the pairs that involve a command of THIS plugin are reported.
+---     A family of the plugin's own commands (`:Diff` and `:DiffClear`) is `info`: Vim runs the exact name, and
+---     the plugin owns the whole family. A pair with a command of ANOTHER plugin is a `warn`: that is a collision.
 ---
 --- Report-only: it can never fail the gate.
 
@@ -21,6 +23,23 @@ local M = {
   level = "warn",
   report_only = true,
 }
+
+---Level of a prefix pair: `info` when every name of it is a command of this plugin, `warn` when a foreign command is
+---involved.
+---@param p { short: string, longer?: string[] }
+---@param own table<string, boolean>
+---@return "warn"|"info"
+function M.prefix_level(p, own)
+  if not own[p.short] then
+    return "warn"
+  end
+  for _, longer in ipairs(p.longer or {}) do
+    if not own[longer] then
+      return "warn"
+    end
+  end
+  return "info"
+end
 
 ---@param ctx Testing.Conformance.Ctx
 ---@return Testing.Conformance.Outcome
@@ -73,7 +92,7 @@ function M.run(ctx)
       findings[#findings + 1] = util.finding(
         "K13",
         "UI-22",
-        "warn",
+        M.prefix_level(p, own),
         (":%s is a prefix of %s (abbreviation and <Tab> are ambiguous)"):format(
           p.short,
           table.concat(shown, ", ")
