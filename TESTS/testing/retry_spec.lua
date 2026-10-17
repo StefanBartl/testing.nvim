@@ -2,6 +2,7 @@
 -- is FLAKY and the run stays red, `--allow-flaky` is the explicit choice to count it as green (and the list says
 -- so), a case that never passes stays red, nothing flaky is ever cached. End to end through `cli.main` on a
 -- project whose spec fails a number of times (a counter file), once in this editor and once in a child editor.
+---@diagnostic disable: need-check-nil -- the preceding assertion proves the value, LuaLS cannot follow it
 
 return function(H)
   local ok = H.ok

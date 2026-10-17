@@ -1,5 +1,6 @@
 -- TESTS/testing/report_verdict_spec.lua -- testing.report.verdict: the three-valued verdict (green, green-partial,
 -- red), its counts line, the red lines (last green run, what changed since), and how term, github and junit show it.
+---@diagnostic disable: assign-type-mismatch, missing-fields -- a wrong type is handed in on purpose; the specs build partial IR / config records on purpose
 
 return function(H)
   local ok = H.ok

@@ -124,7 +124,7 @@ return function(H)
     end,
   })
   local p3 = patch.new()
-  p3:wrap(lazy, "x", function(o)
+  p3:wrap(lazy, "x", function(_o)
     return function()
       return "wrapped"
     end

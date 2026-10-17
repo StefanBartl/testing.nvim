@@ -1,6 +1,7 @@
 -- TESTS/testing/slowest_timings_spec.lua -- `--order slowest-first` (the heaviest files start first, the report
 -- stays in file order) and the history of durations (`timings.json`) with the warning for a file that took three
 -- times its median.
+---@diagnostic disable: missing-fields, need-check-nil -- the specs build partial IR / config records on purpose; the preceding assertion proves the value, LuaLS cannot follow it
 
 return function(H)
   local ok = H.ok

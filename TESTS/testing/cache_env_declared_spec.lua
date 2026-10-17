@@ -3,7 +3,7 @@
 -- module that really reads the variable still blocks (no directive, or a name the directive does not cover), a changed
 -- value changes the key, and the scanner's precision (what is NOT a hidden input) never loosens what is.
 
----@diagnostic disable: need-check-nil, missing-fields
+---@diagnostic disable: need-check-nil, missing-fields, param-type-mismatch
 
 -- @cache-allow env
 -- @cache-env A DECL_A

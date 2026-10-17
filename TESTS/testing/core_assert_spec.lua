@@ -1,5 +1,6 @@
 -- TESTS/testing/core_assert_spec.lua -- testing.core.assert: collecting assertions, case binding,
 -- location capture, thrown errors, and the zero-assertion rule.
+---@diagnostic disable: cast-local-type, param-type-mismatch -- a local is reused for a list after a string on purpose; values proven non-nil by the assertion before, or wrong types handed in on purpose
 
 return function(H)
   local ok = H.ok

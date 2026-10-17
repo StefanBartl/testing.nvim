@@ -2,6 +2,7 @@
 -- (`mode`, `categories`, `ignore_*`, `keep`, `fs.allow`, ...): the schema takes it, the adapter
 -- (`options.guard_config`) hands it to the guard layer, and the state guard honors it. A typo is one
 -- warning that names the key; the project keeps the default for it.
+---@diagnostic disable: need-check-nil, redundant-parameter, undefined-field -- the preceding assertion proves the value, LuaLS cannot follow it; a stub accepts more than the real function declares; stubs and probes touch fields the public type does not list
 
 return function(H)
   local ok = H.ok

@@ -38,7 +38,7 @@ return function(H)
           -- `ended`: the pool's shutdown does not try to kill a process tree of a fake
           return { ended = true, exited = not child.up }
         end
-        function child.exec_async(code, args, done)
+        function child.exec_async(code, _args, done)
           if code:find("init", 1, true) then
             log.init_calls = log.init_calls + 1
           end

@@ -1,5 +1,6 @@
 -- TESTS/testing/dialect_h_spec.lua -- dialect h: `return function(H)` on the project's own harness.lua;
 -- harness failures (`error("FAIL ...")`) are collected, every other error is not an assertion.
+---@diagnostic disable: duplicate-set-field, param-type-mismatch -- stubs replace a function of the code under test for one case; values proven non-nil by the assertion before, or wrong types handed in on purpose
 
 return function(H)
   local ok = H.ok

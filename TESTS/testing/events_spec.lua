@@ -4,6 +4,7 @@
 -- object, the text of the code under test (case ids, file names) cannot break a line or smuggle control
 -- characters into a reader, a broken stream never touches the run, and a second run in the same process
 -- (`--watch`) appends instead of erasing the first.
+---@diagnostic disable: missing-fields, need-check-nil, param-type-mismatch -- the specs build partial IR / config records on purpose; the preceding assertion proves the value, LuaLS cannot follow it; values proven non-nil by the assertion before, or wrong types handed in on purpose
 
 return function(H)
   local ok = H.ok

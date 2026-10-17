@@ -1,4 +1,5 @@
 -- TESTS/testing/setup_spec.lua -- the facade (`require("testing").setup`) and the :Testing command.
+---@diagnostic disable: assign-type-mismatch -- a wrong type is handed in on purpose
 
 return function(H)
   local eq, ok = H.eq, H.ok

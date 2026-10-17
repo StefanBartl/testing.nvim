@@ -4,7 +4,7 @@
 -- what the filetype plugin did) must not keep a green result after one of them changed. The Neovim part of the key
 -- is made once per process.
 
----@diagnostic disable: need-check-nil, missing-fields
+---@diagnostic disable: need-check-nil, missing-fields, param-type-mismatch, duplicate-set-field
 
 -- @cache-allow env
 -- (the fixtures of this spec are project files that mention the environment)

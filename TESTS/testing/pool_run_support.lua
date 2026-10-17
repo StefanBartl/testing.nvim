@@ -1,6 +1,7 @@
 -- TESTS/testing/pool_run_support.lua -- helpers of the pool_run_*_spec files (real warm-pool members through
 -- `testing.run.isolated`): run a project through the real driver, collect findings, files that litter the editor.
 -- Loaded with dofile by the specs; it is not a spec itself (no `_spec` suffix).
+---@diagnostic disable: undefined-field -- stubs and probes touch fields the public type does not list
 
 ---@param H table The harness the runner hands to the spec.
 ---@return table P

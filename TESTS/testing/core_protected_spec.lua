@@ -1,6 +1,7 @@
 -- TESTS/testing/core_protected_spec.lua -- the pcall rule (testing.core.protected) at its edges: which chunks count as
 -- the runner, the cost of the stack search, the load-time captures, a case that starts inside the runner, and the
 -- hand-over of the spec file in dialects a, b and c. The rule itself is pinned in core_assert_spec.lua.
+---@diagnostic disable: param-type-mismatch -- values proven non-nil by the assertion before, or wrong types handed in on purpose
 
 return function(H)
   local ok = H.ok

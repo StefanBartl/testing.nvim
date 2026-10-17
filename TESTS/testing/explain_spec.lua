@@ -378,7 +378,7 @@ return function(H)
   -- ---------------------------------------------------------------- unit: the explanation comes from ONE call of key
   local calls = 0
   local fake = {
-    key = function(info, ctx)
+    key = function(info, _ctx)
       calls = calls + 1
       return ("%064x"):format(1234),
         nil,

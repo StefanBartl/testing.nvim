@@ -4,7 +4,7 @@
 -- MENTIONS `os.getenv("X")` and must not hide a computed read next to it. The scan of a long run of
 -- identifier characters is linear.
 
----@diagnostic disable: need-check-nil, missing-fields
+---@diagnostic disable: need-check-nil, missing-fields, param-type-mismatch
 
 -- @cache-allow env
 -- @cache-allow time

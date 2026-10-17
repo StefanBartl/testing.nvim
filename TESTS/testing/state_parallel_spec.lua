@@ -2,6 +2,7 @@
 -- durations.json, last_green.json, runs.jsonl) are read-modify-write: two runs of one project at the same time
 -- must not drop each other's entries. The lock itself (exclusive, bounded wait, stale takeover) is checked in
 -- this process; the end-to-end claim is checked with real parallel editors that all write at once.
+---@diagnostic disable: duplicate-set-field, missing-fields, redundant-return-value, return-type-mismatch -- stubs replace a function of the code under test for one case; the specs build partial IR / config records on purpose; stubs replace a library function with a simpler signature
 
 return function(H)
   local ok = H.ok

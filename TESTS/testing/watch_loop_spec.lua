@@ -527,7 +527,7 @@ return function(H)
       source = function()
         return nil, "ENOSPC: inotify watches exhausted"
       end,
-      poll_source = function(on_event, popts)
+      poll_source = function(_on_event, popts)
         polled = popts
         return {
           mode = "poll",

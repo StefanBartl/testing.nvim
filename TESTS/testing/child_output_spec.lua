@@ -3,6 +3,7 @@
 -- read can hand over a few bytes at a time), and a REAL process that floods its stderr through a pipe is drained, not
 -- blocked, with the same cap. (An embedded editor is no subject for the last one: on Windows its stderr is a console of
 -- its own, nothing reaches the pipe, see docs/CHILD.md.)
+---@diagnostic disable: missing-fields -- the specs build partial IR / config records on purpose
 
 return function(H)
   local ok = H.ok

@@ -2,6 +2,7 @@
 -- green, red, partial and mixed runs, grouping of identical follow-up failures, the character budget (the verdict is
 -- never cut, what does not fit is counted), hostile text, the jsonl shape, determinism, and the choice of the reporter
 -- (`--reporter`, `TESTING_REPORTER`, `TESTING_AGENT`, an agent environment).
+---@diagnostic disable: cast-local-type, need-check-nil -- a local is reused for a list after a string on purpose; the preceding assertion proves the value, LuaLS cannot follow it
 
 return function(H)
   local ok = H.ok

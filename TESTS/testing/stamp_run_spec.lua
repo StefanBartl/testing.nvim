@@ -3,7 +3,7 @@
 -- `verified` (exit 0, sentinel) ONLY when every file is proven; a partial proof, a changed file, an old stamp, a dirty
 -- tree, a forged or foreign stamp are never green.
 
----@diagnostic disable: need-check-nil, inject-field, undefined-field, param-type-mismatch, missing-fields, cast-local-type, redundant-parameter
+---@diagnostic disable: need-check-nil, inject-field, undefined-field, param-type-mismatch, missing-fields, cast-local-type, redundant-parameter, duplicate-set-field, return-type-mismatch
 
 return function(H)
   local ok = H.ok

@@ -5,6 +5,7 @@
 -- with `consumers` = the directory of the checkouts (module map of lib.nvim stale at that moment, one measured
 -- consumer, three not measured). To record again: call `affected_specs({ root = ..., changed = ...,
 -- consumers = ... })` and write the table with `vim.json.encode`.
+---@diagnostic disable: need-check-nil -- the preceding assertion proves the value, LuaLS cannot follow it
 
 -- @cache-allow outside
 -- ("../" is the value of a `consumers` option checked against a temp tree the spec writes, nothing is read from the real parent directory)

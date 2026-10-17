@@ -1,5 +1,6 @@
 -- Scenarios of the process / network guard (RED: blocked and logged, GREEN: tag / config / dynamic
 -- allows, windows, redaction). Run by TESTS/testing/guard_process_net_spec.lua in a real child editor.
+---@diagnostic disable: missing-fields -- uv.spawn options: only the ones the scenario needs
 
 local B = dofile(vim.fs.dirname(debug.getinfo(1, "S").source:sub(2)) .. "/boot.lua")
 local uv = vim.uv

@@ -4,7 +4,7 @@
 -- per-feature specs (child_env, guard_process_net, report_junit, cache_key, ...) cover the rest.
 -- `--isolate-home` (opt-in): no variable of a child names the user's real home.
 
----@diagnostic disable: missing-fields
+---@diagnostic disable: missing-fields, missing-return
 
 return function(H)
   local ok = H.ok

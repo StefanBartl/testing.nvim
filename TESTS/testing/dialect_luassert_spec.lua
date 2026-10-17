@@ -1,5 +1,6 @@
 -- TESTS/testing/dialect_luassert_spec.lua -- the luassert subset of the busted dialect: argument order
 -- (expected first), negations, messages, call sites, unsupported names, plain assert(), outside a case.
+---@diagnostic disable: return-type-mismatch -- stubs replace a library function with a simpler signature
 
 return function(H)
   local ok = H.ok

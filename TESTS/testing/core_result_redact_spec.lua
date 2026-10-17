@@ -5,6 +5,7 @@
 -- apart, the validator (`abs_path_leak`) knows the same shapes, a long token without a blank is read in linear
 -- time (by the redaction, by the validator and through `inproc.sanitize`), and `result.normalizer` builds its path
 -- matchers once.
+---@diagnostic disable: missing-fields -- the specs build partial IR / config records on purpose
 
 return function(H)
   local ok = H.ok

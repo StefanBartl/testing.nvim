@@ -1,5 +1,6 @@
 -- A spec framework of another file (never a spec): `spec` hands the body on, `spec_swallow` runs it under a pcall
 -- of its own and keeps the error. The pcall is the framework's, not the spec's.
+---@diagnostic disable: redundant-return-value -- the wrapper hands the pcall result on on purpose
 
 local M = {}
 
