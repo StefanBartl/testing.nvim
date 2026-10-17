@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: JohnnyMorganz/stylua-action@76fd70c03e6340ceaf673366712db9b20560b402 # v5
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377 # v13
@@ -53,12 +53,12 @@ jobs:
         # One shell on all three platforms.
         shell: bash
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # lib.nvim is a hard runtime dependency; the runner finds it in .deps/lib.nvim (and names all
       # four places it searched when it is missing: exit code 3).
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           repository: StefanBartl/lib.nvim
@@ -119,17 +119,17 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           repository: StefanBartl/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       # telemetry_wrap_spec.lua needs the real runtime-analysis.telemetry module on the runtimepath.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           repository: StefanBartl/runtime-analysis.nvim
@@ -177,7 +177,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Never move ci-verified backwards: two pushes can finish out of order, and the older run
       # must not overwrite the newer verified commit. The lookup fails closed and the update
       # carries a lease on the tip it compared against.
