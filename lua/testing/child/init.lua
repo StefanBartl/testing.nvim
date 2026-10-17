@@ -29,7 +29,8 @@
 ---   * the environment is an allowlist (`testing.child.env`) plus the determinism variables (`LANG`/`LC_ALL=C.UTF-8`, `TZ=UTC`, opt out with `deterministic = false`) plus the sandbox: `XDG_*` and the temp
 ---     variables point into one directory below the parent's temp dir, so `stdpath('data'|'state'|
 ---     'cache'|'config')` and `tempname()` of a spec never touch the user's real ones. The sandbox
----     is deleted when the child is done;
+---     is deleted when the child is done. `HOME`/`USERPROFILE` stay the user's (git needs the
+---     identity) unless `isolate_home` (`--isolate-home`) points them into the sandbox too;
 ---   * the run's dependencies are on the child's runtimepath (`rtp`, `rtp_prepend` of the job).
 ---
 --- KILLING. A timeout kills the whole process TREE: a spec that spawned helpers (language servers,
@@ -96,6 +97,7 @@ M.HOST_C_COMMAND =
 ---@field base? string Directory below which the sandbox is created (default: the parent's temp dir).
 ---@field name? string Sandbox directory name (default unique).
 ---@field deterministic? boolean `LANG`/`LC_ALL=C.UTF-8` and `TZ=UTC` are set (default true; `false`: the parent's are passed on).
+---@field isolate_home? boolean `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA` point into the sandbox, `HOMEDRIVE`/`HOMEPATH` are removed (default false: the user's home, git needs the identity).
 ---@field guard? table Configuration of the guard layer (`testing.run.options.guard_config`, JSON-safe): installed in the child for the file (`testing.child.runner`). Nil: no guards.
 ---@field trace? boolean A child that times out or dies leaves a trace artifact (default true; the parent writes it, the job only carries the choice).
 
@@ -140,19 +142,28 @@ end
 ---The sandbox directory, the sanitized environment, the determinism variables and the sandbox
 ---variables of a child (shared by the per-file child and the RPC driver `testing.rpc`). Pure apart
 ---from reading the environment and a counter: nothing is created.
----@param spec { parent_env?: table<string, string>, env_allow?: string[], extra_env?: table<string, string>, deterministic?: boolean, base?: string, name?: string }
+---@param spec { parent_env?: table<string, string>, env_allow?: string[], extra_env?: table<string, string>, deterministic?: boolean, isolate_home?: boolean, base?: string, name?: string }
 ---@return Testing.Child.Environment
 function M.environment(spec)
   seq = seq + 1
   local base = spec.base or parent_tmp()
   local name = spec.name or ("testing-child-%d-%d"):format(vim.fn.getpid(), seq)
   local sandbox = (base:gsub("\\", "/"):gsub("/+$", "")) .. "/" .. name
-  local dirs, sandbox_vars = env_mod.sandbox_env(sandbox)
+  local dirs, sandbox_vars, drop =
+    env_mod.sandbox_env(sandbox, { isolate_home = spec.isolate_home == true })
 
   local clean = env_mod.sanitize(spec.parent_env or vim.fn.environ(), { allow = spec.env_allow })
   local env = clean.env
   if spec.deterministic ~= false then
     env_mod.apply_determinism(env)
+  end
+  -- `isolate_home`: the parts of the real home that would name it again are removed (any spelling)
+  for _, key in ipairs(drop) do
+    for existing in pairs(env) do
+      if existing:upper() == key then
+        env[existing] = nil
+      end
+    end
   end
   -- the sandbox variables replace whatever case the parent spelled them in (`Temp` vs `TEMP`)
   for key, value in pairs(sandbox_vars) do

@@ -20,6 +20,8 @@
 ---   guard_allow   table             `guard_allow` + `--allow-fs/--allow-spawn/--allow-network`.
 ---   pool          table             `pool` + `--pool-size/--pool-reuse`: `{ size, reuse }` (warm pool).
 ---   determinism   boolean           `determinism` (`--no-determinism` turns it off): fixed LANG/TZ in a child.
+---   isolate_home  boolean           `isolate_home` or `--isolate-home` (either turns it on): a child's home
+---                                   variables point into its sandbox (`testing.child.env.sandbox_env`).
 ---   trace         boolean           `trace` (`--no-trace` turns it off): trace artifact of a dead child.
 ---   strict        boolean           `--strict`.
 ---   jobs          integer >= 1      `--jobs`; `jobs`. Children running at once (default 1).
@@ -47,6 +49,7 @@ local M = {}
 ---@field guard_tuning table<string, table> Per guard the keys of its table form in `.testing.lua` (`guards.state = { categories = ..., ignore_groups = ... }`), without `mode`; validated by `testing.config.project`.
 ---@field pool { size: integer, reuse: boolean }
 ---@field determinism boolean
+---@field isolate_home boolean
 ---@field trace boolean
 ---@field strict boolean
 ---@field jobs integer
@@ -192,6 +195,7 @@ function M.of(plan)
     },
     pool = { size = math.floor(pool_size), reuse = pool_reuse == true },
     determinism = args.determinism ~= false and cfg.determinism ~= false,
+    isolate_home = args.isolate_home == true or cfg.isolate_home == true,
     trace = args.trace ~= false and cfg.trace ~= false,
     strict = args.strict == true,
     jobs = math.floor(jobs),

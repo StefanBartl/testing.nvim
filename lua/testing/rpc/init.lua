@@ -56,6 +56,7 @@ M.REAP_MS = 10000
 ---@field base? string Directory below which the sandbox is created.
 ---@field name? string Sandbox directory name (default unique).
 ---@field deterministic? boolean `LANG`/`LC_ALL=C.UTF-8`, `TZ=UTC` (default true; false passes the parent's through).
+---@field isolate_home? boolean The child's home variables point into its sandbox (`testing.child.env.sandbox_env`; default false).
 ---@field disable_first_run? boolean lib.nvim first-run opt-out (default true).
 ---@field defer_plugins? boolean The runtimepath of `rtp_prepend`/`rtp`/`minit` is applied AFTER the editor sourced its `plugin/` files (default false: a real session, plugins of the project load at start). The warm pool sets it: a per-file child never has the project's `plugin/` files sourced either.
 ---@field call_timeout_ms? integer Timeout of one call (default `M.CALL_TIMEOUT_MS`); adjustable later: `child.call_timeout_ms = n`.
@@ -524,6 +525,7 @@ local function start(S, async_cb)
     env_allow = opts.env_allow,
     extra_env = extra_env,
     deterministic = opts.deterministic,
+    isolate_home = opts.isolate_home,
     base = opts.base,
     name = opts.name,
   })

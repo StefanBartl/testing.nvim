@@ -152,13 +152,14 @@ local function doctor(plan, loaded, say)
   end
   say(("guards: %s"):format(table.concat(guard_modes, " ")))
   say(
-    ("guard_allow: fs=%d spawn=%d network=%d; pool: size=%d reuse=%s; determinism=%s trace=%s; soft_keep=%s"):format(
+    ("guard_allow: fs=%d spawn=%d network=%d; pool: size=%d reuse=%s; determinism=%s isolate_home=%s trace=%s; soft_keep=%s"):format(
       #run_opts.guard_allow.fs,
       #run_opts.guard_allow.spawn,
       #run_opts.guard_allow.network,
       run_opts.pool.size,
       tostring(run_opts.pool.reuse),
       tostring(run_opts.determinism),
+      tostring(run_opts.isolate_home),
       tostring(run_opts.trace),
       #run_opts.soft_keep > 0 and table.concat(run_opts.soft_keep, ",") or "-"
     )

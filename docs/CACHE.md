@@ -180,7 +180,9 @@ and nothing else: it is tested in its own repository):
   (`apply_determinism`), so the parent's locale and time zone cannot reach it and two machines with another locale share
   their hits. Every other variable the child receives (`PATH`, `TERM`, `COLORTERM`, `DISPLAY`, `HOME`, ... and what
   `env_allow` adds) stays in the key: a child can read it, and no analysis of the spec proves that it does not. The mode
-  (`#determinism=true|false`) is a key line too, A file that runs in this editor
+  (`#determinism=true|false`) is a key line too; with `isolate_home` the home variables (`HOME`, `USERPROFILE`,
+  `APPDATA`, `LOCALAPPDATA`, `HOMEDRIVE`, `HOMEPATH`) are the driver's and leave the key, and `#isolate_home=true` joins
+  it (a run without it keeps its keys). A file that runs in this editor
   keeps the rules below (a literal name must be listed, a computed one means no key),
 
 **Files the spec reads.** A spec (or a project module it loads) that reads files (`io.open`, `readfile`, `vim.fs.dir`,

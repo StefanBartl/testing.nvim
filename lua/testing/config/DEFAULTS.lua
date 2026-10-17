@@ -60,6 +60,9 @@ local DEFAULTS = {
     pool = { size = 0, reuse = false },
     -- Child editors start with a fixed `LANG`/`LC_ALL` and `TZ` (the same output on every machine).
     determinism = true,
+    -- Child editors keep the user's HOME/USERPROFILE (git needs the identity); true = they point into the
+    -- child's sandbox too (`--isolate-home`; docs/ISOLATION.md).
+    isolate_home = false,
     -- A child that times out or crashes leaves a trace of what it did (artifact of the case).
     trace = true,
     -- Host of a child process: "c" = started like plenary (--cmd/-c, vim_did_enter == 0), "l" = nvim -l.

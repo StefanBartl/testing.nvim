@@ -158,6 +158,7 @@ function M.session(ctx, name, fn)
     trace_dir = work .. "/trace",
     trace_name = "conformance-" .. name,
     deterministic = ctx.config.determinism ~= false,
+    isolate_home = ctx.config.isolate_home == true,
   })
   if not spawned then
     finish()

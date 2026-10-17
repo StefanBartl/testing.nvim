@@ -38,6 +38,7 @@ return function(H)
   eq(d.pool, { size = 0, reuse = false }, "pool: size 0 means `jobs`, no reuse")
   eq(d.determinism, true, "determinism is on")
   eq(d.trace, true, "trace is on")
+  eq(d.isolate_home, false, "isolate_home is off (opt-in)")
   eq(d.soft_keep, {}, "soft_keep is empty")
   eq(d.isolated, "auto", "isolated stays auto")
   eq(DEFAULTS.project.guards, d.guards, "the defaults are DEFAULTS.project, as data")
@@ -63,9 +64,11 @@ return function(H)
     },
     pool = { size = 4, reuse = true },
     determinism = false,
+    isolate_home = true,
     trace = false,
   })
   eq(problems, {}, "every valid value passes without a warning")
+  eq(good.isolate_home, true, "isolate_home = true is taken")
   eq(good.isolated, "case", "isolated = case")
   eq(good.soft_keep, { "my.plugin.cache", "my.shared*" }, "soft_keep is taken")
   eq(good.guards.fs, "error", "guards.fs")
@@ -101,6 +104,7 @@ return function(H)
     { "determinism", 1, "determinism" },
     { "trace", "no", "trace" },
     { "trace", {}, "trace" },
+    { "isolate_home", "yes", "isolate_home" },
   }
   for _, c in ipairs(bad) do
     local got, probs = project.validate({ [c[1]] = c[2] })

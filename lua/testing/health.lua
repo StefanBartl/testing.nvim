@@ -356,9 +356,10 @@ local function check_isolation(health, project)
     )
   end
   health.info(
-    ("isolation: %s; child environment: %s, trace artifact on a dead child: %s"):format(
+    ("isolation: %s; child environment: %s, %s, trace artifact on a dead child: %s"):format(
       o.isolated,
       o.determinism and "LANG/TZ fixed" or "LANG/TZ of the parent",
+      o.isolate_home and "home in the sandbox" or "the user's HOME",
       o.trace and "on" or "off"
     )
   )

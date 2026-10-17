@@ -125,6 +125,7 @@ end)
     eq(spec.entry.rel, "TESTS/a_order_spec.lua", "of the file")
     eq(spec.deterministic, true, "the determinism switch reaches the child build")
     eq(spec.trace, true, "and the trace switch")
+    eq(spec.isolate_home, false, "and the isolate_home switch (off by default)")
     eq(spec.guard, nil, "no guard configuration unless the driver was given one")
   end
   local valid, problems = result.validate(per_case.result, { allow_abs_paths = true })
@@ -133,12 +134,14 @@ end)
   -- guard configuration and the switches are forwarded to the child spec
   calls = {}
   local forwarded = S.run(root, entries, {
-    options = case_options({ determinism = false, trace = false }),
+    options = case_options({ determinism = false, trace = false, isolate_home = true }),
     guard_cfg = {},
     child = spy_child,
   })
   eq(forwarded.exit_code, 0, "still green")
   eq(calls[1].deterministic, false, "determinism = false is forwarded")
+  eq(calls[1].isolate_home, true, "isolate_home = true is forwarded")
+  eq(lists[#lists].isolate_home, true, "to the listing child as well")
   eq(calls[1].trace, false, "trace = false is forwarded")
   eq(calls[1].guard.guards.prompt.mode, "error", "the guard configuration travels as `guard`")
   eq(calls[1].guard.repo, root, "with the root")

@@ -34,6 +34,7 @@ return function(H)
   eq(a.pool_reuse, nil, "--pool-reuse is unset")
   eq(a.determinism, nil, "determinism is unset (the config decides)")
   eq(a.trace, nil, "trace is unset (the config decides)")
+  eq(a.isolate_home, nil, "isolate_home is unset (the config decides)")
 
   -- ------------------------------------------------------------------ --isolated
   for _, mode in ipairs({ "none", "file", "case", "soft" }) do
@@ -115,6 +116,9 @@ return function(H)
   a = assert(parse({ "r", "--no-determinism", "--no-trace" }))
   eq({ a.determinism, a.trace }, { false, false }, "--no-determinism --no-trace")
   eq(a.given.determinism and a.given.trace, true, "recorded as given")
+  a = assert(parse({ "r", "--isolate-home" }))
+  eq(a.isolate_home, true, "--isolate-home")
+  eq(a.given.isolate_home, true, "--isolate-home is recorded as given")
 
   -- ------------------------------------------------------------------ the usage text lists them all
   local usage = args_mod.usage()
@@ -128,6 +132,7 @@ return function(H)
     "--no-pool-reuse",
     "--no-determinism",
     "--no-trace",
+    "--isolate-home",
     "<none|file|case|soft>",
   }) do
     has(usage, flag, "usage lists " .. flag)

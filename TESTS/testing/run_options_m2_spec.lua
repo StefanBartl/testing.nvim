@@ -36,6 +36,7 @@ return function(H)
   eq(d.pool, { size = 0, reuse = false }, "default pool")
   eq({ d.determinism, d.trace, d.strict }, { true, true, false }, "determinism, trace, strict")
   eq(d.soft_keep, {}, "default soft_keep")
+  eq(d.isolate_home, false, "default isolate_home: the user's HOME (opt-in)")
   eq(options.of(plan()).guards, d.guards, "a validated empty config gives the same")
 
   -- ------------------------------------------------------------------ config, then flags on top
@@ -96,6 +97,13 @@ return function(H)
   eq({ f.determinism, f.trace, f.strict }, { false, false, true }, "the flags turn the config off")
   local only_cfg_off = options.of(plan({ determinism = false }, { "r" }))
   eq(only_cfg_off.determinism, false, "a flag that is absent leaves the config alone")
+  eq(options.of(plan({ isolate_home = true }, { "r" })).isolate_home, true, "config isolate_home")
+  eq(
+    options.of(plan({}, { "r", "--isolate-home" })).isolate_home,
+    true,
+    "--isolate-home turns it on"
+  )
+  eq(options.of(plan({}, { "r" })).isolate_home, false, "neither: off")
 
   -- garbage in a hand-built plan degrades (never raises)
   local g = options.of({

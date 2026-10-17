@@ -992,6 +992,7 @@ function M.run(opts)
       -- with its case: the state guard would only name what dies with the process.
       guard = guard_for_child(entry.dialect ~= "busted" or o.isolated == "case"),
       deterministic = o.determinism,
+      isolate_home = o.isolate_home,
       trace = o.trace,
     })
     slot.plan = plan
@@ -1069,6 +1070,7 @@ function M.run(opts)
         nvim = opts.nvim,
         base = opts.sandbox_base,
         deterministic = o.determinism,
+        isolate_home = o.isolate_home,
         disable_first_run = o.disable_first_run,
         -- the guard layer is installed per file by `testing.child.runner`, not once by the member boot
         guard = false,
@@ -1640,6 +1642,7 @@ function M.begin_listing(opts, o, root, entry, timeouts, lf_ids)
     nvim = opts.nvim,
     base = opts.sandbox_base,
     deterministic = o.determinism,
+    isolate_home = o.isolate_home,
     trace = false,
   })
   local pok, perr = child.prepare(plan)

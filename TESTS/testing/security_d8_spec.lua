@@ -2,6 +2,9 @@
 -- the runner itself must never reach for a shell string or open a listening socket, and a child editor built
 -- from a hostile parent environment carries none of it. Each control has a case that triggers it; the
 -- per-feature specs (child_env, guard_process_net, report_junit, cache_key, ...) cover the rest.
+-- `--isolate-home` (opt-in): no variable of a child names the user's real home.
+
+---@diagnostic disable: missing-fields
 
 return function(H)
   local ok = H.ok
@@ -399,5 +402,85 @@ return function(H)
         "host " .. host .. ": " .. key .. " lies below the sandbox"
       )
     end
+
+    -- --isolate-home (opt-in): no variable of the child names the real home any more
+    eq(plan.dirs.home, nil, "host " .. host .. ": no home directory without --isolate-home")
+    local iso = child.build({
+      root = root,
+      files = {},
+      host = host,
+      parent_env = vim.tbl_extend("force", hostile, {
+        USERPROFILE = "C:/Users/real",
+        HomeDrive = "C:",
+        HOMEPATH = "/Users/real",
+        APPDATA = "C:/Users/real/AppData/Roaming",
+        LOCALAPPDATA = "C:/Users/real/AppData/Local",
+      }),
+      isolate_home = true,
+      base = vim.fn.tempname(),
+    })
+    local box = iso.sandbox:gsub("\\", "/")
+    ok(iso.dirs.home ~= nil, "host " .. host .. ": isolate_home creates a home in the sandbox")
+    for _, key in ipairs({ "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA" }) do
+      ok(
+        tostring(iso.env[key]):gsub("\\", "/"):find(box, 1, true) == 1,
+        "host " .. host .. ": isolate_home: " .. key .. " lies below the sandbox"
+      )
+    end
+    -- HOMEDRIVE..HOMEPATH: absent (no drive letter), or the sandbox home (a Windows child gets the parent's
+    -- from libuv when they are missing); never the parent's spelling of them
+    eq(iso.env.HomeDrive, nil, "host " .. host .. ": the parent's HomeDrive is gone")
+    if iso.env.HOMEDRIVE or iso.env.HOMEPATH then
+      eq(
+        ((tostring(iso.env.HOMEDRIVE) .. tostring(iso.env.HOMEPATH)):gsub("\\", "/")),
+        iso.dirs.home,
+        "host " .. host .. ": isolate_home: HOMEDRIVE..HOMEPATH is the sandbox home"
+      )
+    end
+    for name, value in pairs(iso.env) do
+      local v = tostring(value):gsub("\\", "/")
+      ok(
+        not v:find("/Users/real", 1, true) and not v:find("/home/real", 1, true),
+        "host " .. host .. ": isolate_home: no variable names the real home (" .. name .. ")"
+      )
+    end
   end
+
+  -- a sandbox without a drive letter (POSIX): HOMEDRIVE/HOMEPATH of the parent are removed, in any spelling
+  local posix = child.environment({
+    parent_env = { PATH = "/usr/bin", HOME = "/home/real", HomeDrive = "C:", homepath = "/x" },
+    isolate_home = true,
+    base = "/tmp/tn-d8-posix",
+  })
+  eq(
+    (posix.env.HOME:gsub("\\", "/")),
+    "/tmp/tn-d8-posix/" .. vim.fs.basename(posix.sandbox) .. "/home",
+    "POSIX: HOME"
+  )
+  for name in pairs(posix.env) do
+    ok(
+      name:upper() ~= "HOMEDRIVE" and name:upper() ~= "HOMEPATH",
+      "POSIX: isolate_home removes " .. name
+    )
+  end
+
+  -- the conformance suite starts its child editors with the project's isolate_home as well
+  local runtime = require("testing.conformance.runtime")
+  local saved_rpc = package.loaded["testing.rpc"]
+  local seen
+  package.loaded["testing.rpc"] = {
+    spawn = function(o)
+      seen = o
+      return nil, "stub"
+    end,
+  }
+  local sok = pcall(runtime.session, {
+    root = root,
+    config = { isolate_home = true, deps = {} },
+    settings = { timeout_ms = 1000 },
+    notes = {},
+  }, "d8", function() end)
+  package.loaded["testing.rpc"] = saved_rpc
+  ok(sok, "the conformance session ran up to the spawn")
+  eq(seen and seen.isolate_home, true, "conformance: isolate_home reaches the child editor")
 end

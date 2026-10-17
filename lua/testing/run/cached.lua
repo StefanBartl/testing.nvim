@@ -177,9 +177,10 @@ end
 ---deterministic (the default), without `LANG`, `LANGUAGE`, `LC_*` and `TZ`: the child gets fixed values instead of the
 ---parent's (`apply_determinism`), so no value of the parent can reach it and a machine with another locale keeps its
 ---hits. Every other variable a child receives stays: it can read it, and its value is part of the key. The sandbox
----variables (`XDG_*`, `TEMP`, ...) are the driver's own and not the parent's.
+---variables (`XDG_*`, `TEMP`, ...) are the driver's own and not the parent's; with `isolate_home` the home variables
+---(`testing.child.env.HOME_VARS`) are too, and the mode joins the lines (only then: a run without it keeps its keys).
 ---@param environ table<string, string> The environment of this process (`vim.fn.environ()`).
----@param run_opts { env_allow?: string[], determinism?: boolean }
+---@param run_opts { env_allow?: string[], determinism?: boolean, isolate_home?: boolean }
 ---@return string[] lines
 function M.child_env_lines(environ, run_opts)
   local env_mod = require("testing.child.env")
@@ -187,6 +188,14 @@ function M.child_env_lines(environ, run_opts)
   local deterministic = run_opts.determinism ~= false
   if deterministic then
     env_mod.apply_determinism(sane)
+  end
+  local isolate_home = run_opts.isolate_home == true
+  if isolate_home then
+    for name in pairs(sane) do
+      if vim.tbl_contains(env_mod.HOME_VARS, name:upper()) then
+        sane[name] = nil
+      end
+    end
   end
   local names = vim.tbl_keys(sane)
   table.sort(names)
@@ -196,6 +205,9 @@ function M.child_env_lines(environ, run_opts)
   end
   -- the mode is part of the lines: a run with and one without determinism never share a key
   lines[#lines + 1] = "#determinism=" .. tostring(deterministic)
+  if isolate_home then
+    lines[#lines + 1] = "#isolate_home=true"
+  end
   return lines
 end
 

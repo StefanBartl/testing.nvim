@@ -82,6 +82,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field pool_size? integer `--pool-size <n>`
 ---@field pool_reuse? boolean `--pool-reuse` (true) / `--no-pool-reuse` (false); nil = the config decides
 ---@field determinism? boolean `--no-determinism` (false); nil = the config decides
+---@field isolate_home? boolean `--isolate-home` (true); nil = the config decides
 ---@field trace? boolean `--no-trace` (false); nil = the config decides
 ---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
 ---@field jobs_auto? boolean `--jobs auto`: cores minus one (the caller resolves it into `jobs`)
@@ -466,6 +467,14 @@ local OPTIONS = {
     field = "determinism",
     const = false,
     help = "children keep the parent's LANG/LC_ALL/TZ instead of fixed ones",
+  },
+  {
+    name = "isolate_home",
+    long = "isolate-home",
+    kind = "flag",
+    field = "isolate_home",
+    const = true,
+    help = "children get a home directory of their own (HOME, USERPROFILE, APPDATA, LOCALAPPDATA in the sandbox)",
   },
   {
     name = "trace",

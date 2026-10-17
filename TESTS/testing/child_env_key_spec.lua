@@ -61,6 +61,24 @@ return function(H)
   )
   ok(not table.concat(base, "\n"):find("s3cret", 1, true), "no value is written out, only hashes")
 
+  -- ---------------------------------------------------------------- isolate_home: the home is the driver's
+  ok(find(base, "HOME") ~= nil, "the user's HOME reaches a child by default: it is in the key")
+  ok(
+    not vim.tbl_contains(base, "#isolate_home=true"),
+    "without isolate_home the keys stay as they were"
+  )
+  local iso = lines_of(BASE, { isolate_home = true })
+  ok(
+    find(iso, "HOME") == nil,
+    "isolate_home: the parent's HOME never reaches the child, so it leaves the key"
+  )
+  ok(vim.tbl_contains(iso, "#isolate_home=true"), "and the mode joins the lines")
+  eq(
+    lines_of(with({ HOME = "/home/b" }), { isolate_home = true }),
+    iso,
+    "isolate_home: another user's HOME keeps the key"
+  )
+
   -- ---------------------------------------------------------------- what the child sees stays
   for _, name in ipairs({ "PATH", "TERM", "COLORTERM", "DISPLAY", "HOME" }) do
     ok(

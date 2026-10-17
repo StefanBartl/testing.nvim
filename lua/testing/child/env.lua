@@ -23,6 +23,7 @@
 --- Residual write places, by design NOT redirected: `HOME`/`USERPROFILE`, `APPDATA`/`LOCALAPPDATA`.
 --- Tools that a spec runs (git) need the user's identity; the places Neovim itself writes to
 --- (`stdpath` data/state/cache/config/run) and the temp directories ARE redirected (`sandbox_env`).
+--- `--isolate-home` (opt-in) redirects the home variables too (`M.HOME_VARS`).
 ---
 --- Pure: takes the parent environment as a table, returns a new table; touches no editor state.
 
@@ -201,12 +202,28 @@ function M.apply_determinism(env)
   return env
 end
 
+---The variables `--isolate-home` takes away from the parent: set to the sandbox (`HOME`, `USERPROFILE`,
+---`APPDATA`, `LOCALAPPDATA`; `HOMEDRIVE`/`HOMEPATH` for a home with a drive letter) or removed
+---(`HOMEDRIVE`/`HOMEPATH` otherwise). Upper case.
+---@type string[]
+M.HOME_VARS = { "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH" }
+
 ---The directories of a child's sandbox, below `base`, and the environment variables that point
 ---Neovim (and tools that honour the XDG variables) and the temp lookups at them.
+---
+--- With `opts.isolate_home` (`--isolate-home`, `.testing.lua` `isolate_home = true`) the sandbox also
+--- gets a `home` directory: `HOME` and `USERPROFILE` point there, `APPDATA`/`LOCALAPPDATA` below it.
+--- `HOMEDRIVE`/`HOMEPATH` (together they would name the real home again) name the sandbox home when
+--- it has a drive letter (Windows: libuv would otherwise copy the parent's into the child), else they
+--- are in `drop`, to be removed from the child's environment. Off by default: tools a spec runs (git)
+--- need the user's identity (`~/.gitconfig`), which an isolated home does not have.
 ---@param base string Absolute directory that belongs to this child (it is created by the caller).
----@return table<string, string> dirs name -> absolute path (`config`, `data`, `state`, `cache`, `run`, `tmp`)
+---@param opts? { isolate_home?: boolean }
+---@return table<string, string> dirs name -> absolute path (`config`, `data`, `state`, `cache`, `run`, `tmp`; `home` with `isolate_home`)
 ---@return table<string, string> env variables to set
-function M.sandbox_env(base)
+---@return string[] drop variables to remove (`HOMEDRIVE`, `HOMEPATH` with `isolate_home` and a home without a drive letter; else none)
+function M.sandbox_env(base, opts)
+  opts = opts or {}
   base = base:gsub("\\", "/"):gsub("/+$", "")
   local dirs = {
     config = base .. "/config",
@@ -226,7 +243,24 @@ function M.sandbox_env(base)
     TMP = dirs.tmp,
     TMPDIR = dirs.tmp,
   }
-  return dirs, env
+  local drop = {}
+  if opts.isolate_home == true then
+    dirs.home = base .. "/home"
+    env.HOME = dirs.home
+    env.USERPROFILE = dirs.home
+    env.APPDATA = dirs.home .. "/AppData/Roaming"
+    env.LOCALAPPDATA = dirs.home .. "/AppData/Local"
+    -- libuv fills HOMEDRIVE/HOMEPATH from the PARENT when a Windows child's environment lacks them (its
+    -- `required_vars`): removing them is not enough, they have to name the sandbox home as well
+    local drive, rest = dirs.home:match("^(%a:)(/.*)$")
+    if drive then
+      env.HOMEDRIVE = drive
+      env.HOMEPATH = rest
+    else
+      drop = { "HOMEDRIVE", "HOMEPATH" }
+    end
+  end
+  return dirs, env, drop
 end
 
 return M

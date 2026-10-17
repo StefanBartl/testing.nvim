@@ -40,6 +40,8 @@
 ---   guard_allow   { fs, spawn, network = string[] }: what the guards let through
 ---   pool          { size = 0..256 (0 = jobs), reuse = bool }: the warm child pool
 ---   determinism   true (default): children start with a fixed LANG/LC_ALL and TZ
+---   isolate_home  false (default): children keep the user's HOME; true (or `--isolate-home`): HOME,
+---                 USERPROFILE, APPDATA, LOCALAPPDATA point into the child's sandbox
 ---   trace         true (default): a child that times out or crashes leaves a trace artifact
 ---   jobs          integer >= 1 or "auto" (cores minus one), parallel child processes of an isolated run
 ---   shard         { balance = "size"|"count"|"hash"|"history", durations = <relative json path> }: `--shard i/n`
@@ -421,6 +423,7 @@ local SCHEMA = {
     reuse = { check = is_bool, expect = "true or false" },
   },
   determinism = { check = is_bool, expect = "true or false" },
+  isolate_home = { check = is_bool, expect = "true or false" },
   trace = { check = is_bool, expect = "true or false" },
   jobs = { check = is_jobs, expect = 'an integer between 1 and 256, or "auto" (cores minus one)' },
   host = {

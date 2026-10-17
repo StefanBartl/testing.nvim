@@ -166,6 +166,7 @@ run the times vary by several seconds:
 | --- | --- | --- | --- |
 | `pool = { size, reuse }` | `--pool-size n`, `--pool-reuse` / `--no-pool-reuse` | `size = 0` (= `min(jobs, 4)`), `reuse = false` | the warm child pool ([CHILD.md](CHILD.md#the-warm-pool-files-after-each-other-in-one-editor)) |
 | `determinism` | `--no-determinism` | `true` | children start with a fixed `LANG`/`LC_ALL` and `TZ` |
+| `isolate_home` | `--isolate-home` | `false` | children get a home directory of their own in the sandbox (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`); off by default because git needs the user's identity ([CHILD.md](CHILD.md#environment-determinism-sandbox)) |
 | `trace` | `--no-trace` | `true` | a child that times out or crashes leaves a trace artifact |
 | `soft_keep` | | `{}` | modules `soft` never unloads |
 

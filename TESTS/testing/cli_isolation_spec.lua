@@ -236,7 +236,7 @@ end)
   )
   has(
     out,
-    "guard_allow: fs=0 spawn=1 network=0; pool: size=3 reuse=false; determinism=true trace=false",
+    "guard_allow: fs=0 spawn=1 network=0; pool: size=3 reuse=false; determinism=true isolate_home=false trace=false",
     "allow lists, pool and switches"
   )
 

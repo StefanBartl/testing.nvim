@@ -29,6 +29,34 @@ end]==],
   end
 
   -- ===================================================================
+  -- 7b. `isolate_home`: the home of a member AND of a child per file is a directory of its sandbox
+  do
+    local files = {
+      ["TESTS/a_spec.lua"] = [==[return function(H)
+  local home = vim.env.HOME or ""
+  H.ok(home:gsub("\\", "/"):find("testing%-child%-") ~= nil, "HOME is in the sandbox, got " .. home)
+  H.ok(vim.fn.isdirectory(home) == 1, "and exists")
+  H.ok(vim.env.USERPROFILE == home, "USERPROFILE is the same directory")
+  local split = (vim.env.HOMEDRIVE or "") .. (vim.env.HOMEPATH or "")
+  H.ok(split == "" or split == home, "HOMEDRIVE..HOMEPATH is absent or the same, got " .. split)
+  H.ok(vim.uv.os_homedir() == home, "os_homedir() agrees, got " .. tostring(vim.uv.os_homedir()))
+end]==],
+    }
+    for _, reuse in ipairs({ true, false }) do
+      local rep = run(
+        files,
+        { "TESTS/a_spec.lua" },
+        { size = 1, reuse = reuse, isolate_home = true }
+      )
+      eq(
+        statuses(rep),
+        { "TESTS/a_spec.lua:pass" },
+        ("isolate_home reaches the child (pool reuse=%s)"):format(tostring(reuse))
+      )
+    end
+  end
+
+  -- ===================================================================
   -- 8. the project's own `plugin/` directory is NOT sourced at the start (a per-file child never has
   --    it on the runtimepath while the editor loads its plugins): a spec that expects its command to
   --    be absent before `setup()` sees the same in a member

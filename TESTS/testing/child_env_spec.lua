@@ -104,4 +104,34 @@ return function(H)
     distinct[d] = true
   end
   eq(vim.tbl_count(distinct), vim.tbl_count(dirs), "the directories are distinct")
+  local _, _, no_drop = env.sandbox_env("C:\\tmp\\box")
+  eq(
+    { dirs.home, vars.HOME, vars.USERPROFILE, no_drop },
+    { nil, nil, nil, {} },
+    "default: the home stays the user's"
+  )
+
+  -- --isolate-home: the home variables point into the sandbox
+  local hdirs, hvars, drop = env.sandbox_env("C:\\tmp\\box", { isolate_home = true })
+  eq(hdirs.home, "C:/tmp/box/home", "isolate_home: a home directory below the sandbox")
+  eq({ hvars.HOME, hvars.USERPROFILE }, { hdirs.home, hdirs.home }, "HOME and USERPROFILE -> home")
+  eq(hvars.APPDATA, hdirs.home .. "/AppData/Roaming", "APPDATA below it")
+  eq(hvars.LOCALAPPDATA, hdirs.home .. "/AppData/Local", "LOCALAPPDATA below it")
+  -- a drive letter: libuv would copy the parent's HOMEDRIVE/HOMEPATH into a Windows child that lacks them
+  eq(
+    { hvars.HOMEDRIVE, hvars.HOMEPATH, drop },
+    { "C:", "/tmp/box/home", {} },
+    "HOMEDRIVE..HOMEPATH name the sandbox home"
+  )
+  for _, name in ipairs(env.HOME_VARS) do
+    ok(hvars[name] ~= nil, name .. " is set")
+  end
+  -- no drive letter (POSIX): the two are removed instead
+  local _, pvars, pdrop = env.sandbox_env("/tmp/box", { isolate_home = true })
+  eq(pvars.HOME, "/tmp/box/home", "POSIX: HOME -> home")
+  eq(
+    { pvars.HOMEDRIVE, pvars.HOMEPATH, pdrop },
+    { nil, nil, { "HOMEDRIVE", "HOMEPATH" } },
+    "POSIX: HOMEDRIVE/HOMEPATH are removed"
+  )
 end

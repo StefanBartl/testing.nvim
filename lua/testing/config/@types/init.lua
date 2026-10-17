@@ -111,6 +111,7 @@
 ---@field guard_allow Testing.ProjectConfig.GuardAllow
 ---@field pool Testing.ProjectConfig.Pool
 ---@field determinism boolean Children get a fixed `LANG`/`LC_ALL` and `TZ`.
+---@field isolate_home boolean Children get a home directory in their sandbox (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`).
 ---@field trace boolean A child that times out or crashes leaves a trace artifact.
 ---@field jobs integer|"auto" >= 1, or "auto" (cores minus one; `testing.cli` resolves it to an integer). Parallel child processes of an isolated run.
 ---@field host "c"|"l" Child host: `c` = started like plenary's (`--cmd`/`-c`), `l` = `nvim -l`.

@@ -123,6 +123,20 @@ return function(H)
       eq(free.env.LC_ALL, nil, "and LC_ALL is not invented")
     end
 
+    -- isolate_home: the real editor's home (`~`, `os_homedir`) is a directory of its sandbox
+    ok(
+      not inside(c.lua_get("vim.uv.os_homedir()"), c.sandbox),
+      "control: by default the home is the user's"
+    )
+    local homed = S.spawn({ parent_env = dirty_env(), isolate_home = true })
+    local home = homed.lua_get("vim.uv.os_homedir()")
+    ok(inside(home, homed.sandbox), "isolate_home: os_homedir() is inside the sandbox: " .. home)
+    eq(homed.lua_get("vim.fn.isdirectory(vim.uv.os_homedir())"), 1, "and exists")
+    ok(
+      inside(homed.lua_get("vim.fn.expand('~')"), homed.sandbox),
+      "isolate_home: `~` expands into the sandbox"
+    )
+
     -- an unset parent gets the same variables
     local bare_env = vim.fn.environ()
     bare_env.LANG, bare_env.TZ, bare_env.LC_ALL = nil, nil, nil

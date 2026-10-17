@@ -269,6 +269,8 @@ Control ~
                      What the guards let through (repeatable).
   --no-determinism   A child keeps the parent's LANG/LC_ALL/TZ.
   --no-trace         No trace artifact for a child that timed out or died.
+  --isolate-home     A child gets a home directory of its own (HOME,
+                     USERPROFILE, APPDATA, LOCALAPPDATA in its sandbox).
   --host {c|l}       A child starts like plenary's host (`c`, default) or like
                      `nvim -l`.
   --env-allow {name} An environment variable (or PREFIX*) a child may inherit.
@@ -375,6 +377,7 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
   guard_allow  table        { fs, spawn, network } string lists.
   pool         table        { size = n, reuse = boolean }: the warm pool.
   determinism  boolean      Fixed LANG/LC_ALL/TZ in a child. Default true.
+  isolate_home boolean      A home directory in the child's sandbox. Default false.
   trace        boolean      Trace artifact of a child that died. Default true.
   soft_keep    string[]     Modules the soft isolation never unloads.
   jobs         integer|"auto" Child editors at once. Default 1.

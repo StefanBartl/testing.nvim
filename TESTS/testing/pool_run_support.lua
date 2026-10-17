@@ -37,6 +37,7 @@ return function(H)
         isolated = "file",
         pool = { reuse = cfg.reuse ~= false, size = cfg.size or 0 },
         guards = cfg.guards,
+        isolate_home = cfg.isolate_home,
       },
       args = { jobs = cfg.jobs or 1 },
     })

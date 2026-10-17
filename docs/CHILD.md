@@ -66,6 +66,11 @@ pipe on Windows, a socket in the private `XDG_RUNTIME_DIR` elsewhere), nothing h
   `state`, `cache`, `run`, `tmp`; `XDG_*`, `TEMP`/`TMP`/`TMPDIR` point into it, so `stdpath()` and
   `tempname()` never touch the real ones; the editor's log (`NVIM_LOG_FILE`) is in it. Removed by
   `kill()` and when the process ended. `HOME` stays real (git needs it).
+* **Isolated home** (opt-in: `isolate_home = true`, `--isolate-home`): the sandbox gets a `home`
+  directory; `HOME`, `USERPROFILE` point there, `APPDATA`/`LOCALAPPDATA` below it, `HOMEDRIVE`/`HOMEPATH`
+  name it too (Windows; libuv would otherwise copy the parent's into the child) or are removed. `~` and
+  `vim.uv.os_homedir()` of a spec are then the sandbox. Tools that need the user's identity (git with
+  `~/.gitconfig`) do not find it: that is why it is off by default.
 
 ## The handle
 
