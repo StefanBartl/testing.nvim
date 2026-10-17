@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: JohnnyMorganz/stylua-action@v5
+      - uses: JohnnyMorganz/stylua-action@76fd70c03e6340ceaf673366712db9b20560b402 # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           # Pinned, not "latest", like every repo of the fleet.
@@ -29,13 +29,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: leafo/gh-actions-lua@v13
+      - uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377 # v13
         with:
           luaVersion: "5.4"
-      - uses: leafo/gh-actions-luarocks@v6
+      - uses: leafo/gh-actions-luarocks@35d062def313a7699a0d513e996bcf4352f05389 # v6
       - run: luarocks install luacheck 1.2.0
       - run: luacheck lua TESTS scripts plugin
 
@@ -53,25 +53,25 @@ jobs:
         # One shell on all three platforms.
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
       # lib.nvim is a hard runtime dependency; the runner finds it in .deps/lib.nvim (and names all
       # four places it searched when it is missing: exit code 3).
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           repository: StefanBartl/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
-      - uses: rhysd/action-setup-vim@v1
+      - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
         with:
           neovim: true
           # Pinned (it is part of every cache key); move it on purpose.
           version: v0.12.2
       # The result cache, as docs/CI-CACHE.md describes it: the key of the cache action is only the transport
       # (each entry carries its full spec key), pull requests restore and never save, the main branch saves.
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/testing-cache
           key: testing-${{ runner.os }}-nvim0.12.2-${{ github.sha }}
@@ -87,12 +87,12 @@ jobs:
       # The conformance gate (docs/CONFORMANCE.md): `conformance.gate = true` in .testing.lua, so a failed check is exit 1.
       - name: Conformance gate
         run: scripts/test.sh conformance
-      - uses: actions/cache/save@v4
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           path: ${{ runner.temp }}/testing-cache
           key: testing-${{ runner.os }}-nvim0.12.2-${{ github.sha }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: self-run-${{ matrix.os }}
@@ -119,23 +119,23 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           repository: StefanBartl/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       # telemetry_wrap_spec.lua needs the real runtime-analysis.telemetry module on the runtimepath.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           repository: StefanBartl/runtime-analysis.nvim
           path: .deps/runtime-analysis.nvim
           ref: ci-verified
-      - uses: rhysd/action-setup-vim@v1
+      - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
         with:
           neovim: true
           version: stable
@@ -156,7 +156,7 @@ jobs:
           cd .deps/lib.nvim
           # --first-run: lib.nvim's own deps_spec tests the first-run float, the default would switch it off
           nvim -n -i NONE --headless -u NONE -l "$DRIVER" . --first-run --rtp "$RTP_EXTRA" --json "$IR_FILE"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: lib-suite-ir-${{ matrix.os }}
@@ -177,7 +177,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # Never move ci-verified backwards: two pushes can finish out of order, and the older run
       # must not overwrite the newer verified commit. The lookup fails closed and the update
       # carries a lease on the tip it compared against.
