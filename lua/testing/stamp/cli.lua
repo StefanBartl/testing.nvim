@@ -38,6 +38,7 @@ M.SPECS = {
 function M.split_argv(argv)
   local command = argv[1]
   local spec = M.SPECS[command]
+  ---@type table<string, any>
   local own = { command = command }
   if not spec then
     return argv, own, nil

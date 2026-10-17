@@ -529,6 +529,7 @@ local EMAIL_DOMAIN = "^[%w%-][%w%.%-]*%.%a%a+"
 ---@return integer|nil from
 ---@return integer|nil to
 local function find_email(s, init)
+  ---@type integer|nil
   local at = init
   while true do
     at = s:find("@", at, true)
@@ -658,9 +659,9 @@ end
 ---JSON text, so a user called `pass` cannot break a key or a value of the IR.
 ---@param s string
 ---@param r Testing.Result.Redact
----@param ci boolean
+---@param _ci boolean  (the matching is case-insensitive anyway; kept so both callers read the same)
 ---@return string
-local function redact_string(s, r, ci)
+local function redact_string(s, r, _ci)
   local has_pair = s:find("=", 1, true) ~= nil
   for _, name in ipairs(has_pair and r.env_names or {}) do
     if #name >= 2 then

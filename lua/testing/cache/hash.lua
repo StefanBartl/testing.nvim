@@ -390,11 +390,14 @@ function Hasher:tree(dir, opts)
     files, all_links, real_dir = M.list_files(dir, ignore_dirs)
   end
   if not files then
-    return nil, all_links
+    return nil, tostring(all_links)
   end
   local uv = vim.uv
+  real_dir = real_dir or dir
   local link_lines = {}
-  for _, link in ipairs(all_links) do
+  for _, link in
+    ipairs(all_links --[[@as string[] ]])
+  do
     local rel = vim.fs.normalize(link):sub(#dir + 2)
     if not (skip and skip(rel)) then
       local real = uv.fs_realpath(link)

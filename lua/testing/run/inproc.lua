@@ -151,6 +151,7 @@ end
 ---@class Testing.Inproc.Report
 ---@field cases_cached? integer Cases that came from the result cache (set by `testing.run.cached`).
 ---@field files_cached? integer Files that came from the result cache.
+---@field flaky_files? table<string, true> Files with a case that failed and then passed on a retry (set by `testing.run.retry`).
 ---@field result Testing.Result The finalized IR.
 ---@field failed integer Cases that are red (`M.BAD`).
 ---@field failed_files integer Files with at least one red case.

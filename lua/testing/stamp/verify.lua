@@ -527,8 +527,15 @@ end
 ---dependency that went away drags hundreds of `removed` lines with it).
 local WEIGHT = { changed = 1, added = 2, removed = 3 }
 
----@param details { change: string }[]
----@return { change: string }[] sorted A copy; the order of equals is kept.
+---@class Testing.Stamp.Detail
+---@field kind string
+---@field name string
+---@field old? string
+---@field new? string
+---@field change "changed"|"added"|"removed"
+
+---@param details Testing.Stamp.Detail[]
+---@return Testing.Stamp.Detail[] sorted A copy; the order of equals is kept.
 local function by_weight(details)
   local idx = {}
   for i = 1, #details do

@@ -156,19 +156,19 @@ end
 ---@return boolean decided True when a protected call of the spec (a guess) decided, false when nothing lay between.
 function M.inside(entry, transparent, asked)
   if not entry or (running() or false) ~= entry.thread then
-    return false
+    return false, false
   end
   local height = entry.height
   -- Beyond the window? One probe tells (a level that does not exist costs a walk of the stack and allocates
   -- nothing), so the size of a very deep stack is not searched just to answer "record".
   if getinfo(height + MAX_LEVELS, "l") then
-    return false
+    return false, false
   end
   local total = M.stack_size()
   -- level of the frame that entered the case body (this function is level 1)
   local last = total - height
   if last > MAX_LEVELS then
-    return false
+    return false, false
   end
   -- The innermost protected call above the entry point that is not transparent decides. Only the function of a
   -- level is asked for: the name and the chunk of the caller are needed for the (few) protected calls only,
@@ -181,7 +181,7 @@ function M.inside(entry, transparent, asked)
   for level = 2, last - 1 do
     local info = getinfo(level, "f")
     if not info then
-      return false
+      return false, false
     end
     local func = info.func
     if func == pcall_fn or func == xpcall_fn then
@@ -193,7 +193,7 @@ function M.inside(entry, transparent, asked)
       local named = (call.name == "pcall" or call.name == "xpcall")
         and (call.namewhat == "global" or call.namewhat == "local" or call.namewhat == "upvalue")
       if not (source and named) then
-        return false
+        return false, false
       end
       -- a protected call of the harness or the runner cleans up and raises again: the error goes on
       if not (is_runner(source) or (transparent ~= nil and transparent[source] == true)) then
@@ -203,7 +203,7 @@ function M.inside(entry, transparent, asked)
     elseif func == error_fn or func == assert_fn then
       -- reached from the check before any protected call: the check runs in a message handler, where a raise
       -- is lost
-      return false
+      return false, false
     end
   end
   if not catcher then
@@ -216,11 +216,11 @@ function M.inside(entry, transparent, asked)
     for level = 2, catcher_level - 1 do
       local between = getinfo(level, "fS")
       if not between then
-        return false
+        return false, false
       end
       local func = between.func
       if between.what == "C" and func ~= pcall_fn and func ~= xpcall_fn then
-        return false
+        return false, false
       end
     end
   end
@@ -231,7 +231,7 @@ function M.inside(entry, transparent, asked)
     for level = last, 2, -1 do
       local info = getinfo(level, "S")
       if not info then
-        return false
+        return false, false
       end
       if info.what ~= "C" and not is_runner(info.source) then
         spec_source = info.source

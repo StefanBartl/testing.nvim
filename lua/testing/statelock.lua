@@ -79,7 +79,7 @@ end
 ---Run `fn` under the lock of `path`.
 ---@generic T
 ---@param path string The state file (its directory is created when missing).
----@param fn fun(): T
+---@param fn fun(): any, any
 ---@param opts? { timeout_ms?: integer, stale_ms?: integer, poll_ms?: integer, grace_ms?: integer }
 ---@return boolean locked False when the lock could not be taken: `fn` did not run.
 ---@return any ... What `fn` returned, or the note why it did not run.

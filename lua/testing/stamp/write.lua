@@ -245,6 +245,7 @@ function M.after_run(o)
     return false
   end
   local env = pre.env
+  ---@cast env -?
   if not vim.deep_equal(env, after_env) then
     err(
       "testing: stamp: not written: the runner, Neovim or the configuration changed while the run was going"
@@ -252,6 +253,7 @@ function M.after_run(o)
     return false
   end
   local facts = pre.facts
+  ---@cast facts -?
   local after_facts = collect.git_facts(plan.root, seam.run)
   if
     after_facts.git ~= facts.git

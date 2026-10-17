@@ -172,8 +172,8 @@ function G:install()
   end, "vim.fn.strftime")
 end
 
----@param ctx Testing.Guard.CaseCtx
-function G:begin(ctx)
+---@param _ctx Testing.Guard.CaseCtx
+function G:begin(_ctx)
   if self.h:has_tag("clock") then
     self.clock:start()
   end

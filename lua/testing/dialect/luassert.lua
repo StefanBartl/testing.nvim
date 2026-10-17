@@ -252,7 +252,7 @@ local function error_matches(err, expected)
     end
     return (err:gsub("^[^\n]-:%d+: ", "")) == expected
   end
-  return assert_mod.deep_equal(err, expected)
+  return (assert_mod.deep_equal(err, expected))
 end
 
 A.error = function(S, neg, fn, expected, msg)

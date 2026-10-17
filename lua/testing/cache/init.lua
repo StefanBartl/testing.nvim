@@ -172,6 +172,7 @@ local memo = {}
 ---@field spec_roots? string[] Spec roots relative to the root (default: the first path component of the spec).
 ---@field restricted? boolean A case selection (`--filter`, `--lf`, ...) is active: the file does not run completely.
 ---@field hasher? Testing.Cache.Hasher
+---@field raw_eol? boolean Hash the bytes as they are (no line-ending normalization); set on the derived context of the raw pass.
 ---@field prune? boolean Prune once per process after the first write (default true).
 ---@field unresolved? "error"|"absent" A `require` that no checkout resolves: `error` (default) = the file has no key, `absent` = its absence is part of the key (right for optional plugins checked with `pcall(require, ...)`, provided the runtime path is the one the run uses).
 ---@field flipped? fun(file: string, key: string): { classes: string[] }|nil Key-flip lookup: the results the same key has given before when they differ (`testing.cache.keylog`); a file for which it answers is not cached.
@@ -1506,7 +1507,9 @@ local function key_once(file_info, ctx)
   vim.list_extend(parts, env)
   if type(file_info.child_env) == "table" then
     -- one line per variable (`NAME=<sha256 of the value>`): `testing explain` names the one that changed
-    for _, line in ipairs(file_info.child_env) do
+    for _, line in
+      ipairs(file_info.child_env --[[@as string[] ]])
+    do
       parts[#parts + 1] = "child-env " .. line
     end
   elseif file_info.child_env then

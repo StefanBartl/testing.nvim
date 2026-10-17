@@ -291,7 +291,7 @@ function M.cleanup(plan)
 end
 
 ---@class Testing.Child.Buffer
----@field chunks string[] The live chunks are `chunks[first .. #chunks]`; a slot before `first` is `false` (dropped).
+---@field chunks (string|false)[] The live chunks are `chunks[first .. #chunks]`; a slot before `first` is `false` (dropped).
 ---@field first integer Index of the oldest live chunk (the read cursor: dropping from the front must not shift the array).
 ---@field bytes integer
 ---@field truncated boolean Older output was dropped (the cap).
@@ -345,7 +345,7 @@ function M.keep(buf, chunk)
   local first = buf.first
   local cap = M.OUTPUT_CAP
   while buf.bytes > cap and first < last do
-    buf.bytes = buf.bytes - #chunks[first]
+    buf.bytes = buf.bytes - #(chunks[first] or "")
     chunks[first] = false -- not nil: `#chunks` must keep counting the dead slots
     first = first + 1
     buf.truncated = true
@@ -367,7 +367,9 @@ end
 ---@param buf Testing.Child.Buffer
 ---@return string
 function M.text(buf)
-  return (table.concat(buf.chunks, "", buf.first or 1, #buf.chunks):gsub("\r\n", "\n"))
+  return (
+    table.concat(buf.chunks --[[@as string[] ]], "", buf.first or 1, #buf.chunks):gsub("\r\n", "\n")
+  )
 end
 
 ---Children that are running, by pid; the editor quitting kills what is left (`VimLeavePre`).
@@ -487,6 +489,7 @@ function M.spawn(plan, on_exit, popts)
   end
   h.finish = finish
 
+  ---@diagnostic disable-next-line: missing-fields -- uid/gid/verbatim are optional in libuv; the type stub lists them as required
   local handle, pid = uv.spawn(plan.argv[1], {
     args = args,
     cwd = plan.cwd,
@@ -661,7 +664,9 @@ end
 local function descendants(pid)
   local procs = process_table()
   local out = {}
-  for _, d in ipairs(procs and below_of(procs, pid) or {}) do
+  ---@type { pid: integer, created: integer }[]
+  local below = procs and below_of(procs, pid) or {}
+  for _, d in ipairs(below) do
     out[#out + 1] = d.pid
   end
   return out
@@ -685,6 +690,7 @@ function M.kill_tree(h)
       -- the tree is read first (a descendant whose parent dies with the root would be invisible to
       -- `/T`), then `taskkill /T` takes the tree
       local procs = process_table()
+      ---@type { pid: integer, created: integer }[]
       local below = procs and below_of(procs, h.pid) or {}
       local ok, res = pcall(function()
         return vim

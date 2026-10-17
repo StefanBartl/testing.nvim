@@ -18,6 +18,8 @@
 --- Anything else is a MISS (with a reason), never a partial hit. Writes are atomic
 --- (`lib.nvim.fs.write.atomic`); the store is bounded by bytes, entries and age (`prune`).
 
+---@class Testing.Cache.Store
+---@field project_key? string  See `M.project_key` below.
 local M = {}
 
 ---@type integer

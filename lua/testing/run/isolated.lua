@@ -251,6 +251,7 @@ local function own_file_timeout(cases)
     local message = c.error and c.error.message
     if
       c.status == "timeout"
+      and message ~= nil
       and timeout.is_timeout(message)
       and message:find("file exceeded", 1, true)
     then
@@ -1666,15 +1667,18 @@ function M.begin_listing(opts, o, root, entry, timeouts, lf_ids)
 end
 
 ---Wait for a listing child that `M.begin_listing` started and read what it listed (see `M.list_case_ids`).
----@param opts Testing.Isolated.Opts
+---@param _opts Testing.Isolated.Opts
 ---@param job Testing.Isolated.Listing
 ---@return string[]|nil ids Nil with an `err` when the file cannot be listed.
 ---@return string|nil err
-function M.finish_listing(opts, job)
+function M.finish_listing(_opts, job)
   if job.err then
     return nil, job.err
   end
   local child, plan, handle = job.child, job.plan, job.handle
+  ---@cast child -?
+  ---@cast plan -?
+  ---@cast handle -?
   -- the time of a listing runs from its start: one that was started ahead has used some of it while another was awaited
   local remaining = math.max(0, math.ceil((job.deadline - vim.uv.hrtime()) / 1e6))
   if not vim.wait(remaining, function()

@@ -44,9 +44,13 @@ M.MIN_RUNS = 3
 ---@type number
 M.MIN_DELTA_MS = 100
 
+---@class Testing.Timings.Opts
+---@field state_dir? string Replaces the state directory of the project (specs).
+---@field known_files? table<string, true> The files that still exist (the rest is dropped from the history).
+
 ---Path of `timings.json` of a project.
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.Timings.Opts
 ---@return string
 function M.path(root, opts)
   return require("testing.history").dir(root, opts) .. "/timings.json"
@@ -211,7 +215,7 @@ end
 ---@param root string
 ---@param history table<string, number[]> What `read` returned.
 ---@param current table<string, number>
----@param opts? { state_dir?: string, known_files?: table<string, true> }
+---@param opts? Testing.Timings.Opts
 ---@return boolean ok
 ---@return string|nil err
 function M.record(root, history, current, opts)
@@ -230,7 +234,7 @@ end
 ---@param path string
 ---@param history table<string, number[]>
 ---@param current table<string, number>
----@param opts { known_files?: table<string, true> }
+---@param opts Testing.Timings.Opts
 ---@return boolean ok
 ---@return string|nil err
 function M.record_locked(path, history, current, opts)

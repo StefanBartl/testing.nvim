@@ -171,9 +171,10 @@ local function sync(run, file, line)
       if (gone[entry.msg] or 0) > 0 then
         gone[entry.msg] = gone[entry.msg] - 1
         table.remove(run.listed, i)
-        for j = case and #case.assertions or 0, 1, -1 do
-          if case.assertions[j] == entry then
-            table.remove(case.assertions, j)
+        local assertions = case and case.assertions or {}
+        for j = #assertions, 1, -1 do
+          if assertions[j] == entry then
+            table.remove(assertions, j)
             break
           end
         end

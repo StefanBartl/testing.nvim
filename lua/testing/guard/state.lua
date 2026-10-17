@@ -156,7 +156,7 @@ end
 
 local CAPTURE = {}
 
-function CAPTURE.autocmds(self)
+function CAPTURE.autocmds(_self)
   local res = {}
   local ok, list = pcall(vim.api.nvim_get_autocmds, {})
   if not ok then
@@ -541,7 +541,7 @@ function DIFF.keymaps(self, b, a, ctx)
   return items
 end
 
-function DIFF.buffers(self, b, a)
+function DIFF.buffers(_self, b, a)
   local items = {}
   for nr, info in pairs(a) do
     if b[nr] == nil and (info.loaded or info.listed) then
@@ -554,7 +554,7 @@ function DIFF.buffers(self, b, a)
   return items
 end
 
-function DIFF.windows(self, b, a)
+function DIFF.windows(_self, b, a)
   local items = {}
   for id, floating in pairs(a) do
     if b[id] == nil then
@@ -567,7 +567,7 @@ function DIFF.windows(self, b, a)
   return items
 end
 
-function DIFF.tabs(self, b, a)
+function DIFF.tabs(_self, b, a)
   local items = {}
   for id in pairs(a) do
     if b[id] == nil then
@@ -580,7 +580,7 @@ function DIFF.tabs(self, b, a)
   return items
 end
 
-function DIFF.cwd(self, b, a)
+function DIFF.cwd(_self, b, a)
   local function fold(p)
     p = vim.fs.normalize(p)
     return IS_CI and p:lower() or p
@@ -591,7 +591,7 @@ function DIFF.cwd(self, b, a)
   return {}
 end
 
-function DIFF.rtp(self, b, a)
+function DIFF.rtp(_self, b, a)
   local items = {}
   local before, after = set_of(b), set_of(a)
   for _, p in ipairs(a) do
@@ -607,23 +607,23 @@ function DIFF.rtp(self, b, a)
   return items
 end
 
-function DIFF.options(self, b, a)
+function DIFF.options(_self, b, a)
   return diff_map(b, a, eq_deep)
 end
 
-function DIFF.vars(self, b, a)
+function DIFF.vars(_self, b, a)
   return diff_map(b, a, eq_deep)
 end
 
-function DIFF.env(self, b, a)
+function DIFF.env(_self, b, a)
   return diff_map(b, a, eq_always)
 end
 
-function DIFF.highlights(self, b, a)
+function DIFF.highlights(_self, b, a)
   return diff_map(b, a, eq_deep)
 end
 
-function DIFF.lua_globals(self, b, a)
+function DIFF.lua_globals(_self, b, a)
   local items = {}
   for k in pairs(a) do
     if not b[k] then
@@ -636,7 +636,7 @@ function DIFF.lua_globals(self, b, a)
   return items
 end
 
-function DIFF.preload(self, b, a)
+function DIFF.preload(_self, b, a)
   local items = {}
   for k in pairs(a) do
     if not b[k] then
@@ -649,7 +649,7 @@ function DIFF.preload(self, b, a)
   return items
 end
 
-function DIFF.channels(self, b, a)
+function DIFF.channels(_self, b, a)
   local items = {}
   for id, argv in pairs(a) do
     if b[id] == nil then
@@ -662,7 +662,7 @@ function DIFF.channels(self, b, a)
   return items
 end
 
-function DIFF.modules(self, b, a)
+function DIFF.modules(_self, b, a)
   local items = {}
   for k in pairs(a) do
     if not b[k] then
@@ -857,7 +857,7 @@ end
 
 local RESTORE = {}
 
-function RESTORE.windows(self, snap, items, after)
+function RESTORE.windows(_self, snap, items, _after)
   local n = 0
   local new_tabs = {}
   for _, t in ipairs(vim.api.nvim_list_tabpages()) do
@@ -876,7 +876,7 @@ function RESTORE.windows(self, snap, items, after)
   return n
 end
 
-function RESTORE.tabs(self, snap, items)
+function RESTORE.tabs(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if vim.api.nvim_tabpage_is_valid(it.key) then
@@ -889,7 +889,7 @@ function RESTORE.tabs(self, snap, items)
   return n
 end
 
-function RESTORE.buffers(self, snap, items)
+function RESTORE.buffers(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if
@@ -901,7 +901,7 @@ function RESTORE.buffers(self, snap, items)
   return n
 end
 
-function RESTORE.cwd(self, snap, items)
+function RESTORE.cwd(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if pcall(vim.api.nvim_set_current_dir, it.before) then
@@ -911,7 +911,7 @@ function RESTORE.cwd(self, snap, items)
   return n
 end
 
-function RESTORE.autocmds(self, snap, items)
+function RESTORE.autocmds(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if it.info.id and pcall(vim.api.nvim_del_autocmd, it.info.id) then
@@ -921,7 +921,7 @@ function RESTORE.autocmds(self, snap, items)
   return n
 end
 
-function RESTORE.usercmds(self, snap, items)
+function RESTORE.usercmds(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if it.op == "added" then
@@ -971,7 +971,7 @@ local function set_map(buf, mode, lhs, m)
   return (pcall(vim.api.nvim_set_keymap, mode, lhs, m.rhs or "", opts))
 end
 
-function RESTORE.keymaps(self, snap, items)
+function RESTORE.keymaps(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     local mode = it.key:match("^[^%z]+")
@@ -995,7 +995,7 @@ function RESTORE.keymaps(self, snap, items)
   return n
 end
 
-function RESTORE.options(self, snap, items)
+function RESTORE.options(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     if
@@ -1008,7 +1008,7 @@ function RESTORE.options(self, snap, items)
   return n
 end
 
-function RESTORE.vars(self, snap, items)
+function RESTORE.vars(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     local v = it.op ~= "added" and it.before or nil
@@ -1021,7 +1021,7 @@ function RESTORE.vars(self, snap, items)
   return n
 end
 
-function RESTORE.env(self, snap, items)
+function RESTORE.env(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     local v = it.op ~= "added" and it.before or nil
@@ -1034,7 +1034,7 @@ function RESTORE.env(self, snap, items)
   return n
 end
 
-function RESTORE.rtp(self, snap)
+function RESTORE.rtp(_self, snap)
   if pcall(function()
     vim.o.runtimepath = table.concat(snap.rtp, ",")
   end) then
@@ -1043,7 +1043,7 @@ function RESTORE.rtp(self, snap)
   return 0
 end
 
-function RESTORE.highlights(self, snap, items)
+function RESTORE.highlights(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     local def = it.op == "added" and {} or it.before
@@ -1054,7 +1054,7 @@ function RESTORE.highlights(self, snap, items)
   return n
 end
 
-function RESTORE.lua_globals(self, snap, items)
+function RESTORE.lua_globals(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     rawset(_G, it.key, nil)
@@ -1063,7 +1063,7 @@ function RESTORE.lua_globals(self, snap, items)
   return n
 end
 
-function RESTORE.preload(self, snap, items)
+function RESTORE.preload(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     package.preload[it.key] = nil
@@ -1072,7 +1072,7 @@ function RESTORE.preload(self, snap, items)
   return n
 end
 
-function RESTORE.modules(self, snap, items)
+function RESTORE.modules(_self, _snap, items)
   local n = 0
   for _, it in ipairs(items) do
     package.loaded[it.key] = nil

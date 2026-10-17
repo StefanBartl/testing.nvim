@@ -1048,7 +1048,7 @@ function M.execute_run(plan, sv, run_opts, err, ev)
           kind = "infra",
           exit_code = M.EXIT_INFRA,
           message = why,
-        }))
+        }) --[[@as string]])
       else
         out(("INFRA | %s | exit %d"):format(why, M.EXIT_INFRA))
       end

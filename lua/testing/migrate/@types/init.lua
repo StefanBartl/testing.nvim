@@ -26,6 +26,7 @@
 
 ---@class Testing.Migrate.Harness
 ---@field file? string `TESTS/harness.lua` when it exists.
+---@field path? string The harness the specs run on (`TESTS/harness.lua`, or the one a spec names), relative to the root.
 ---@field run_lua boolean `TESTS/run.lua` exists.
 ---@field listed string[] Spec names in the order `TESTS/run.lua` lists them.
 ---@field sentinel? string The green-run line the old runner prints.

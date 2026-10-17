@@ -186,7 +186,7 @@ function M.changed(root, opts)
     local ignored_argv = M.ignored_argv(opts)
     if ignored_argv then
       batch[#batch + 1] = ignored_argv
-      batch[#batch + 1] = M.since_argv(base)
+      batch[#batch + 1] = M.since_argv(base --[[@as string]])
     end
     local answers = M.run_parallel(batch, root)
     local by_key = {}

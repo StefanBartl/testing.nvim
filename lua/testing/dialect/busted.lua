@@ -355,7 +355,7 @@ function M.run_file(a, spec, opts)
     emit(case)
   end
 
-  local function pending(name, fn)
+  local function pending(name, _fn)
     local reason = type(name) == "string" and name or "pending"
     if in_case then
       error({ __pending = PENDING, reason = reason }, 0)

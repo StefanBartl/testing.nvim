@@ -747,7 +747,7 @@ local function scan_markers(code, text)
     "nvim_call_function%s*%(%s*[\"']getenv[\"']%s*,%s*{%s*[\"']([^\"']+)[\"']%s*}%s*%)",
   }) do
     for at, name, after in text:gmatch("()" .. pat .. "()") do
-      literal_hit(at, name, after)
+      literal_hit(at --[[@as integer]], name, after --[[@as integer]])
     end
   end
   -- `os.getenv"HOME"` (call without parentheses) and `pcall(os.getenv, "HOME")` (the function handed on with its
@@ -759,7 +759,7 @@ local function scan_markers(code, text)
     "pcall%s*%(%s*[%w_%.]*getenv%s*,%s*[\"']([^\"']+)[\"']%s*[%),]",
   }) do
     for at, name, after in text:gmatch("()" .. pat .. "()") do
-      literal_hit(at, name, after, true)
+      literal_hit(at --[[@as integer]], name, after --[[@as integer]], true)
     end
   end
   -- a function reference to the environment reader that is not called right away (`pcall(os.getenv, n)`,
@@ -784,7 +784,9 @@ local function scan_markers(code, text)
     "%[%s*[\"'][%w_]*getenv[\"']%s*%]",
   }) do
     for at in text:gmatch("()" .. pat) do
-      if not string_at(strs, at) then
+      if
+        not string_at(strs, at --[[@as integer]])
+      then
         named_reads = named_reads + 1
       end
     end
@@ -1084,8 +1086,8 @@ function M.valid_info(raw)
     return nil
   end
   local wrapper = d.wrapper == nil and {} or d.wrapper
-  local wrapped = raw.wrapped == nil and {} or raw.wrapped
-  wrapped = require("testing.affected.wrapped").valid(wrapped)
+  local wrapped_in = raw.wrapped == nil and {} or raw.wrapped
+  local wrapped = require("testing.affected.wrapped").valid(wrapped_in)
   if not (string_list(wrapper, 8) and wrapped) then
     return nil
   end

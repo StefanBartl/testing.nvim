@@ -249,9 +249,11 @@ local function rescue(block)
     local text = table.concat(st, "\n")
     local low = text:lower()
     local comment = #st == 1 and is_comment(st[1])
-    local gone = low:find("plenary", 1, true)
+    local gone = (
+      low:find("plenary", 1, true)
       or low:find("add_dep", 1, true)
       or low:find("prepend_env", 1, true)
+    ) ~= nil
     if not gone and not comment then
       for name in pairs(gone_names) do
         if uses(text, name) then

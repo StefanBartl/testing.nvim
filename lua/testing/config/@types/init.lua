@@ -42,6 +42,7 @@
 
 ---@class Testing.ProjectConfig.Cache
 ---@field enabled boolean `true`: reuse results of unchanged spec files without `--cached` (ignored in CI).
+---@field project_key? string Name of the cache folder instead of one derived from the checkout path (a cache restored on a runner with another path is found).
 
 ---@class Testing.ProjectConfig.Coverage
 ---@field bindings number 0..1 gate threshold, 0 = report only.

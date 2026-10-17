@@ -45,7 +45,7 @@ M.REPORTERS = { "term", "github", "junit", "json", "agent" }
 M.AGENT_BUDGET_MIN = 200
 
 ---@class Testing.Args
----@field command "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"
+---@field command "run"|"init"|"list"|"doctor"|"budget"|"conformance"|"surface"|"explain"|"verify"
 ---@field help boolean `-h`/`--help`
 ---@field root? string Project root (`--root` or the first positional).
 ---@field paths string[] Positionals after the root.
