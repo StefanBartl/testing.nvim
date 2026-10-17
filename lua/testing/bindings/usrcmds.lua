@@ -13,6 +13,7 @@
 ---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
 ---   :Testing cache stats | clear [<root>]   the result cache of the project
+---   :Testing terminal            repeat the last run as the job of a terminal.nvim terminal (soft dependency, see docs/BINDINGS.md)
 ---   :Testing health | config | doctor [<root>]
 ---
 --- Runs go to a headless child nvim (`testing.bindings.child`), never into this editor. Completion

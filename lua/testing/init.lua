@@ -2,7 +2,8 @@
 ---@brief Public facade of testing.nvim.
 ---@description
 --- `setup(opts)` merges the options (see `testing.config`), registers `:Testing` and the keymap
---- actions. The test runner itself is not implemented yet; this is the skeleton it will grow in.
+--- actions. The runner itself lives in `testing.run.*` and is driven by the CLI (`testing.cli`) and by
+--- `:Testing`; this facade offers `run`, `scaffold` and the config accessors.
 
 local M = {}
 

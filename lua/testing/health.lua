@@ -22,10 +22,16 @@ local M = {}
 ---Modules of lib.nvim the plugin calls, with the reason (shown on a failure).
 ---@type { [1]: string, [2]: string }[]
 local REQUIRED_LIB = {
-  { "lib.nvim.health", "health helpers" },
   { "lib.nvim.notify", "messages" },
+  { "lib.nvim.output", "report output" },
+  { "lib.nvim.async", "the parallel children and the watch loop" },
+  { "lib.nvim.ui.list", "lists of the :Testing viewers" },
+  { "lib.nvim.bindings.usercmd", "registering :Testing" },
   { "lib.nvim.bindings.usercmd.composer", "the :Testing command" },
+  { "lib.nvim.bindings.usercmd.composer.parse", "the :Testing arguments" },
+  { "lib.nvim.bindings.usercmd.composer.argtypes", "completion of the :Testing arguments" },
   { "lib.nvim.bindings.keymap", "named keymap actions" },
+  { "lib.nvim.bindings.autocmd", "named autocommand groups" },
   { "lib.nvim.json", "deterministic JSON for the Result-IR" },
   { "lib.lua.error", "safe_call around spec bodies" },
   { "lib.lua.diff", "line diff of the terminal reporter" },
@@ -34,8 +40,13 @@ local REQUIRED_LIB = {
   { "lib.nvim.fs.relpath", "project-relative spec paths" },
   { "lib.nvim.fs.is_subpath", "containment check of the config file" },
   { "lib.nvim.fs.collect_recursive", "spec discovery" },
+  { "lib.nvim.fs.find_upward_dir", "finding the project root" },
+  { "lib.nvim.fs.mkdirp", "creating the state directories" },
+  { "lib.nvim.fs.normkey", "comparing paths" },
+  { "lib.nvim.fs.watch", "the watch loop" },
   { "lib.nvim.fs.project_key", "stable project key of a run" },
   { "lib.nvim.fs.write.atomic", "atomic write of the JSON IR and the reports" },
+  { "lib.nvim.fs.write.append", "appending to the history files" },
   { "lib.nvim.system.job", "process execution (runner)" },
 }
 

@@ -1033,7 +1033,12 @@ local function outside_files(root, literals)
       candidates[#candidates + 1] = lit
     end
     if lit:find("^~") then
-      candidates[#candidates + 1] = vim.fn.expand(lit)
+      -- only `~` and `~/...` name the home; the text comes from a project file, so it never goes through
+      -- `expand()` (a backtick in it starts a shell) and `~user` is no place this can resolve
+      local home = vim.uv.os_homedir()
+      if home and (lit:find("^~[/\\]") or lit == "~") then
+        candidates[#candidates + 1] = home .. lit:sub(2)
+      end
     else
       candidates[#candidates + 1] = root .. "/" .. stripped
       candidates[#candidates + 1] = item.dir .. "/" .. stripped

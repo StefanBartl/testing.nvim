@@ -5,7 +5,7 @@
 -- Each scenario builds a project in a temporary directory, takes the key of one spec, changes the hidden
 -- input, and takes the key again. The key must be nil (the spec cannot be cached) or different.
 
----@diagnostic disable: need-check-nil, missing-fields
+---@diagnostic disable: need-check-nil, missing-fields, duplicate-set-field
 
 -- @cache-env MODENV UNLISTED
 -- (the variables of the fixtures this spec writes: their outer values join the key)
@@ -246,6 +246,22 @@ return function(H)
       after == nil or after ~= before,
       "when the place appears, the key changes or vanishes (" .. tostring(why_after) .. ")"
     )
+    -- the text of a project file never goes through `expand()` (a backtick in it would start a shell)
+    S.write(
+      root .. "/TESTS/tick_spec.lua",
+      'return function(H) local f = io.open("~/`echo hi`/x.txt", "rb") H.ok(f, "o") end\n'
+    )
+    local real_expand, expanded = vim.fn.expand, {}
+    vim.fn.expand = function(...)
+      expanded[#expanded + 1] = tostring((...))
+      return real_expand(...)
+    end
+    local tick_ok = pcall(key_of, root, "TESTS/tick_spec.lua")
+    vim.fn.expand = real_expand
+    ok(tick_ok, "a literal with a backtick can be analysed")
+    for _, arg in ipairs(expanded) do
+      ok(not arg:find("`", 1, true), "expand() was handed project text with a backtick: " .. arg)
+    end
     S.remove(parent)
   end
 

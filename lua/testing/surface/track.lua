@@ -998,6 +998,7 @@ function M.hook_runner(opts)
   end
   -- before the install, so the layer does not wrap its own exit hook
   vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("TestingSurfaceTrack", { clear = true }),
     callback = function()
       if holder.h and holder.h.installed then
         holder.h:flush(file_of_script())
