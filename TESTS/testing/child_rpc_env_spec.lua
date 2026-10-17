@@ -132,9 +132,12 @@ return function(H)
     local home = homed.lua_get("vim.uv.os_homedir()")
     ok(inside(home, homed.sandbox), "isolate_home: os_homedir() is inside the sandbox: " .. home)
     eq(homed.lua_get("vim.fn.isdirectory(vim.uv.os_homedir())"), 1, "and exists")
+    -- the editor resolves the links of $HOME once at startup (macOS: /var is /private/var), so both sides are
+    -- compared resolved
+    local tilde = homed.lua_get("vim.fn.expand('~')")
     ok(
-      inside(homed.lua_get("vim.fn.expand('~')"), homed.sandbox),
-      "isolate_home: `~` expands into the sandbox"
+      inside(vim.uv.fs_realpath(tilde) or tilde, vim.uv.fs_realpath(homed.sandbox) or homed.sandbox),
+      "isolate_home: `~` expands into the sandbox: " .. tostring(tilde)
     )
 
     -- an unset parent gets the same variables
