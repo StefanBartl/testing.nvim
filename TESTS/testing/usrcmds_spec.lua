@@ -517,6 +517,42 @@ return function(H)
       "the file is the template again"
     )
   end)
+  -- :Testing init at the editor asks once whether the kept setup files are replaced (Keep first); hooks are never offered
+  do
+    local real_ask, real_uis = usrcmds.ask, vim.api.nvim_list_uis
+    local questions, reply = {}, 1
+    usrcmds.ask = function(question, choices, cb)
+      questions[#questions + 1] = { question = question, choices = choices }
+      cb(reply)
+    end
+    vim.api.nvim_list_uis = function()
+      return { {} }
+    end
+    with_notify(function()
+      vim.fn.writefile({ "-- mine" }, target .. "/.testing.lua")
+      vim.cmd("Testing init " .. vim.fn.fnameescape(target))
+      eq(#questions, 1, "kept setup files are asked about once")
+      has(questions[1].question, ".testing.lua", "the question lists the kept files")
+      eq(questions[1].choices[1], "Keep", "Keep is the first and the default answer")
+      eq(vim.fn.readfile(target .. "/.testing.lua"), { "-- mine" }, "Keep leaves the file as it is")
+
+      questions, reply, messages = {}, 2, {}
+      vim.cmd("Testing init " .. vim.fn.fnameescape(target))
+      eq(#questions, 1)
+      has(all_messages(), "replaced", "Replace replaces the kept files")
+      lacks(
+        vim.fn.readfile(target .. "/.testing.lua")[1],
+        "-- mine",
+        "the file is the template again"
+      )
+
+      questions, messages = {}, {}
+      vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --force")
+      eq(#questions, 0, "--force does not ask")
+    end)
+    usrcmds.ask, vim.api.nvim_list_uis = real_ask, real_uis
+  end
+
   -- :Testing init --hooks: a hook file that exists is kept and `--force` is NOT offered for it (it does not apply)
   with_notify(function()
     vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --hooks")
@@ -545,6 +581,20 @@ return function(H)
       "echo mine",
       "and the hook of the user is untouched"
     )
+    -- at the editor too, a kept hook is not offered for replacing
+    local real_ask, real_uis = usrcmds.ask, vim.api.nvim_list_uis
+    local asked_about_hooks = 0
+    usrcmds.ask = function(_, _, cb)
+      asked_about_hooks = asked_about_hooks + 1
+      cb(2)
+    end
+    vim.api.nvim_list_uis = function()
+      return { {} }
+    end
+    vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. " --hooks")
+    usrcmds.ask, vim.api.nvim_list_uis = real_ask, real_uis
+    eq(asked_about_hooks, 0, "--hooks never asks about replacing")
+    eq(vim.fn.readfile(target .. "/scripts/hooks/pre-push")[2], "echo mine", "and replaces nothing")
   end)
   with_notify(function()
     vim.cmd("Testing init " .. vim.fn.fnameescape(target) .. ' --plugin=a"b')

@@ -356,6 +356,71 @@ function M.migrate(ctx)
   return plan, applied
 end
 
+---Say what `:Testing init` did: what was created, replaced and kept, and the errors.
+---@param root string
+---@param result { created: string[], replaced: string[], skipped: string[], errors: string[] }
+---@param flags { hooks?: boolean, force?: boolean }
+function M.report_init(root, result, flags)
+  local lines = {}
+  if #result.created > 0 then
+    lines[#lines + 1] = "created: " .. table.concat(result.created, ", ")
+  end
+  if #result.replaced > 0 then
+    lines[#lines + 1] = "replaced (--force): " .. table.concat(result.replaced, ", ")
+  end
+  if #result.skipped > 0 then
+    -- `--force` never reaches a hook file (a hook of yours is not ours to replace): do not promise it
+    lines[#lines + 1] = (
+      flags.hooks and "kept (exists; --force does not apply to hooks): "
+      or "kept (exists; --force replaces): "
+    ) .. table.concat(result.skipped, ", ")
+  end
+  for _, e in ipairs(result.errors) do
+    lines[#lines + 1] = "error: " .. e
+  end
+  if flags.hooks and #result.created > 0 and #result.errors == 0 then
+    vim.list_extend(lines, require("testing.scaffold").hook_next_steps())
+  end
+  if #lines == 0 then
+    lines[1] = "nothing to do"
+  end
+  local text = ("testing init %s\n%s"):format(root, table.concat(lines, "\n"))
+  if #result.errors > 0 then
+    require("testing.notify").get().error(text)
+  else
+    require("testing.notify").get().info(text)
+  end
+end
+
+---A question with a few answers (the first is the harmless one): `ui.kit.confirm`, `vim.ui.select` as the fallback. `cb`
+---gets the index of the answer (1 when dismissed). A seam: specs replace it.
+---@param question string
+---@param choices string[]
+---@param cb fun(index: integer)
+function M.ask(question, choices, cb)
+  local ok, kit = pcall(require, "ui.kit")
+  if ok and type(kit) == "table" and type(kit.confirm) == "function" then
+    local shown = pcall(kit.confirm, {
+      question = question,
+      choices = choices,
+      on_answer = function(choice)
+        for index, label in ipairs(choices) do
+          if label == choice then
+            return cb(index)
+          end
+        end
+        cb(1)
+      end,
+    })
+    if shown then
+      return
+    end
+  end
+  vim.ui.select(choices, { prompt = question }, function(_, index)
+    cb(index or 1)
+  end)
+end
+
 ---The route tree of `:Testing`.
 ---@return table[]
 function M.routes()
@@ -438,34 +503,28 @@ function M.routes()
           root,
           { force = ctx.flags.force, plugin = ctx.flags.plugin, hooks = ctx.flags.hooks }
         )
-        local lines = {}
-        if #result.created > 0 then
-          lines[#lines + 1] = "created: " .. table.concat(result.created, ", ")
-        end
-        if #result.replaced > 0 then
-          lines[#lines + 1] = "replaced (--force): " .. table.concat(result.replaced, ", ")
-        end
-        if #result.skipped > 0 then
-          -- `--force` never reaches a hook file (a hook of yours is not ours to replace): do not promise it
-          lines[#lines + 1] = (
-            ctx.flags.hooks and "kept (exists; --force does not apply to hooks): "
-            or "kept (exists; --force replaces): "
-          ) .. table.concat(result.skipped, ", ")
-        end
-        for _, e in ipairs(result.errors) do
-          lines[#lines + 1] = "error: " .. e
-        end
-        if ctx.flags.hooks and #result.created > 0 and #result.errors == 0 then
-          vim.list_extend(lines, require("testing.scaffold").hook_next_steps())
-        end
-        if #lines == 0 then
-          lines[1] = "nothing to do"
-        end
-        local text = ("testing init %s\n%s"):format(root, table.concat(lines, "\n"))
-        if #result.errors > 0 then
-          notify().error(text)
-        else
-          notify().info(text)
+        M.report_init(root, result, ctx.flags)
+        -- Kept setup files: asked once whether to replace them (Keep first), instead of leaving the person to type the
+        -- whole command again with `--force`. Hooks are never offered (`--force` does not apply to them), and a run
+        -- with `--force` already said what it wanted.
+        if
+          #result.skipped > 0
+          and not ctx.flags.force
+          and not ctx.flags.hooks
+          and #vim.api.nvim_list_uis() > 0
+        then
+          local question = "Replace these existing files with the generated ones?\n\n"
+            .. table.concat(result.skipped, "\n")
+          M.ask(question, { "Keep", "Replace" }, function(index)
+            if index ~= 2 then
+              return
+            end
+            local again = require("testing.scaffold").init(
+              root,
+              { force = true, plugin = ctx.flags.plugin, hooks = false }
+            )
+            M.report_init(root, again, { force = true })
+          end)
         end
       end,
     },
