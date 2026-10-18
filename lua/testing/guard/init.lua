@@ -93,8 +93,8 @@ local GUARD_MODULES = {
   clock = "testing.guard.clock",
 }
 
-local IS_WIN = vim.fn.has("win32") == 1
-local IS_MAC = vim.fn.has("mac") == 1
+local IS_WIN = require("testing.platform").is_windows()
+local IS_MAC = require("testing.platform").is_macos()
 
 ---@class Testing.Guard.Finding
 ---@field id string Stable id, e.g. `state.autocmd`.

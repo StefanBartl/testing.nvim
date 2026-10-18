@@ -51,7 +51,7 @@ local env_mod = require("testing.child.env")
 
 local M = {}
 
-local is_windows = vim.fn.has("win32") == 1
+local is_windows = require("testing.platform").is_windows()
 
 ---The platform switch of the kill path (a spec flips it to drive the Windows branch from anywhere).
 M.platform = { windows = is_windows }

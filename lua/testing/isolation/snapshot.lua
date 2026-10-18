@@ -32,7 +32,7 @@
 
 local M = {}
 
-local is_windows = vim.fn.has("win32") == 1
+local is_windows = require("testing.platform").is_windows()
 
 ---Name prefixes that are never unloaded: the editor's own modules, the Lua runtime, this tool and its
 ---library. Everything else that was loaded DURING a file is the file's.

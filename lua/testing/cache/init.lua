@@ -330,7 +330,7 @@ local function env_ci(ctx)
   if ctx.env_case_insensitive ~= nil then
     return ctx.env_case_insensitive == true
   end
-  return vim.fn.has("win32") == 1
+  return require("testing.platform").is_windows()
 end
 
 ---Environment part of the key: `NAME=sha256(value)` for every listed name (a `PREFIX*` entry expands

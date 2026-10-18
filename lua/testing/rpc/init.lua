@@ -555,7 +555,7 @@ local function start(S, async_cb)
   end
   f:write(text)
   f:close()
-  local is_windows = vim.fn.has("win32") == 1
+  local is_windows = require("testing.platform").is_windows()
   local function native(s)
     return is_windows and (s:gsub("/", "\\")) or s
   end

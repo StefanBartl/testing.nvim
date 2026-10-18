@@ -36,8 +36,8 @@ local normkey = require("lib.nvim.fs.normkey")
 local M = {}
 
 local uv = vim.uv or vim.loop
-local IS_WIN = vim.fn.has("win32") == 1
-local IS_CI = IS_WIN or vim.fn.has("mac") == 1
+local IS_WIN = require("testing.platform").is_windows()
+local IS_CI = require("testing.platform").is_case_insensitive()
 
 ---@param p string
 ---@return string

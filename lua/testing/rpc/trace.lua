@@ -216,7 +216,7 @@ local function redact_in_place(value, root)
   ---@diagnostic disable-next-line: missing-fields
   local text, err = result.encode({ cases = { { notes = list } } }, {
     roots = roots,
-    case_insensitive = vim.fn.has("win32") == 1,
+    case_insensitive = require("testing.platform").is_windows(),
     redact = redaction(),
   })
   if not text then
@@ -298,7 +298,7 @@ function M.artifact_path(path, run_dir)
   local p = vim.fs.normalize(path)
   if run_dir and run_dir ~= "" then
     local base = vim.fs.normalize(run_dir):gsub("/+$", "")
-    local ci = vim.fn.has("win32") == 1
+    local ci = require("testing.platform").is_windows()
     local a, b = ci and p:lower() or p, ci and base:lower() or base
     if a:sub(1, #b + 1) == b .. "/" then
       return "<RUN>/" .. p:sub(#b + 2)

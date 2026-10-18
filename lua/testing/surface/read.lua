@@ -32,7 +32,7 @@ local ids = require("testing.surface.ids")
 
 local M = {}
 
-local IS_CASE_INSENSITIVE = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
+local IS_CASE_INSENSITIVE = require("testing.platform").is_case_insensitive()
 
 ---@class Testing.Surface.Entry
 ---@field id string

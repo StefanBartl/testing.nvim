@@ -42,7 +42,7 @@ local ledger = require("testing.core.ledger")
 local M = {}
 
 local uv = vim.uv or vim.loop
-local IS_CI = vim.fn.has("win32") == 1 or vim.fn.has("mac") == 1
+local IS_CI = require("testing.platform").is_case_insensitive()
 
 local KEYMAP_MODES = { "n", "i", "x", "s", "o", "c", "t", "l" }
 
