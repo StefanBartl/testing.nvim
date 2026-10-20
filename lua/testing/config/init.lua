@@ -9,8 +9,13 @@ local DEFAULTS = require("testing.config.DEFAULTS")
 
 local M = {}
 
----@type Testing.Config
-local cfg = vim.deepcopy(DEFAULTS)
+--- `DEFAULTS` carries the project defaults (`project`) as well, which `setup()` does not take: the keys a
+--- user may set are `CHECKS` below, so the problems are found there and only the valid part reaches the
+--- config object, which keeps the merge, `get()` and `reset()` the same as in every other plugin.
+local cfg = require("lib.lua.config").new(DEFAULTS, {
+  name = "testing",
+  schema = { keymaps = "table|false" },
+})
 
 ---Per-key type check; the single source of truth for which keys exist.
 ---@type table<string, fun(v: any): boolean>
@@ -61,20 +66,20 @@ end
 ---@return string[] problems Options that were dropped, empty when everything was accepted.
 function M.setup(opts)
   local valid, problems = M.validate(opts)
-  cfg = vim.tbl_deep_extend("force", vim.deepcopy(DEFAULTS), valid)
+  cfg.setup(valid)
   return problems
 end
 
 ---The effective configuration.
 ---@return Testing.Config
 function M.get()
-  return cfg
+  return cfg.get()
 end
 
 ---Back to the plugin defaults.
 ---@return nil
 function M.reset()
-  cfg = vim.deepcopy(DEFAULTS)
+  cfg.reset()
 end
 
 return M
