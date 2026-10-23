@@ -273,9 +273,13 @@ return function(H)
 end
 ]]):format(flag)
     )
-    local function go()
+    local function go(extra)
       local out, err = {}, {}
-      local code = cli.main({ proj }, {
+      local argv = { proj }
+      for _, a in ipairs(extra or {}) do
+        argv[#argv + 1] = a
+      end
+      local code = cli.main(argv, {
         out = function(s)
           out[#out + 1] = s
         end,
@@ -304,6 +308,14 @@ end
       "the warning names the file: " .. err
     )
     ok(out:find("TESTING_OK", 1, true) ~= nil, "and the sentinel stays")
+    -- the agent report carries the same warning as a line of stdout
+    local acode, aout = go({ "--reporter", "agent" })
+    eq(acode, 0, "the agent run is green as well")
+    ok(
+      aout:find("1 file(s) slower than usual", 1, true) ~= nil
+        and aout:find("TESTS/drift_spec.lua", 1, true) ~= nil,
+      "the agent report names the slow file: " .. aout
+    )
     os.remove(flag)
     local code2, _, err2 = go()
     eq(code2, 0, "back to normal")

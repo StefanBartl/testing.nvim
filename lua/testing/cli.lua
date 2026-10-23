@@ -373,10 +373,27 @@ run_measured = function(plan, sv)
   local discovery_ms
   local run_started
   local built
+  ---What the timing history said about this run; read once, before the reporters, so the agent report can
+  ---carry the regressions and the code after the run records the same history it compared with.
+  ---@type { history: table<string, number[]>, current: table<string, number>, note?: string, regressions: Testing.Timings.Regression[] }|nil
+  local timing
 
   local observed = observing(sv, {
     on_report = function(report)
       last = report
+      if complete_enough(args, report) then
+        local timings = require("testing.run.timings")
+        local history, tnote = timings.read(timings.path(plan.root, { state_dir = sv.state_dir }))
+        local current = timings.per_file(report.result)
+        timing = {
+          history = history,
+          current = current,
+          note = tnote,
+          regressions = timings.regressions(history, current),
+        }
+        -- an additive field of the run, like `profile`: the agent reporter prints it
+        report.result.run.time_regressions = timing.regressions
+      end
       if profile_mod then
         local run_ms = (vim.uv.hrtime() / 1e6) - (run_started or (vim.uv.hrtime() / 1e6))
         built = profile_mod.build(report.result, {
@@ -425,18 +442,19 @@ run_measured = function(plan, sv)
     -- a file that took three times its median is a warning (the machine may be busy), never a failure
     local timings = require("testing.run.timings")
     local topts = { state_dir = sv.state_dir }
-    local history, tnote = timings.read(timings.path(plan.root, topts))
-    if tnote then
-      sv.err("testing: note: " .. tnote)
-    end
-    local current = timings.per_file(last.result)
-    last.time_regressions = timings.regressions(history, current)
-    for _, r in ipairs(last.time_regressions) do
-      sv.err(project.safe_line("testing: warning: slower than usual: " .. timings.line(r)))
-    end
-    local tok, wrote, werr = pcall(timings.record, plan.root, history, current, topts)
-    if not tok or wrote == false then
-      sv.err("testing: note: timings not updated: " .. tostring(tok and werr or wrote))
+    if timing then
+      if timing.note then
+        sv.err("testing: note: " .. timing.note)
+      end
+      last.time_regressions = timing.regressions
+      for _, r in ipairs(timing.regressions) do
+        sv.err(project.safe_line("testing: warning: slower than usual: " .. timings.line(r)))
+      end
+      local tok, wrote, werr =
+        pcall(timings.record, plan.root, timing.history, timing.current, topts)
+      if not tok or wrote == false then
+        sv.err("testing: note: timings not updated: " .. tostring(tok and werr or wrote))
+      end
     end
   end
   return code

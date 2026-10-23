@@ -223,7 +223,9 @@ more: 12 failure group(s) (30 case(s)) not shown (budget 4000 chars); all of the
   the project root. What a green run still has to say is on stdout as well, one line each: `flaky: n case(s) failed and
   then passed on a retry: ...` (`--retry-failed`), `warning: n case(s) passed without asserting anything
   (assertions = "warn"): ...` and `warning: n file(s) registered no case on this platform ...` (at most five names
-  each; in `--format jsonl` an object of the kind `flaky`, `unasserted` or `no_case` after the verdict).
+  each; in `--format jsonl` an object of the kind `flaky`, `unasserted` or `no_case` after the verdict), and
+  `warning: n file(s) slower than usual (over 3x their median): ...` for a file that took more than three times its
+  median (kind `slower`; a warning, never a failure).
 * **A report file that cannot be written** (`--json`, `--junit`): the first line is printed only after the files are
   written. When one cannot be, the exit code is `3` and the line says so (`INFRA | cannot write ... | exit 3`, in
   jsonl an object of the kind `infra`), never a verdict with another exit code. The line is ONE line whatever the

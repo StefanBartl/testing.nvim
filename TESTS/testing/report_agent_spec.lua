@@ -824,6 +824,32 @@ return function(H)
     has(head.last_green.sha, "\\x1B", "jsonl header: so is the sha")
   end
 
+  -- a file that took three times its median is a line of the agent report (a warning, never a failure) ----------------------------------
+  do
+    local sr = new_run()
+    F.add(sr, { file = "TESTS/slow_spec.lua", name = "ok", line = 2 })
+    sr.run.time_regressions = {
+      { file = "TESTS/slow_spec.lua", ms = 4200, median = 1000, runs = 4 },
+      { file = "TESTS/ev\27]0;il_spec.lua", ms = 9000, median = 1000, runs = 3 },
+      { file = 7, ms = "x", median = 1 }, -- a broken entry is skipped, never raised
+    }
+    local text = joined(agent.render(sr, { command = CMD }))
+    has(text, "warning: 2 file(s) slower than usual (over 3x their median): ", "slower: text")
+    has(text, "TESTS/slow_spec.lua (4.2 s, median 1.0 s)", "slower: the file with both durations")
+    ok(not text:find("\27", 1, true), "slower: a hostile file name carries no escape character")
+    local kinds = {}
+    for _, l in ipairs(agent.render(sr, { command = CMD, format = "jsonl" })) do
+      kinds[#kinds + 1] = vim.json.decode(l).kind
+    end
+    eq(kinds, { "verdict", "slower" }, "slower: one jsonl object")
+    local quiet = new_run()
+    F.add(quiet, { file = "TESTS/q_spec.lua", name = "ok", line = 2 })
+    ok(
+      not joined(agent.render(quiet, { command = CMD })):find("slower", 1, true),
+      "slower: nothing without regressions"
+    )
+  end
+
   -- the choice of the reporter -----------------------------------------------------------------------------------------------------------------
   local function choose(explicit, env)
     local name, err, how = agent.choose(explicit, env)

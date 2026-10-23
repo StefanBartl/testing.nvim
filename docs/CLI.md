@@ -414,7 +414,9 @@ without child editors, there is nothing to order and a note says so.
 history: the last 9 runs per file, bounded, read as untrusted input, written atomically. A file that takes more than
 three times the median of at least three earlier runs, and at least 100 ms more than that median, is a warning on
 stderr (`testing: warning: slower than usual: TESTS/x_spec.lua took 4.2 s, 3.2x its median of 1.3 s over 9 run(s)`):
-never a failure, the machine may be busy.
+never a failure, the machine may be busy. The same files are in the result as `run.time_regressions` and in the agent
+report as one line (`warning: n file(s) slower than usual (over 3x their median): ...`, see
+[OUTPUT-FORMATS](OUTPUT-FORMATS.md)).
 
 ### Watch
 

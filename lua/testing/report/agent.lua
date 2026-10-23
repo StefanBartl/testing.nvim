@@ -626,6 +626,35 @@ local function notices(result, o)
       items = names,
     }
   end
+  -- files that took more than three times their median (`testing.run.timings`): a warning, never a failure
+  local slow = {}
+  for _, r in ipairs(result.run and result.run.time_regressions or {}) do
+    if
+      type(r) == "table"
+      and type(r.file) == "string"
+      and type(r.ms) == "number"
+      and type(r.median) == "number"
+    then
+      slow[#slow + 1] = ("%s (%.1f s, median %.1f s)"):format(
+        relpath(root, r.file),
+        r.ms / 1000,
+        r.median / 1000
+      )
+    end
+  end
+  if #slow > 0 then
+    local text, names = list(slow, 5)
+    out[#out + 1] = {
+      kind = "slower",
+      count = #slow,
+      text = ("warning: %d file(s) slower than usual (over %dx their median): %s"):format(
+        #slow,
+        require("testing.run.timings").FACTOR,
+        text
+      ),
+      items = names,
+    }
+  end
   local ids = util.unasserted_ids(result)
   if #ids > 0 then
     local text, names = list(ids, 5)
