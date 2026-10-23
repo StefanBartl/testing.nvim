@@ -85,6 +85,8 @@ return function(H)
     eq(result.new_case({ file = spec_a, name = "x" }).describe, nil, "IR: absent without describe")
     local res = ir({ { spec_a, "works", "pass", describe = { "outer" } } })
     res.cases[1].assertions = { { ok = true, kind = "ok" } }
+    -- the validator refuses a real home path in the root (the temp directory of a Windows runner is one)
+    res.run.root = "<REPO>"
     ok(result.validate(res), "IR: a result with the new fields validates")
     res.cases[1].describe = "not a list"
     local valid, problems = result.validate(res)
