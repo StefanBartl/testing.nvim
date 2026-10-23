@@ -769,6 +769,13 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     return M.EXIT_OK
   end
 
+  -- What each selected file looked like BEFORE it ran: the stored result belongs to that version of the file. A stat
+  -- taken afterwards would call a result current that ran against the text from before a save made during the run.
+  local stat_before = {}
+  for _, f in ipairs(files) do
+    stat_before[f.rel] = require("testing.state").stat(root, f.rel)
+  end
+
   -- 5. run: in this editor, or (per file, see `testing.run.options`) in a child editor of its own
   local release = M.guard_exit()
   if ev then
@@ -1248,12 +1255,14 @@ function M.execute_run(plan, sv, run_opts, err, ev)
   end
   -- the last result per case, for what shows it (explorer, hover, ...): merged over partial runs, never the verdict
   local sok, serr = pcall(function()
-    local rok, rerr = require("testing.state").record(
-      root,
-      res,
-      { ran_files = ran_files, known_files = known, partial = not full },
-      { state_dir = sv.state_dir }
-    )
+    local rok, rerr = require("testing.state").record(root, res, {
+      ran_files = ran_files,
+      known_files = known,
+      partial = not full,
+      stat = function(_, file)
+        return stat_before[file]
+      end,
+    }, { state_dir = sv.state_dir })
     if not rok then
       err("testing: note: result not stored: " .. tostring(rerr))
     end
