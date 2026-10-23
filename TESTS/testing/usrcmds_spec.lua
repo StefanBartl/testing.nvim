@@ -61,6 +61,7 @@ return function(H)
     "doctor",
     "file",
     "health",
+    "hover",
     "init",
     "last",
     "list",

@@ -13,6 +13,7 @@
 ---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
 ---   :Testing cache stats | clear [<root>]   the result cache of the project
+---   :Testing hover               the last result of the test under the cursor (hover.nvim shows the same on `:Hover show`)
 ---   :Testing terminal            repeat the last run as the job of a terminal.nvim terminal (soft dependency, see docs/BINDINGS.md)
 ---   :Testing health | config | doctor [<root>]
 ---
@@ -460,6 +461,13 @@ function M.routes()
           return
         end
         start(last.sub, last.opts)
+      end,
+    },
+    {
+      path = { "hover" },
+      desc = "Show the last result of the test under the cursor (or of the spec file) in a float",
+      run = function()
+        require("testing.hover").show()
       end,
     },
     {

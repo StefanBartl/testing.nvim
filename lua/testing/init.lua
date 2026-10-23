@@ -18,6 +18,10 @@ function M.setup(opts)
   end
   require("testing.bindings.usrcmds").register()
   require("testing.bindings.keymaps").register(config.get())
+  -- Soft in both directions: no hover.nvim is a machine without the optional half.
+  pcall(function()
+    require("testing.hover").setup()
+  end)
   return M
 end
 

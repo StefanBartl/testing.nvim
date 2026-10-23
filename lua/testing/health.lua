@@ -551,6 +551,22 @@ function M.check()
   check_isolation(health, project)
   check_extensions(health)
 
+  health.start("testing.nvim: hover")
+  local okh, hover = pcall(require, "testing.hover")
+  if not okh then
+    health.error("testing.hover does not load: " .. tostring(hover), {
+      "This is a defect of testing.nvim",
+    })
+  elseif hover.registered() then
+    health.ok("hover.nvim shows the last result of a test (`:Hover show` over a test file)")
+  elseif pcall(require, "hover.registry") then
+    health.info(
+      "hover.nvim is installed but testing.nvim is not registered: call require('testing').setup()"
+    )
+  else
+    health.info("hover.nvim is not installed; `:Testing hover` shows the same text in a float")
+  end
+
   health.start("testing.nvim: configuration")
   local config = require("testing.config")
   local cfg = config.get()

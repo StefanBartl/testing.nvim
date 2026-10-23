@@ -100,6 +100,8 @@ keymaps ~
         partial run, never the "all green" last line).
 :Testing file [{spec}]    Run the spec of the current buffer.
 :Testing last             Repeat the last run.
+:Testing hover            Last result of the test under the cursor (float); also hover.nvim
+                         `:Hover show` over a test file.
 :Testing terminal         Repeat the last run in a terminal.nvim terminal.
 :Testing list [{root}]    List what would run.
 :Testing init [{root}] [--force] [--plugin={name}]
