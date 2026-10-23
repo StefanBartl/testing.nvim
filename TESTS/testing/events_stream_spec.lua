@@ -467,6 +467,16 @@ return function(H)
     eq(#gotbad, 0, "reader: a plan with a non-string file is refused")
   end
 
+  do -- a long word is cut on a character boundary
+    local rd, got = new_reader()
+    local euro = ("\226\130\172"):rep(400) -- 1200 bytes; 500 is not a multiple of 3
+    rd:feed(json.encode({ v = 1, event = "file_start", file = euro }) .. "\n")
+    eq(#got, 1, "reader: the long file name is accepted")
+    ok(#got[1].file <= events.MAX_STRING, "reader: and cut to the limit")
+    eq(#got[1].file % 3, 0, "reader: on a character boundary, not through a euro sign")
+    ok(vim.fn.strchars(got[1].file) == #got[1].file / 3, "reader: valid UTF-8")
+  end
+
   do -- a consumer that raises does not break the stream
     local count = 0
     local rd = reader_mod.new({

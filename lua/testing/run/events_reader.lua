@@ -60,7 +60,8 @@ local function word(s)
     return nil
   end
   if #s > events.MAX_STRING then
-    s = s:sub(1, events.MAX_STRING)
+    -- on a character boundary: a cut through a multi-byte character would hand the consumer invalid UTF-8
+    s = require("testing.report.util").cap(s, events.MAX_STRING)
   end
   s = s:gsub("[%z\1-\31\127]", "?")
   -- C1 controls (U+0080..U+009F) and the bidi overrides/isolates (U+202A..U+202E, U+2066..U+2069)
