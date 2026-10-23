@@ -194,19 +194,15 @@ return function(H)
     for i, l in ipairs(lines) do
       last[i] = json.decode(l)
     end
-    eq(
-      kinds_of(last),
-      {
-        "run_start",
-        "file_start:a",
-        "case:a",
-        "file_start:b",
-        "file_end:a",
-        "file_end:b",
-        "run_done",
-      },
-      "abort: every file that began is closed before run_done"
-    )
+    eq(kinds_of(last), {
+      "run_start",
+      "file_start:a",
+      "case:a",
+      "file_start:b",
+      "file_end:a",
+      "file_end:b",
+      "run_done",
+    }, "abort: every file that began is closed before run_done")
     eq(last[#last].aborted, true, "abort: run_done says aborted")
     running:close()
     events.reset()
@@ -439,16 +435,14 @@ return function(H)
     ok(not got[1].id:find("\194\155", 1, true), "reader: no C1 control in an id")
     ok(got[1].id:find("red", 1, true), "reader: the readable part stays")
     local rd2, got2 = new_reader()
-    rd2:feed(
-      json.encode({
-        v = 1,
-        event = "case",
-        file = "f",
-        id = ("i"):rep(5000),
-        status = "pass",
-        duration_ms = 1,
-      }) .. "\n"
-    )
+    rd2:feed(json.encode({
+      v = 1,
+      event = "case",
+      file = "f",
+      id = ("i"):rep(5000),
+      status = "pass",
+      duration_ms = 1,
+    }) .. "\n")
     ok(#got2[1].id <= events.MAX_STRING, "reader: a long id is capped")
   end
 
@@ -458,15 +452,13 @@ return function(H)
     for i = 1, events.MAX_PLAN_FILES + 10 do
       many[i] = "f" .. i
     end
-    rd:feed(
-      json.encode({
-        v = 1,
-        event = "run_start",
-        files = many,
-        cases_estimate = 7,
-        cases_estimated = true,
-      }) .. "\n"
-    )
+    rd:feed(json.encode({
+      v = 1,
+      event = "run_start",
+      files = many,
+      cases_estimate = 7,
+      cases_estimated = true,
+    }) .. "\n")
     eq(#got[1].files, events.MAX_PLAN_FILES, "reader: the plan is capped")
     eq(got[1].cases_estimate, 7, "reader: the estimate")
     eq(got[1].cases_estimated, true, "reader: marked as an estimate")

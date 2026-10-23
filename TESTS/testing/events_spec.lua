@@ -84,20 +84,16 @@ return function(H)
       kinds[i] = json.decode(l).event
     end
     -- a file is announced before its first case and closed after its last (additive events of format 1)
-    eq(
-      kinds,
-      {
-        "run_start",
-        "file_start",
-        "case",
-        "file_end",
-        "file_start",
-        "case",
-        "file_end",
-        "run_done",
-      },
-      "run_start, then file_start / case / file_end per file, then run_done"
-    )
+    eq(kinds, {
+      "run_start",
+      "file_start",
+      "case",
+      "file_end",
+      "file_start",
+      "case",
+      "file_end",
+      "run_done",
+    }, "run_start, then file_start / case / file_end per file, then run_done")
     local last = json.decode(lines[#lines])
     eq(last.event, "run_done", "the last event")
     eq(last.exit_code, 1, "exit code")
