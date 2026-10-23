@@ -117,6 +117,57 @@ return function(H)
     return reports(text, "e-mail address")
   end
 
+  -- `/home/<name>`: the validator reports a text exactly when the redaction changes it (the shapes the property test
+  -- found apart: a quote right behind `/home/`, a doubled separator, the placeholder itself)
+  for _, text in ipairs({
+    '/home/"x',
+    'ls "/home/"',
+    "/home/",
+    "/home//home/x",
+    "/home/<HOME>",
+    "/home//maria",
+  }) do
+    eq(
+      leaks(text),
+      msg_of(text) ~= text,
+      "home: the validator and the redaction agree on " .. vim.inspect(text)
+    )
+  end
+  eq(msg_of('ls "/home/"'), 'ls "/home/"', "home: a quoted /home/ names no user and stays")
+  eq(msg_of("/home//home/x"), "<HOME>/x", "home: doubled separators are one separator")
+  eq(msg_of("/home/maria/x"), "<HOME>/x", "home: the name goes, the rest stays")
+  do
+    local pieces =
+      { "/home/", "/home", "/", "//", '"', "'", "x", "maria", " ", "<HOME>", "ls ", "." }
+    math.randomseed(20261023)
+    local differing = {}
+    for _ = 1, 2500 do
+      local parts = {}
+      for k = 1, math.random(1, 6) do
+        parts[k] = pieces[math.random(#pieces)]
+      end
+      local text = table.concat(parts)
+      if leaks(text) ~= (msg_of(text) ~= text) then
+        differing[#differing + 1] = text
+      end
+    end
+    eq(differing, {}, "home: the validator reports a text exactly when the redaction changes it")
+  end
+
+  -- `\users\maria` without a drive stays readable on purpose: `users` in lowercase is a profile folder only as the
+  -- first folder below a root (a drive, a mount, a share), and a path with no root is a path of a project or a route
+  -- as far as the text can tell. Capitalised (`\Users\maria`) it is hidden wherever it stands.
+  eq(
+    msg_of([[\users\maria]]),
+    [[\users\maria]],
+    "home: a lowercase users folder with no drive stays (decided, see the rule above)"
+  )
+  eq(leaks([[\users\maria]]), false, "home: ...and the validator does not report it either")
+  ok(
+    msg_of([[\Users\maria]]) ~= [[\Users\maria]],
+    "home: a capital Users folder with no drive is hidden"
+  )
+
   -- Which `users` is a profile folder: `Users` with a capital U wherever it stands; any other spelling only as the
   -- first folder below a root that does not tell the spellings apart (a drive, `/mnt/<letter>`, `/cygdrive/<letter>`,
   -- a UNC share; `//host/users` unless a `:` or a word in front makes it the tail of a URL). The validator knows the

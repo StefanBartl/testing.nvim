@@ -664,6 +664,11 @@ local function find_unc_users(s, init)
   end
 end
 
+---A user's folder below `/home`: the name behind one or more separators, up to a separator, a blank or a quote
+---(`/home/"x` and `ls "/home/"` name no user). The validator looks for the same shape (`abs_path_leak`), so what
+---the redaction changes is what the validator reports, and the other way round.
+local HOME_PATTERN = "/home/+[^/%s\"']+"
+
 ---Redact one free-text string. Order matters: environment pairs first (their whole value goes),
 ---then user-home paths, e-mail shapes, then the named words. Works on the decoded string, never on
 ---JSON text, so a user called `pass` cannot break a key or a value of the IR.
@@ -702,7 +707,7 @@ local function redact_string(s, r, _ci)
     s = s:gsub(DRIVE_ROOT .. USERS_ANY .. "[\\/]+[^\\/%s\"']+", M.PLACEHOLDERS.home)
     s = s:gsub("([^%w\\/])[\\/]+Users[\\/]+[^\\/%s\"']+", "%1" .. M.PLACEHOLDERS.home)
   end
-  s = s:gsub("/home/[^/%s\"']+", M.PLACEHOLDERS.home)
+  s = s:gsub(HOME_PATTERN, M.PLACEHOLDERS.home)
   if users then
     -- Any other path with a `Users/<name>` part (`/mnt/c/Users/x`, `D:\Data\Users\x`, `\\fs01\Users\x`,
     -- a path at the start of the text, a URL path, a synthetic path a spec asserts about): the
@@ -839,7 +844,7 @@ end
 ---@param s string
 ---@return string|nil what
 local function abs_path_leak(s)
-  if s:find("[/\\]Users[/\\]+[^/\\%s]") or s:find("/home/[^/%s]") then
+  if s:find("[/\\]Users[/\\]+[^/\\%s]") or s:find(HOME_PATTERN) then
     return "a user home path"
   end
   -- the other spellings of the folder, where it is a profile folder (see `USERS_ANY`): the same shapes the redaction
