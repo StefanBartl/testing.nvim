@@ -391,8 +391,11 @@ run_measured = function(plan, sv)
           note = tnote,
           regressions = timings.regressions(history, current),
         }
-        -- an additive field of the run, like `profile`: the agent reporter prints it
-        report.result.run.time_regressions = timing.regressions
+        -- an additive field of the run, like `profile`, only when there is something to say (a quiet run keeps
+        -- its IR as it was): the agent reporter prints it
+        if #timing.regressions > 0 then
+          report.result.run.time_regressions = timing.regressions
+        end
       end
       if profile_mod then
         local run_ms = (vim.uv.hrtime() / 1e6) - (run_started or (vim.uv.hrtime() / 1e6))

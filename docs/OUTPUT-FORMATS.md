@@ -123,6 +123,8 @@ vim.system(cmd, { stdout = function(_, data) if data then reader:feed(data) end 
   * `cases[].surface = { hit = { ids... } }`: the keymaps, commands and autocmds the case exercised, with
     `surface.track = true` ([SURFACE.md](SURFACE.md)).
   * `run.profile` with `--profile` ([PERFORMANCE.md](PERFORMANCE.md)).
+  * `run.time_regressions = { { file, ms, median, runs }, ... }`, only when a file took more than three times its
+    median of earlier runs ([CLI.md](CLI.md), "Slow files"); the agent report prints it as a `slower` notice.
   * `run.verdict`, the verdict of the run, see [The verdict](#the-verdict).
 
 ## The verdict

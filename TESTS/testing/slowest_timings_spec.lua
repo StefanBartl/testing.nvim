@@ -309,14 +309,21 @@ end
     )
     ok(out:find("TESTING_OK", 1, true) ~= nil, "and the sentinel stays")
     -- the agent report carries the same warning as a line of stdout
-    local acode, aout = go({ "--reporter", "agent" })
+    local irfile = tmp .. "/e2e-ir.json"
+    local acode, aout = go({ "--reporter", "agent", "--json", irfile })
     eq(acode, 0, "the agent run is green as well")
     ok(
       aout:find("1 file(s) slower than usual", 1, true) ~= nil
         and aout:find("TESTS/drift_spec.lua", 1, true) ~= nil,
       "the agent report names the slow file: " .. aout
     )
+    local ir = vim.json.decode(table.concat(vim.fn.readfile(irfile), "\n"))
+    eq(ir.run.time_regressions[1].file, "TESTS/drift_spec.lua", "the IR carries the regression")
     os.remove(flag)
+    local qcode = go({ "--json", irfile })
+    eq(qcode, 0, "a quiet run is green")
+    ir = vim.json.decode(table.concat(vim.fn.readfile(irfile), "\n"))
+    eq(ir.run.time_regressions, nil, "a run without a regression leaves the IR as it was")
     local code2, _, err2 = go()
     eq(code2, 0, "back to normal")
     ok(err2:find("slower than usual", 1, true) == nil, "no warning when it is fast again")
