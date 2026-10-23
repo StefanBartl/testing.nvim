@@ -82,6 +82,9 @@ capped at 500 bytes. A reader ignores fields and events it does not know; the de
   layer ([GUARDS.md](GUARDS.md)); a case says in its notes when a guard that fills them is off, and an empty list
   is then not a measurement.
 * Additive fields (`schema_version` stays 1):
+  * `cases[].describe` (a list of strings, the describe titles outermost first) and `cases[].name` (the case name): the
+    words of the id, so a tree can be built without cutting the id apart. Absent where a dialect has no describe
+    level; a reader falls back to the id ([STATE.md](STATE.md)).
   * `cases[].flaky = true` with `retries = k`: the case failed and then passed on retry `k` (`--retry-failed`). Its `status` is
     `fail` (the run is red) unless `--allow-flaky` replaced it by the passing result (`status = pass`); either way it is never
     cached. A case that failed on every retry has `retries = n` and no `flaky`.

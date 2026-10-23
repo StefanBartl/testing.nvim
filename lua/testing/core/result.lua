@@ -96,10 +96,20 @@ end
 ---@param opts Testing.Result.CaseOpts
 ---@return Testing.Result.Case
 function M.new_case(opts)
+  local describe
+  if type(opts.describe) == "string" then
+    describe = { opts.describe }
+  elseif type(opts.describe) == "table" and #opts.describe > 0 then
+    describe = vim.list_slice(opts.describe)
+  end
   return {
     id = M.case_id(opts),
     file = (opts.file:gsub("\\", "/")),
     line = opts.line,
+    -- additive optional fields (schema_version stays 1): the words of the id, so a tree can be built without
+    -- cutting the id apart. A reader that does not know them falls back to the id.
+    describe = describe,
+    name = opts.name,
     tags = opts.tags or {},
     status = "pass",
     duration_ms = 0,
@@ -1083,6 +1093,12 @@ local function validate_cases(cases, problems)
       end
       if c.line ~= nil and (not is_int(c.line) or c.line < 1) then
         problems[#problems + 1] = at .. ".line: must be an integer >= 1"
+      end
+      if c.describe ~= nil and not is_string_list(c.describe) then
+        problems[#problems + 1] = at .. ".describe: must be a list of strings"
+      end
+      if c.name ~= nil and (type(c.name) ~= "string" or c.name == "") then
+        problems[#problems + 1] = at .. ".name: must be a non-empty string"
       end
       for _, key in ipairs({ "tags", "notes" }) do
         if not is_string_list(c[key]) then

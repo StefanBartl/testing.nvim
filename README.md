@@ -115,6 +115,9 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
   keymaps, commands and autocmds and, from a run with `surface = { track = true }`, how many of them the
   specs exercised. Both report first; neither is a gate by default.
+- **The last result** ([docs/STATE.md](docs/STATE.md)): `testing.state` keeps the last result per case
+  (`last.json`, merged over partial runs, with the staleness of each spec file) for an explorer, a hover or a
+  statusline; a data module, no UI.
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
   redacted, validated after writing). Every reporter carries a three-valued **verdict**

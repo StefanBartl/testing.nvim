@@ -1239,6 +1239,21 @@ function M.execute_run(plan, sv, run_opts, err, ev)
   if not hok then
     err("testing: note: history not updated: " .. tostring(herr))
   end
+  -- the last result per case, for what shows it (explorer, hover, ...): merged over partial runs, never the verdict
+  local sok, serr = pcall(function()
+    local rok, rerr = require("testing.state").record(
+      root,
+      res,
+      { ran_files = ran_files, known_files = known, partial = not full },
+      { state_dir = sv.state_dir }
+    )
+    if not rok then
+      err("testing: note: result not stored: " .. tostring(rerr))
+    end
+  end)
+  if not sok then
+    err("testing: note: result not stored: " .. tostring(serr))
+  end
   -- what `--order priority` and a red verdict need next time: when each file ran, how long it took, the last full green run
   if not infra_failed then
     local state_ok, state_err = pcall(function()

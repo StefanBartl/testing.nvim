@@ -91,6 +91,8 @@
 ---@field id string Stable id `file::describe::case[#param]`.
 ---@field file string File of the case, relative to the root.
 ---@field line? integer Definition line of the case.
+---@field describe? string[] The describe titles, outermost first (additive; absent when the dialect has none).
+---@field name? string The case name (additive).
 ---@field tags string[]
 ---@field status Testing.Status
 ---@field duration_ms number
