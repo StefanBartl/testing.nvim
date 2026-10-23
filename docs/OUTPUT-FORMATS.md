@@ -29,10 +29,17 @@ process: `--watch` makes 1, 2, ...). The first run of a process truncates the fi
 
 | `event` | Fields |
 | --- | --- |
-| `run_start` | `project` (directory name, never a path), `files_total`, `files_selected` |
+| `run_start` | `project` (directory name, never a path), `files_total`, `files_selected`; the plan: `files` (the selected spec files in run order, at most 2000, `plan_truncated` when there are more), `cases_estimate` and `cases_estimated = true` (the cases the files will probably produce, counted from the `describe`/`it` positions of the source, one for a file without them: an **estimate**, shown as a guess and replaced by what the stream says) |
+| `file_start` | `file`, `cases_estimate` (+ `cases_estimated`): the file begins to run. With `--jobs` several files can start before the first `case` |
 | `case` | `file`, `id`, `status` (the Result-IR statuses), `duration_ms`, `cached` (`true`: not executed, from the result cache; cached cases are announced after the run's cache step) |
+| `file_end` | `file`, `cases`, `failed`, `duration_ms`: after the last `case` of the file |
 | `run_done` | always after a `run_start` (an empty one when the run ended before it began); `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise), `aborted` (`true` when the editor was quit during the run) |
 | `watch_change` | `--watch` only, between two runs and only when a run follows (a change that runs nothing is not announced): `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
+
+The order: `file_start` of a file comes before its cases and `file_end` after them; the `case` lines of one file are
+consecutive; the `file_start` of a later file can come before the `file_end` of an earlier one (the start is
+announced when the file begins, the end with the next file's first case or at `run_done`), so a reader keeps a **set**
+of open files, not a stack. A file that began and produced no case (the run stopped) is closed at `run_done`.
 
 `--events -` writes the stream to **stdout**, one flushed line per event, for a supervisor that spawns the run and
 reads the pipe. Stdout then belongs to the stream alone: the reporter's text and the `--watch` status lines go to
@@ -46,6 +53,24 @@ It never carries assertion text, error messages, notes, program output or absolu
 come from the code under test: control characters, bidi overrides and invalid UTF-8 are defused and every string is
 capped at 500 bytes. A reader ignores fields and events it does not know; the details of a finished run are in the
 [Result-IR](#result-ir) of `--json`. With `--list` nothing is written.
+
+**Reading it in an editor.** `testing.run.events_reader` turns the bytes of `--events -` (as `vim.system` hands them
+to a stdout callback, in any chunking) into validated events: a line buffer across chunk boundaries, a limit per line
+(`MAX_LINE`, 64 KiB: a longer line is dropped as a whole and reported once), `pcall(json.decode)` and a type check per
+kind (a line that fails is a *problem*, never an event or an error), control characters and bidi overrides replaced in
+every word of the project under test, unknown kinds ignored and unknown versions refused. `finish(exit_code)` says how
+the stream ended: a stream without `run_done` (the driver was killed or crashed) ends with a `run_done` of the
+reader's own (`aborted = true`, `synthetic = true`, the exit code of the process), so a UI never waits for an end that
+will not come, and the cases announced before the kill stay what they were.
+
+```lua
+local reader = require("testing.run.events_reader").new({
+  on_event = function(ev) end,       -- run_start, file_start, case, file_end, run_done, watch_change
+  on_problem = function(msg) end,    -- optional; at most 20 are reported, `reader.problems` counts all
+})
+vim.system(cmd, { stdout = function(_, data) if data then reader:feed(data) end end },
+  function(obj) reader:finish(obj.code) end)
+```
 
 ## Result-IR
 

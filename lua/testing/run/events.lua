@@ -8,7 +8,18 @@
 --- EVENTS (every line has `v` (= `M.VERSION`), `event`, `ts` (unix seconds) and `run` (1-based, counts the runs
 --- that wrote to this file in this process, so `--watch` produces run 1, 2, ...)):
 ---   * `run_start`   `project`, `files_total`, `files_selected`
+---   * `run_start`   additionally `files` (the plan: the selected spec files in run order, at most `M.MAX_PLAN_FILES`; `plan_truncated`
+---                   when there are more), `cases_estimate` and `cases_estimated = true` (the number of cases the files will
+---                   probably produce, counted from the positions of `describe`/`it` in the source, one for a file of a dialect
+---                   without them: an ESTIMATE, a reader must not treat it as a total)
+---   * `file_start`  `file`, `cases_estimate` (+ `cases_estimated`) -- the file is being run. With `--jobs` several files can be started
+---                   before the first `case`; the `case` lines of one file always come after its `file_start`
 ---   * `case`        `file`, `id`, `status`, `duration_ms`, `cached` (true: not executed, from the result cache)
+---   * `file_end`    `file`, `cases`, `failed`, `duration_ms` -- after the last `case` of the file
+---                   The guarantees: `file_start` of a file comes before its cases and `file_end` after them; the `case` lines of one
+---                   file are consecutive (a file's cases are announced together, files in run order). The `file_start` of a LATER
+---                   file can come before the `file_end` of an earlier one (the start is announced as soon as the file begins, the
+---                   end with the next file's first case or at `run_done`): a reader keeps a set of open files, not a stack
 ---   * `run_done`    (always preceded by a `run_start`, an empty one when the run ended before it began) `exit_code`, `verdict` (`green`|`green-partial`|`red`, absent when the run ended before one
 ---                   existed), `summary` (a counter per status, absent likewise)
 ---   * `watch_change` (only with `--watch`, only when a run follows) `files` (at most `M.MAX_FILES` project-relative paths), `count`
@@ -42,6 +53,8 @@ local M = {}
 M.VERSION = 1
 ---Longest string an event carries (bytes).
 M.MAX_STRING = 500
+---Most files named in the plan of a `run_start`.
+M.MAX_PLAN_FILES = 2000
 ---Most paths in one `watch_change`.
 M.MAX_FILES = 20
 
@@ -121,6 +134,9 @@ end
 ---@field done fun(self: Testing.Events.Emitter, exit_code: integer, res?: Testing.Result)
 ---@field close fun(self: Testing.Events.Emitter)
 ---@field result? Testing.Result Set by the runner once the verdict exists; `done` reads it.
+---@field plan_cases? table<string, integer> Estimated cases per file (from `start`).
+---@field private _cur? string The file whose cases are being announced.
+---@field private _files table<string, { started: boolean, ended: boolean, cases: integer, failed: integer, duration_ms: number }>
 
 local Emitter = {}
 Emitter.__index = Emitter
@@ -137,7 +153,77 @@ function M.new(write, opts)
     _write = write,
     _close = opts.close,
     _on_error = opts.on_error,
+    _files = {},
   }, Emitter)
+end
+
+local BAD = { fail = true, error = true, timeout = true, crash = true, xpass = true }
+
+---`run_start` with the plan: the files in run order and an estimate of the cases.
+---@param info { project?: string, files_total?: integer, files_selected?: integer, files?: string[], estimates?: table<string, integer> }
+function Emitter:start(info)
+  local files = info.files or {}
+  local listed, total = {}, 0
+  self.plan_cases = info.estimates or {}
+  for i, rel in ipairs(files) do
+    total = total + (self.plan_cases[rel] or 1)
+    if i <= M.MAX_PLAN_FILES then
+      listed[i] = rel
+    end
+  end
+  self:emit("run_start", {
+    project = info.project,
+    files_total = info.files_total,
+    files_selected = info.files_selected,
+    files = #files > 0 and listed or nil,
+    plan_truncated = #files > M.MAX_PLAN_FILES or nil,
+    cases_estimate = #files > 0 and total or nil,
+    cases_estimated = #files > 0 and true or nil,
+  })
+end
+
+---@param file string
+---@return table
+function Emitter:_file(file)
+  local f = self._files[file]
+  if not f then
+    f = { started = false, ended = false, cases = 0, failed = 0, duration_ms = 0 }
+    self._files[file] = f
+  end
+  return f
+end
+
+---The file is being run. Once per file; the `case` lines of a file call it too, so a runner that has no hook for the
+---start of a file still produces a `file_start` before the first case.
+---@param file string
+function Emitter:file_start(file)
+  local f = self:_file(file)
+  if f.started then
+    return
+  end
+  f.started = true
+  local est = self.plan_cases and self.plan_cases[file]
+  self:emit(
+    "file_start",
+    { file = file, cases_estimate = est, cases_estimated = est and true or nil }
+  )
+end
+
+---All the cases of the file are announced.
+---@param file string
+function Emitter:file_end(file)
+  local f = self:_file(file)
+  if f.ended then
+    return
+  end
+  self:file_start(file)
+  f.ended = true
+  self:emit("file_end", {
+    file = file,
+    cases = f.cases,
+    failed = f.failed,
+    duration_ms = math.floor(f.duration_ms * 1000 + 0.5) / 1000,
+  })
 end
 
 ---@param kind string
@@ -165,6 +251,18 @@ end
 ---@param case Testing.Result.Case
 ---@param cached? boolean
 function Emitter:case(case, cached)
+  -- the cases of a file arrive together and files in run order: a new file closes the one before
+  if self._cur and self._cur ~= case.file then
+    self:file_end(self._cur)
+  end
+  self._cur = case.file
+  self:file_start(case.file)
+  local f = self:_file(case.file)
+  f.cases = f.cases + 1
+  f.duration_ms = f.duration_ms + (tonumber(case.duration_ms) or 0)
+  if BAD[case.status] then
+    f.failed = f.failed + 1
+  end
   self:emit("case", {
     file = case.file,
     id = case.id,
@@ -186,6 +284,20 @@ function Emitter:done(exit_code, res, extra)
   if not self.started then
     -- the run ended before it began (a usage error): a consumer still sees a pair
     self:emit("run_start", {})
+  end
+  -- every file that began is closed (an aborted run included): the current one first, then the others by name
+  local open = {}
+  for file, f in pairs(self._files) do
+    if f.started and not f.ended then
+      open[#open + 1] = file
+    end
+  end
+  table.sort(open)
+  if self._cur and not self:_file(self._cur).ended then
+    self:file_end(self._cur)
+  end
+  for _, file in ipairs(open) do
+    self:file_end(file)
   end
   local verdict = res and res.run and res.run.verdict
   self:emit("run_done", {

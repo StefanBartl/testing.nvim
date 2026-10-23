@@ -772,10 +772,14 @@ function M.execute_run(plan, sv, run_opts, err, ev)
   -- 5. run: in this editor, or (per file, see `testing.run.options`) in a child editor of its own
   local release = M.guard_exit()
   if ev then
-    ev:emit("run_start", {
+    -- the plan (files in run order, an estimate of the cases): a convenience, a failure to build it is a plain `run_start`
+    local pok, plan_info = pcall(require("testing.run.plan").build, root, files)
+    ev:start({
       project = vim.fs.basename(root),
       files_total = total,
       files_selected = #files,
+      files = pok and plan_info.files or nil,
+      estimates = pok and plan_info.estimates or nil,
     })
   end
   local common = {
@@ -795,6 +799,9 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     guard_cfg = options_mod.guard_config(run_opts, { root = root, seed = seed }),
   }
   if ev then
+    common.on_file_start = function(rel)
+      ev:file_start(rel)
+    end
     common.on_case = function(case)
       ev:case(case)
     end

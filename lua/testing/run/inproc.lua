@@ -142,6 +142,7 @@ end
 ---@field assertions? "error"|"warn" What a case without assertions is (`testing.policy`); default `error`.
 ---@field skip_facts? boolean Do not ask git for the header (a child editor: the parent owns it).
 ---@field on_case? fun(case: Testing.Result.Case) Progress hook, called for every recorded case.
+---@field on_file_start? fun(rel: string) Called when a file begins to run (before its first case); never for a file that is not run.
 ---@field on_case_early? fun(case: Testing.Result.Case) Called the moment a dialect finishes a case, long before the file is over (a child editor streams these, so a kill keeps them). The case may still be adjusted afterwards (file deadline); `on_case` sees the final one.
 ---@field clock? Testing.Assert.Clock Case clock in ms (default `vim.uv.hrtime`).
 ---@field soft? Testing.Isolation.Session Soft isolation (`isolated = "soft"`): the state a file changed is restored before the next file; findings land on the file's last case.
@@ -441,6 +442,9 @@ local function run_files(opts, holder)
         files_unselected = files_unselected + 1
       else
         files_run = files_run + 1
+        if opts.on_file_start then
+          pcall(opts.on_file_start, rel)
+        end
         local bad_before = bad_total
         local frame = opts.soft and opts.soft:enter(rel)
         if gsess and not is_busted then

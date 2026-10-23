@@ -79,15 +79,38 @@ return function(H)
     em:case({ file = "a", id = "a::x", status = "fail", duration_ms = 1.5 })
     em:case({ file = "b", id = "b::y", status = "pass", duration_ms = 0, cached = true })
     em:done(1, { run = { verdict = { kind = "red" } }, summary = { pass = 1, fail = 1 } })
-    eq(#lines, 4, "four events")
-    local last = json.decode(lines[4])
+    local kinds = {}
+    for i, l in ipairs(lines) do
+      kinds[i] = json.decode(l).event
+    end
+    -- a file is announced before its first case and closed after its last (additive events of format 1)
+    eq(
+      kinds,
+      {
+        "run_start",
+        "file_start",
+        "case",
+        "file_end",
+        "file_start",
+        "case",
+        "file_end",
+        "run_done",
+      },
+      "run_start, then file_start / case / file_end per file, then run_done"
+    )
+    local last = json.decode(lines[#lines])
     eq(last.event, "run_done", "the last event")
     eq(last.exit_code, 1, "exit code")
     eq(last.verdict, "red", "verdict kind")
     eq(last.summary.fail, 1, "summary")
-    eq(json.decode(lines[3]).cached, true, "a cached case says so")
-    eq(json.decode(lines[2]).cached, nil, "an executed case does not")
+    eq(json.decode(lines[6]).cached, true, "a cached case says so")
+    eq(json.decode(lines[3]).cached, nil, "an executed case does not")
     eq(json.decode(lines[1]).run, 2, "run number of the emitter")
+    local fend = json.decode(lines[4])
+    eq(fend.file, "a", "file_end names the file")
+    eq(fend.cases, 1, "file_end counts the cases")
+    eq(fend.failed, 1, "file_end counts the red ones")
+    eq(fend.duration_ms, 1.5, "file_end sums the durations")
 
     local failures = {}
     local broken = events.new(function()

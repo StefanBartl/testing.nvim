@@ -535,6 +535,7 @@ end
 ---@field findings? Testing.Discover.Finding[]
 ---@field strict? boolean
 ---@field on_case? fun(case: Testing.Result.Case)
+---@field on_file_start? fun(rel: string) Called when the file of a slot is started (a child, a pool member): with `--jobs` several can start before the first case is committed.
 ---@field on_output? fun(rel: string, text: string) Captured output of a file, called in file order.
 ---@field clock? Testing.Assert.Clock
 ---@field options? Testing.Run.Options
@@ -1278,6 +1279,9 @@ function M.run(opts)
 
   ---@param slot Testing.Isolated.Slot
   local function run_slot(slot)
+    if opts.on_file_start and not slot.not_first and not state.stopped then
+      pcall(opts.on_file_start, slot.entry.rel)
+    end
     if pooled(slot) and run_pooled(slot) then
       return
     end
@@ -1386,6 +1390,9 @@ function M.run(opts)
   ---@param slot Testing.Isolated.Slot
   local function run_inproc(slot)
     local entry = slot.entry
+    if opts.on_file_start and not slot.not_first then
+      pcall(opts.on_file_start, entry.rel)
+    end
     local lf
     if opts.lf then
       local ids = select_mod.lf_ids(entry.rel, opts.lf)
