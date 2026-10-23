@@ -342,6 +342,30 @@ return function(H)
   has(bad.notes[1], "not a regular file", "hostile: named")
   vim.fn.delete(hpath, "rf")
 
+  -- a file name that points out of the project is never kept (it would be stat'ed by is_stale / snapshot)
+  bad = load_with(vim.json.encode({
+    v = 1,
+    cases = {
+      { id = "../x::a", file = "../x", status = "pass", duration_ms = 1 },
+      { id = "/etc/passwd::a", file = "/etc/passwd", status = "pass", duration_ms = 1 },
+      { id = "C:/w::a", file = "C:/w", status = "pass", duration_ms = 1 },
+      { id = "TESTS/a/../../b::a", file = "TESTS/a/../../b", status = "pass", duration_ms = 1 },
+      { id = "TESTS/ok_spec.lua::a", file = "TESTS/ok_spec.lua", status = "pass", duration_ms = 1 },
+    },
+    files = {
+      ["../x"] = { mtime_ns = "1", size = 1, run = "r", ts = 1 },
+      ["/etc/passwd"] = { mtime_ns = "1", size = 1, run = "r", ts = 1 },
+      ["TESTS/ok_spec.lua"] = { mtime_ns = "1", size = 1, run = "r", ts = 1 },
+    },
+  }))
+  eq(#bad.cases, 1, "hostile: only the case inside the project stays")
+  eq(bad.cases[1].file, "TESTS/ok_spec.lua", "hostile: the one that stays")
+  ok(
+    bad.files["../x"] == nil and bad.files["/etc/passwd"] == nil,
+    "hostile: no record for a path outside"
+  )
+  ok(bad.files["TESTS/ok_spec.lua"] ~= nil, "hostile: the record inside stays")
+
   local esc = "\27[31mred\27[0m\0nul"
   local mixed = vim.json.encode({
     v = 1,

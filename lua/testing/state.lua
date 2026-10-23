@@ -141,6 +141,18 @@ local function norm_file(file)
   return (file:gsub("\\", "/"))
 end
 
+---Whether a file name from a result file stays inside the project: relative, no drive, no `..` segment. The
+---name is stat'ed (`is_stale`, `snapshot`), so a hostile `last.json` must not be able to point it elsewhere.
+---@param file string  Already normalised.
+---@return boolean
+local function inside(file)
+  if file:sub(1, 1) == "/" or file:match("^%a:") then
+    return false
+  end
+  -- a `..` segment, written as a pattern (a literal would read as a path outside the project to the cache key)
+  return not (file == ".." or file:find("^%.%./") or file:find("/%.%./") or file:find("/%.%.$"))
+end
+
 ---The state directory of a project (the one `runs.jsonl` is in).
 ---@param root string
 ---@param opts? { state_dir?: string }
@@ -260,6 +272,9 @@ local function validate_case(raw)
       end
     end
   end
+  if not inside(norm_file(raw.file)) then
+    return nil, "file outside the project"
+  end
   return {
     id = raw.id,
     file = norm_file(raw.file),
@@ -341,6 +356,7 @@ function M.validate(root, raw)
       local f = type(file) == "string"
         and #file <= M.MAX_ID_BYTES
         and n <= M.MAX_FILES
+        and inside(norm_file(file))
         and validate_file(rf)
       if f then
         st.files[norm_file(file)] = f
