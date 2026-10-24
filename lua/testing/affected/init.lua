@@ -6,9 +6,9 @@
 --- only, see `testing.affected.git`) and the spec files of the project, and returns the specs to
 --- run with a reason for each.
 ---
---- GRAPH. The input graph is the documentation.nvim contract (`docs/testing-contract.md` there), soft-required:
+--- GRAPH. The input graph is the docmap.nvim contract (`docs/testing-contract.md` there), soft-required:
 ---
----   require("documentation.testing").affected_specs({ root = ..., changed = { ... }, spec_roots = { ... } })
+---   require("docmap.testing").affected_specs({ root = ..., changed = { ... }, spec_roots = { ... } })
 ---     -> { version, specs = { rel... },
 ---          modules = { { id, module, path, role = "changed"|"dependent", specs }... },
 ---          unplaced_specs = { rel... }, ignored = { rel... }, complete = bool,
@@ -44,7 +44,7 @@
 --- answer is returned as `result.cross_repo`: per consumer the affected specs (relative to the consumer's
 --- own root), or `measured = false` with the reason. It is a HINT and only added: it never makes this
 --- project's selection smaller or bigger, and "not measured" is not "not affected" (`M.cross_lines` says
---- so, and a consumer that is not below the directory at all is invisible). Without documentation.nvim, or
+--- so, and a consumer that is not below the directory at all is invisible). Without docmap.nvim, or
 --- with an answer that has no `cross_repo` (an older contract), nothing changes. The reverse direction (a
 --- spec that loads lib.nvim) is covered by the cache key: it holds the lib.nvim files the spec loads.
 
@@ -140,7 +140,7 @@ end
 ---@field changed? string[] Changed files (relative); skips git (specs, watch mode).
 ---@field implicit? boolean Affected was not asked for by the person (a default, a config key).
 ---@field roots? string[] Spec roots of the project (relative); passed to the provider, and the heuristic takes a support file as an input of every spec below its root.
----@field provider? false|fun(args: table): table|nil, string|nil Replaces `require("documentation.testing").affected_specs`; `false` = never ask.
+---@field provider? false|fun(args: table): table|nil, string|nil Replaces `require("docmap.testing").affected_specs`; `false` = never ask.
 ---@field getenv? fun(name: string): string|nil Environment lookup (CI detection).
 ---@field run? fun(argv: string[], cwd: string): Testing.Affected.GitResult Git runner (specs).
 ---@field ignore? string[] Changed paths that never affect a spec (default `heuristic.DEFAULT_IGNORE`).
@@ -164,7 +164,7 @@ end
 ---@field cross_repo Testing.Affected.CrossRepo[] The consumers the change reaches or that nobody could measure (empty without `opts.consumers`, without an answer, with a malformed one). Never part of `files`.
 ---@field cross_dir? string `opts.consumers` as it was asked.
 ---@field cross_asked? boolean The provider answered and its `cross_repo` was looked at (false: the selection ended before it was asked, or it did not answer).
----@field cross_note? string What documentation.nvim said about the consumers directory (it could not be looked at).
+---@field cross_note? string What docmap.nvim said about the consumers directory (it could not be looked at).
 
 ---@param specs string[]
 ---@param why string
@@ -446,7 +446,7 @@ function M.cross_lines(r)
     end
     if not said then
       lines[#lines + 1] =
-        "cross-repo: not asked: the selection ended before documentation.nvim was consulted (no consumer was measured)"
+        "cross-repo: not asked: the selection ended before docmap.nvim was consulted (no consumer was measured)"
     end
   elseif #cross == 0 then
     lines[#lines + 1] =
@@ -458,7 +458,7 @@ function M.cross_lines(r)
   return lines
 end
 
----Is `res` an answer in the shape of the documentation.nvim contract? (specs: the recorded real answers.)
+---Is `res` an answer in the shape of the docmap.nvim contract? (specs: the recorded real answers.)
 ---@param res any
 ---@return table|nil clean
 ---@return string|nil why
@@ -466,7 +466,7 @@ function M.check_answer(res)
   return valid_answer(res)
 end
 
----Ask documentation.nvim. Returns the answer, or nil with the reason the graph was not used.
+---Ask docmap.nvim. Returns the answer, or nil with the reason the graph was not used.
 ---@param opts Testing.Affected.Opts
 ---@param changed string[]
 ---@return table|nil answer
@@ -477,9 +477,9 @@ local function ask_graph(opts, changed)
   end
   local fn = opts.provider or nil
   if fn == nil then
-    local ok, mod = pcall(require, "documentation.testing")
+    local ok, mod = pcall(require, "docmap.testing")
     if not ok or type(mod) ~= "table" or type(mod.affected_specs) ~= "function" then
-      return nil, "documentation.nvim is not available"
+      return nil, "docmap.nvim is not available"
     end
     fn = mod.affected_specs
   end
@@ -490,14 +490,14 @@ local function ask_graph(opts, changed)
     consumers = opts.consumers,
   })
   if not ok then
-    return nil, "documentation.testing.affected_specs failed: " .. tostring(res)
+    return nil, "docmap.testing.affected_specs failed: " .. tostring(res)
   end
   if res == nil then
-    return nil, "documentation.nvim gave no answer: " .. tostring(err)
+    return nil, "docmap.nvim gave no answer: " .. tostring(err)
   end
   local clean, why = valid_answer(res)
   if not clean then
-    return nil, "documentation.nvim answered an unknown shape: " .. tostring(why)
+    return nil, "docmap.nvim answered an unknown shape: " .. tostring(why)
   end
   return clean
 end
@@ -572,7 +572,7 @@ function M.select(opts)
     end
   end
 
-  -- 2. the documentation.nvim graph, when there is something it has to answer
+  -- 2. the docmap.nvim graph, when there is something it has to answer
   if next(cls.modules) ~= nil then
     local changed_modules = {}
     for _, file in pairs(cls.modules) do
@@ -592,7 +592,7 @@ function M.select(opts)
           )
         elseif answer.cross_repo == nil then
           warnings[#warnings + 1] =
-            "cross-repo: documentation.nvim answered without cross_repo (an older contract): no consumer was measured"
+            "cross-repo: docmap.nvim answered without cross_repo (an older contract): no consumer was measured"
         else
           base.cross_repo = cross
         end

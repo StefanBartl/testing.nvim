@@ -1,7 +1,7 @@
 -- TESTS/testing/affected_select_spec.lua -- the affected selection (`testing.affected.select`) on the fixture
 -- project: a changed spec selects itself, a changed module selects what reaches it (and its parents),
 -- a computed require is followed, a file nobody can place selects ALL, a stale or incomplete graph selects
--- ALL, CI never defaults to a partial run, and the documentation.nvim contract is consumed defensively.
+-- ALL, CI never defaults to a partial run, and the docmap.nvim contract is consumed defensively.
 
 -- @cache-env A B
 -- (the two variables the spec sets and reads itself: their outer values join the key)
@@ -304,8 +304,8 @@ return function(H)
   r = sel({ P("c") }, { implicit = true })
   eq(r.all, false, "implicit outside CI is fine")
 
-  -- ---------------------------------------------------------------- the documentation.nvim contract
-  -- (the shape is the one `documentation.testing.affected_specs` answers: tables, not names; a contract spec
+  -- ---------------------------------------------------------------- the docmap.nvim contract
+  -- (the shape is the one `docmap.testing.affected_specs` answers: tables, not names; a contract spec
   -- against the real provider is in `affected_contract_spec.lua`)
   local calls = {}
   local function provider(answer, err)

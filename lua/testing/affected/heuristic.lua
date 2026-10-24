@@ -1,7 +1,7 @@
 ---@module 'testing.affected.heuristic'
 ---@brief Built-in, conservative affected selection from the `require` graph of the project itself.
 ---@description
---- Used when the documentation.nvim graph is not available, and for the file kinds a graph does not
+--- Used when the docmap.nvim graph is not available, and for the file kinds a graph does not
 --- know (support files of the spec tree). The rule is "never fewer than needed":
 ---
 ---   * a changed SPEC selects itself;
@@ -35,7 +35,7 @@
 ---   * ANYTHING ELSE is unknown: `unknown` lists it and the caller selects ALL specs.
 ---
 --- Cross-repo is not decided here: a change in a dependency checkout (lib.nvim) is not a changed file of
---- this project. `testing.affected` asks documentation.nvim for the consumers (`--consumers`).
+--- this project. `testing.affected` asks docmap.nvim for the consumers (`--consumers`).
 
 local scan = require("testing.affected.scan")
 

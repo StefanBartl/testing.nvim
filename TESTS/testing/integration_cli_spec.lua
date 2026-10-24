@@ -72,7 +72,7 @@ return function(H)
   eq(report.checks[1].id, "K15", "the report has the check that was asked for")
   eq(#report.checks, 1, "and only that one (--only)")
 
-  -- a `require` whose name has no first segment (found in documentation.nvim): the check must not raise
+  -- a `require` whose name has no first segment (found in docmap.nvim): the check must not raise
   local odd = vim.fs.normalize(vim.fn.tempname()) .. "-k1odd"
   vim.fn.mkdir(odd .. "/lua/odd", "p")
   local function put(path, text)
@@ -269,11 +269,11 @@ return function(H)
     end
     return text
   end
-  local preload_before = package.preload["documentation.testing"]
-  local loaded_before = package.loaded["documentation.testing"]
+  local preload_before = package.preload["docmap.testing"]
+  local loaded_before = package.loaded["docmap.testing"]
   local done, failure = pcall(function()
-    package.loaded["documentation.testing"] = nil
-    package.preload["documentation.testing"] = function()
+    package.loaded["docmap.testing"] = nil
+    package.preload["docmap.testing"] = function()
       error("not installed here")
     end
     local text = report_text()
@@ -284,25 +284,21 @@ return function(H)
     has(text, "`testing surface` and the tracking layer", "and the surface")
     has(
       text,
-      "documentation.nvim contract is not on the runtimepath",
+      "docmap.nvim contract is not on the runtimepath",
       "no contract: the heuristic is named"
     )
 
-    package.loaded["documentation.testing"] = nil
-    package.preload["documentation.testing"] = function()
+    package.loaded["docmap.testing"] = nil
+    package.preload["docmap.testing"] = function()
       return { CONTRACT_VERSION = 1, affected_specs = function() end }
     end
     local with_contract = report_text()
-    has(
-      with_contract,
-      "documentation.nvim contract is available (version 1)",
-      "a contract is reported"
-    )
+    has(with_contract, "docmap.nvim contract is available (version 1)", "a contract is reported")
     lacks(with_contract, "ERROR", "and nothing in the new section is an error")
   end)
   health.project_dir = real_project_dir
-  package.preload["documentation.testing"] = preload_before
-  package.loaded["documentation.testing"] = loaded_before
+  package.preload["docmap.testing"] = preload_before
+  package.loaded["docmap.testing"] = loaded_before
   vim.fn.delete(tmp, "rf")
   ok(done, "the health checks ran: " .. tostring(failure))
   pcall(vim.api.nvim_del_user_command, "Testing")

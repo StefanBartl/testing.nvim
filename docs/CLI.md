@@ -62,7 +62,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--cached`, `--no-cache`, `--cache-refresh`, `--cache-clear` | The result cache: a spec file whose inputs are byte-identical to an earlier green run does not run, and its cases are reported as cached. Off unless asked for; `--no-cache` always wins. See [Result cache](#result-cache). |
 | `--cache-audit <0..1\|all>` | Run that share of the cache hits anyway and compare with the stored result: a difference is the finding `cache.stale_pass` and exit `1`; the measured stale-pass rate is on the cache line and in `run.cache` of the IR. Implies `--cached`; excludes `--cache-refresh`. See [Explain and audit](#explain-and-audit). |
 | `--changed`, `--since <rev>`, `--affected[=<rev>]` | Only the specs the changes can reach (working tree against `HEAD`, against `<rev>`, or the last commit). A partial run: never a sentinel. See [Affected selection](#affected-selection). `--affected` takes its revision only as `--affected=<rev>`: a bare `--affected` never swallows the next argument. |
-| `--consumers <dir>` | With one of the three above: also name the specs of the checkouts below `<dir>` (the projects that use this one) that the change reaches, as asked of documentation.nvim. A hint about other repositories, printed, never part of what runs here. Also `affected = { consumers = "<dir>" }` in `.testing.lua`. See [Consumers](#affected-selection). |
+| `--consumers <dir>` | With one of the three above: also name the specs of the checkouts below `<dir>` (the projects that use this one) that the change reaches, as asked of docmap.nvim. A hint about other repositories, printed, never part of what runs here. Also `affected = { consumers = "<dir>" }` in `.testing.lua`. See [Consumers](#affected-selection). |
 
 ### Controlling the run
 
@@ -282,8 +282,8 @@ testing . --affected=HEAD~3
 ```
 
 The changed files come from git (`git diff --name-only`, then the untracked files, as argument lists: no shell);
-the specs that can reach them come from the module graph of documentation.nvim when its contract is on the
-runtime path (`require("documentation.testing")`), else from the built-in heuristic (the `require` graph of
+the specs that can reach them come from the module graph of docmap.nvim when its contract is on the
+runtime path (`require("docmap.testing")`), else from the built-in heuristic (the `require` graph of
 `lua/**`, project-local). It never selects fewer specs than needed: a changed file nobody can place (a README,
 `.testing.lua`, a path git prints that is not trusted), a stale graph, or git failing **selects every spec**, with
 the reason on stderr. A revision with a leading `-`, a range, whitespace or shell characters is refused (exit `2`)
@@ -298,8 +298,8 @@ cannot be combined with `--watch`, which does its own selection. [CACHE.md](CACH
 **Consumers.** A change in a library reaches the specs of the projects that use it, which are in other checkouts.
 `--consumers <dir>` (or `affected = { consumers = "<dir>" }` in `.testing.lua`; the flag wins, a relative flag is
 relative to the working directory, a relative key to the project root) names the directory that holds those
-checkouts and asks documentation.nvim, in the same call that answers the selection, which specs of each of them the
-change reaches (`affected_specs`, key `consumers`; contract: `documentation.nvim/docs/testing-contract.md`, "Other
+checkouts and asks docmap.nvim, in the same call that answers the selection, which specs of each of them the
+change reaches (`affected_specs`, key `consumers`; contract: `docmap.nvim/docs/testing-contract.md`, "Other
 repositories"). **The caller names the directory**: this runner does not know where your repositories are. The
 answer is a hint that is only added to: it is printed (`--list`: on stdout; otherwise as `testing: note:` lines) and
 it never makes the selection of this project smaller or bigger.
@@ -314,7 +314,7 @@ cross-repo: a consumer that is not below E:/repos is invisible here; a consumer 
 A consumer that was **not measured** (no committed module map, a map that cannot be read) is listed with its reason
 and the sentence "run the full suite of this repository": not measured is not "not affected". A consumer that is not
 below the directory at all is invisible, and the last line says so. Specs of a consumer are relative to the
-consumer's own root. Without documentation.nvim, with one that does not answer `cross_repo` (an older contract), with
+consumer's own root. Without docmap.nvim, with one that does not answer `cross_repo` (an older contract), with
 an answer of another contract `version`, or with a malformed one (an absolute or `..` path, a control character, an
 oversized list: the whole `cross_repo` is dropped) nothing else changes and a `cross-repo:` line says that no
 consumer was measured. A change without a changed module (only a spec or a document) reaches no consumer, and when

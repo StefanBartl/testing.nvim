@@ -73,7 +73,7 @@ Baseline of `2026-10-06` (median of 9 runs after one warm-up; `TESTS/bench/basel
 | lib.nvim, `--isolated file --jobs 8` | < 15 s | 39.7 s (same machine state) | **missed** |
 | incremental (`--changed`, `--cached`) after one spec file changed | < 1 s median | lib.nvim, one spec edited: 1.14 - 1.52 s median (1 of 87 selected). The fixed parts (editor, discovery, git, key) are about 0.9 s here: see "Incremental run" | **missed** (by 0.15 - 0.5 s) |
 | incremental after one module change | < 1 s median | `--changed` after a change of `core/result.lua`: 86 of 118 files (what depends on it), 193 s; lib.nvim, a leaf module: 62 of 87 files, 67 - 83 s | the selection is a safe superset; the budget is not reachable (see "Incremental run") |
-| conformance suite per plugin | < 2 s | `testing conformance`, wall clock with the editor start, warm file cache: runtime-analysis.nvim 0.95 - 1.04 s, documentation.nvim 1.8 s, lib.nvim (300 modules) 2.7 - 2.9 s; the very first run after a long idle was 6.1 s | met except for lib.nvim |
+| conformance suite per plugin | < 2 s | `testing conformance`, wall clock with the editor start, warm file cache: runtime-analysis.nvim 0.95 - 1.04 s, docmap.nvim 1.8 s, lib.nvim (300 modules) 2.7 - 2.9 s; the very first run after a long idle was 6.1 s | met except for lib.nvim |
 | one Tier-1 feature test in the warm pool | 50 - 200 ms | 106 ms per trivial file at `--jobs 1`, 249 ms at `--jobs 4` (finding 3) | met at `--jobs 1`, **missed at `--jobs 4`** |
 | fleet, 35 plugins x 30 features | 2 - 3 min | needs M6 | open |
 
@@ -167,7 +167,7 @@ with the built-in heuristic, no module graph):
 | Repository | Specs | Selected, mean | Everything | Nothing | Why everything |
 | --- | ---: | ---: | ---: | ---: | --- |
 | lib.nvim | 87 | 60 (70 %), 61 - 63 for a change of one leaf module, 2 for a commit that only touched two specs | 1 of 20 | 0 | one commit whose five changed files reach every spec |
-| documentation.nvim | 107 | 67 (64 %) | 9 of 20 | 7 of 20 (only CI files changed) | `standalone/*.lua` and `scripts/*.lua` are not a module, a spec or a document: 7 commits; two commits whose 14 changed files reach every spec |
+| docmap.nvim | 107 | 67 (64 %) | 9 of 20 | 7 of 20 (only CI files changed) | `standalone/*.lua` and `scripts/*.lua` are not a module, a spec or a document: 7 commits; two commits whose 14 changed files reach every spec |
 
 The selection is a superset, never a subset: a change of a document selects the specs that name it (before: everything),
 a module that lists directories or loads files selects the specs that require it, a helper below a spec directory

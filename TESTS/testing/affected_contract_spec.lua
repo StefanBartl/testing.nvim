@@ -1,10 +1,10 @@
--- TESTS/testing/affected_contract_spec.lua -- the consumer side of the documentation.nvim contract against ANSWERS
--- THE REAL PROVIDER GAVE (recorded from `documentation.testing.affected_specs` of documentation.nvim e427659 on its
+-- TESTS/testing/affected_contract_spec.lua -- the consumer side of the docmap.nvim contract against ANSWERS
+-- THE REAL PROVIDER GAVE (recorded from `docmap.testing.affected_specs` of docmap.nvim e427659 on its
 -- own repository, shortened; fixtures/affected/*.json). The earlier version of this consumer was written against
 -- an imagined shape (lists of names) and silently never used the graph: every real answer was "an unknown shape".
 --
--- To record again: call `require("documentation.testing").affected_specs({ root = ..., changed = ... })` in a
--- checkout of documentation.nvim and write the table with `vim.json.encode`.
+-- To record again: call `require("docmap.testing").affected_specs({ root = ..., changed = ... })` in a
+-- checkout of docmap.nvim and write the table with `vim.json.encode`.
 
 return function(H)
   local ok = H.ok
@@ -35,7 +35,7 @@ return function(H)
       a.specs = { { "x" } }
     end,
     function(a)
-      a.modules = { "documentation" }
+      a.modules = { "docmap" }
     end,
     function(a)
       a.complete = nil
@@ -44,7 +44,7 @@ return function(H)
       a.graph.stale = nil
     end,
     function(a)
-      a.graph.gaps = { "documentation" }
+      a.graph.gaps = { "docmap" }
     end,
     function(a)
       a.unplaced_specs = "TESTS/x_spec.lua"
@@ -64,8 +64,8 @@ return function(H)
     names[s] = true
   end
   local files = {
-    ["lua/documentation/core/annotate.lua"] = "return {}\n",
-    ["lua/documentation/other.lua"] = "return {}\n",
+    ["lua/docmap/core/annotate.lua"] = "return {}\n",
+    ["lua/docmap/other.lua"] = "return {}\n",
     ["TESTS/own_spec.lua"] = "return function(H) H.ok(true, 'own') end\n",
   }
   local specs = { "TESTS/own_spec.lua" }
@@ -90,7 +90,7 @@ return function(H)
     })
   end
 
-  local r = select_with(complete, { "lua/documentation/core/annotate.lua" })
+  local r = select_with(complete, { "lua/docmap/core/annotate.lua" })
   eq(r.source, "graph", "the graph is used (the real answer is not 'an unknown shape')")
   eq(r.all, false, "a complete answer narrows")
   for _, s in ipairs(complete.specs) do
@@ -102,7 +102,7 @@ return function(H)
   eq(#r.warnings, 0, "no warning that the graph was not used")
 
   -- the same change with a graph that is not complete runs everything
-  r = select_with(incomplete, { "lua/documentation/core/annotate.lua" })
+  r = select_with(incomplete, { "lua/docmap/core/annotate.lua" })
   eq(r.all, true, "an incomplete answer selects everything")
   ok(
     r.all_reason:find("test_support_changed", 1, true) ~= nil,
@@ -110,7 +110,7 @@ return function(H)
   )
 
   -- a changed module the answer does not mention is not trusted
-  r = select_with(complete, { "lua/documentation/other.lua" })
+  r = select_with(complete, { "lua/docmap/other.lua" })
   eq(r.all, true, "a module file the graph does not know selects everything")
 
   require("testing.cache").reset()

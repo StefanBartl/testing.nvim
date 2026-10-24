@@ -792,7 +792,7 @@ end
 ---@field affected? table Replaces `testing.affected`.
 ---@field getenv? fun(name: string): string|nil Environment lookup (CI detection).
 ---@field run? function Git runner.
----@field provider? any Replaces `documentation.testing.affected_specs` (`false`: never ask).
+---@field provider? any Replaces `docmap.testing.affected_specs` (`false`: never ask).
 ---@field cache_dir? string Replaces `stdpath("cache")` for the analysis index of the selection (the run passes its own `cache_dir`).
 
 ---@class Testing.Run.AffectedResult

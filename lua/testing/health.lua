@@ -455,10 +455,10 @@ local function check_extensions(health)
       "This is a defect of testing.nvim",
     })
   else
-    local okd, doc = pcall(require, "documentation.testing")
+    local okd, doc = pcall(require, "docmap.testing")
     if okd and type(doc) == "table" and type(doc.affected_specs) == "function" then
       health.ok(
-        ("documentation.nvim contract is available (version %s): --changed / --since / --affected use its module graph"):format(
+        ("docmap.nvim contract is available (version %s): --changed / --since / --affected use its module graph"):format(
           tostring(doc.CONTRACT_VERSION)
         )
       )
@@ -468,7 +468,7 @@ local function check_extensions(health)
       elseif fresh.status == "stale" then
         health.warn(
           "module graph is stale: " .. fresh.message .. " (the selection runs every spec)",
-          { "Regenerate it with documentation.nvim's map generator" }
+          { "Regenerate it with docmap.nvim's map generator" }
         )
       elseif fresh.status == "missing" then
         health.info("module graph: " .. fresh.message .. " (the built-in heuristic is used)")
@@ -477,7 +477,7 @@ local function check_extensions(health)
       end
     else
       health.info(
-        "documentation.nvim contract is not on the runtimepath: --changed / --since / --affected use the built-in heuristic (conservative, project-local)"
+        "docmap.nvim contract is not on the runtimepath: --changed / --since / --affected use the built-in heuristic (conservative, project-local)"
       )
     end
   end

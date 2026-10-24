@@ -661,10 +661,10 @@ Otherwise a changed spec selects itself, and
 - ignored files (`.gitignore`) below `lua/` and the spec roots that are newer than the base revision count as changed
   (generated modules; git cannot diff what it ignores).
 
-### The graph: documentation.nvim contract, soft-required
+### The graph: docmap.nvim contract, soft-required
 
 ```lua
-require("documentation.testing").affected_specs({ root = root, changed = { "lua/a/b.lua", ... }, spec_roots = { "TESTS" } })
+require("docmap.testing").affected_specs({ root = root, changed = { "lua/a/b.lua", ... }, spec_roots = { "TESTS" } })
   -> { version = 1, specs = { "TESTS/x_spec.lua", ... },                 -- relative paths
        modules = { { id, module, path, role = "changed"|"dependent", specs }, ... },
        unplaced_specs = { "TESTS/dyn_spec.lua" },                        -- the graph cannot place them: run them too
@@ -674,7 +674,7 @@ require("documentation.testing").affected_specs({ root = root, changed = { "lua/
    | nil, err
 ```
 
-This is the shape `documentation.nvim` (`docs/testing-contract.md` there) really answers; a recorded real answer is
+This is the shape `docmap.nvim` (`docs/testing-contract.md` there) really answers; a recorded real answer is
 in `TESTS/testing/fixtures/affected/`, and the consumer is tested against it. **The graph only adds.** It cannot see a
 `require` built from a variable, a spec that names a file by path, or a spec outside the directories it scans; the
 heuristic below sees those. The selection is the union of what the heuristic reaches and what the graph names (plus
@@ -710,7 +710,7 @@ change of a `lua/` file. `testing doctor` is to warn on `stale` and `missing`.
 Cross-repo **selection** (running the specs of the plugins that use lib.nvim) is not done by testing.nvim: a changed
 file of another checkout is not a changed file of this project, and a selection never contains a spec of another
 repository. What it does is **name** them: `--consumers <dir>` (or `affected.consumers` in `.testing.lua`) passes the
-directory to `affected_specs` of documentation.nvim, reads `cross_repo` (per consumer: the affected specs relative to
+directory to `affected_specs` of docmap.nvim, reads `cross_repo` (per consumer: the affected specs relative to
 that consumer's root, or `measured = false` for a checkout without a usable map; "not measured" is not "not
 affected") and prints it; see [CLI.md](CLI.md#affected-selection). It is a hint that never changes the selection of
 this project. The cache covers the other direction: a spec that loads lib.nvim has the lib.nvim files it loads in its
@@ -730,7 +730,7 @@ pure specs is about a third faster warm (markdown.nvim 18.0 s to 12.3 s with 27 
 whose files read the clock, start processes or name places outside the project gets almost nothing (images.nvim,
 casedesk.nvim), a cold `--cached` run costs a few percent to a third more than a plain one (the first hashing), and a
 key of 100 specs costs about 70 ms once the index is warm. The selection is a superset: lib.nvim 60 of 87 specs on
-average, documentation.nvim 67 of 107, with everything selected for a change nobody can place and nothing for a change
+average, docmap.nvim 67 of 107, with everything selected for a change nobody can place and nothing for a change
 that only touches CI files.
 
 ## Limits and decisions
@@ -756,7 +756,7 @@ that only touches CI files.
   or `--cache-refresh` where that matters.
 - A run with cache hits keeps the sentinel (`TESTING_OK`): the cache promises the verdict of a full run. A script that
   must not be satisfied by earlier results passes `--no-cache`; CI does not use the cache by default.
-- The graph of `documentation.nvim` does not see a `require(variable)` (documentation.nvim task); this consumer does
+- The graph of `docmap.nvim` does not see a `require(variable)` (docmap.nvim task); this consumer does
   not depend on that, because the heuristic sees it and the selection is the union.
 - What the scanner does NOT count as a hidden input (each has a spec that turns red when the rule is dropped, and the
   contrary cases that still count): a table field or injected function named `environ` (`ctx.environ`, `environ = fake`:

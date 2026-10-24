@@ -116,13 +116,7 @@ M.MANUAL = {
     "compare with lib.nvim's docs/modules.md: " .. JUDGEMENT
   ),
   manual("NEW-18", "recommended", "NEW_PROJECT", "Reusable code moved to lib.nvim", JUDGEMENT),
-  manual(
-    "NEW-19",
-    "recommended",
-    "NEW_PROJECT",
-    "documentation.nvim as a dev dependency",
-    JUDGEMENT
-  ),
+  manual("NEW-19", "recommended", "NEW_PROJECT", "docmap.nvim as a dev dependency", JUDGEMENT),
   manual("NEW-20", "recommended", "NEW_PROJECT", "scripts/gen_map.lua per REUSE.md", JUDGEMENT),
   manual(
     "NEW-21",

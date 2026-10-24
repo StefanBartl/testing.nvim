@@ -109,7 +109,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field affected? boolean|string `--affected` / `--affected=<rev>`: the specs the changes since `<rev>` (default `HEAD~1`) can reach
 ---@field changed boolean `--changed`: the specs the working tree against `HEAD` can reach
 ---@field since? string `--since <rev>`: the specs the working tree against `<rev>` can reach
----@field consumers? string `--consumers <dir>`: also ask documentation.nvim which specs of the checkouts below `<dir>` the changes reach (a hint, never a narrowing)
+---@field consumers? string `--consumers <dir>`: also ask docmap.nvim which specs of the checkouts below `<dir>` the changes reach (a hint, never a narrowing)
 ---@field retry_failed? integer `--retry-failed <n>` (1..10): a red case runs again up to `n` times; one that passes is `flaky` and the run stays red
 ---@field allow_flaky boolean `--allow-flaky`: a case that failed and then passed on a retry counts as green (it is still listed as flaky and never cached)
 ---@field host? "c"|"l" `--host c|l`: how a child starts (`c` = plenary-like `-c`, `l` = `nvim -l`)
@@ -705,7 +705,7 @@ local OPTIONS = {
     kind = "value",
     field = "consumers",
     arg = "<dir>",
-    help = "with --changed, --since or --affected: name the specs of the checkouts below <dir> that the changes reach (documentation.nvim; a hint, it never narrows this project's selection)",
+    help = "with --changed, --since or --affected: name the specs of the checkouts below <dir> that the changes reach (docmap.nvim; a hint, it never narrows this project's selection)",
   },
   {
     name = "retry_failed",

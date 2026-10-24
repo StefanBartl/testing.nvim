@@ -148,7 +148,7 @@ reporter registries; whether the command-line runner can find lib.nvim; the
 file configures them (modes, allowances, pool size; a warning when every guard
 is off, an error when a module of the isolation machinery does not load); the
 effective configuration; whether the result cache directory can be written, whether
-the documentation.nvim module graph of the affected selection is available and
+the docmap.nvim module graph of the affected selection is available and
 current, and whether the conformance suite and the surface report load; and
 whether |:Testing| is registered.
 
@@ -215,7 +215,7 @@ Selection ~
   --consumers {dir}
                      With one of the three above: name the specs of the
                      checkouts below {dir} (projects that use this one) that
-                     the change reaches (documentation.nvim). A hint, it never
+                     the change reaches (docmap.nvim). A hint, it never
                      changes what runs here. Also `affected.consumers` in
                      `.testing.lua`.
   --cache-dir {dir}  Base directory of the result cache (default stdpath('cache');

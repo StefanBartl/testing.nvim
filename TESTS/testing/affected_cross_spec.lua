@@ -1,7 +1,7 @@
 -- TESTS/testing/affected_cross_spec.lua -- the consumers of a change (`--consumers`, `affected.consumers`):
--- documentation.nvim answers `cross_repo`, this runner reads it, says what it means, and NEVER lets it
+-- docmap.nvim answers `cross_repo`, this runner reads it, says what it means, and NEVER lets it
 -- change what runs in this project. The recording (fixtures/affected/documentation_answer_cross_repo.json)
--- is a real answer of `documentation.testing.affected_specs` of documentation.nvim for a change of lib.nvim
+-- is a real answer of `docmap.testing.affected_specs` of docmap.nvim for a change of lib.nvim
 -- with `consumers` = the directory of the checkouts (module map of lib.nvim stale at that moment, one measured
 -- consumer, three not measured). To record again: call `affected_specs({ root = ..., changed = ...,
 -- consumers = ... })` and write the table with `vim.json.encode`.
@@ -163,7 +163,7 @@ return function(H)
     "a consumer spec with the name of an own spec selects nothing here"
   )
 
-  -- ---- an answer without cross_repo (an older documentation.nvim) --------------------------------------
+  -- ---- an answer without cross_repo (an older docmap.nvim) --------------------------------------
   local old = complete_answer()
   old.cross_repo = nil
   r = select_with(old, "/c")
@@ -272,7 +272,7 @@ return function(H)
     ok(
       table
         .concat(res.warnings, "\n")
-        :find("cross-repo: no consumer was measured (documentation.nvim gave no answer", 1, true)
+        :find("cross-repo: no consumer was measured (docmap.nvim gave no answer", 1, true)
         ~= nil,
       "no answer: said"
     )
