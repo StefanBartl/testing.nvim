@@ -141,7 +141,7 @@ return function(H)
   local adding = vim.tbl_extend("force", ctx, {
     is_self = false,
     dep_step = function(name, prefix)
-      return scaffold.dep_step(name, "StefanBartl", prefix)
+      return scaffold.dep_step(name, "WKDSteve", prefix)
     end,
   })
   local root_layout = ci.edit(workflow(nil, "lib.nvim", WS .. "/lib.nvim"), adding)

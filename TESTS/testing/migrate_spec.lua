@@ -1099,7 +1099,7 @@ jobs:
       fleet_deps = { "lib.nvim" },
       is_self = false,
       dep_step = function(name, prefix)
-        return scaffold.dep_step(name, "StefanBartl", prefix)
+        return scaffold.dep_step(name, "WKDSteve", prefix)
       end,
       artifact_step = function(suffix)
         local t = assert(scaffold.render_template("ci_artifact_step.yml.tpl", { SUFFIX = suffix }))

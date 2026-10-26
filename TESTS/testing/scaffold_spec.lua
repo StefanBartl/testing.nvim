@@ -541,7 +541,7 @@ return function(H)
   -- ---------------------------------------------------------------- pieces the migration reuses
 
   -- the run arguments baked into test.sh: empty for `init` (byte-identical to before), a vetted block otherwise
-  local vars = assert(scaffold.build_vars("pl", { "lib.nvim" }, "StefanBartl"))
+  local vars = assert(scaffold.build_vars("pl", { "lib.nvim" }, "WKDSteve"))
   eq(vars.RUN_ARGS, "", "build_vars: no extra run arguments by default")
   eq(vars.ALL_DEPS, { "testing.nvim", "lib.nvim" }, "build_vars: the runner comes first")
   eq(vars.PLUGIN, "pl", "build_vars: the plugin")
@@ -549,7 +549,7 @@ return function(H)
   has(plain_sh, 'run . "$@"', "render_template: no run arguments leave no gap")
   lacks(plain_sh, "run .  ", "render_template: and no double space")
   local sentinel_vars =
-    assert(scaffold.build_vars("pl", {}, "StefanBartl", { RUN_ARGS = " --sentinel 'PL_OK'" }))
+    assert(scaffold.build_vars("pl", {}, "WKDSteve", { RUN_ARGS = " --sentinel 'PL_OK'" }))
   has(
     assert(scaffold.render_template("test.sh.tpl", sentinel_vars)),
     "run . --sentinel 'PL_OK' \"$@\"",
@@ -578,7 +578,7 @@ return function(H)
     "dep_step: with the owner given"
   )
   for _, bad_prefix in ipairs({ "../", "/abs/", "a b/", "x;y/", "$(id)/", 42 }) do
-    local t, e = scaffold.dep_step("lib.nvim", "StefanBartl", bad_prefix)
+    local t, e = scaffold.dep_step("lib.nvim", "WKDSteve", bad_prefix)
     eq(t, nil, "dep_step refuses the prefix " .. vim.inspect(bad_prefix))
     eq(e, "invalid path prefix", "with a reason")
   end
