@@ -40,7 +40,7 @@ local render = require("testing.scaffold.render")
 local M = {}
 
 ---Owner of the GitHub repositories the generated CI checks the dependencies out of.
-M.DEFAULT_OWNER = "StefanBartl"
+M.DEFAULT_OWNER = "WKDSteve"
 
 ---Branch the generated CI checks the dependencies out of: it only moves once their own CI is green.
 M.DEFAULT_REF = "ci-verified"
