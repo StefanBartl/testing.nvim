@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       # plenary is the busted-compatible harness
@@ -218,7 +218,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       - run: nvim -n -i NONE --headless -u NONE -c "set rtp+=." -l TESTS/run.lua
@@ -572,7 +572,7 @@ jobs:
   lacks(new_ci, "PLENARY_PATH", "and its environment")
   lacks(new_ci, "\n        env:\n", "the emptied env block goes with it")
   has(new_ci, "      - name: Run\n        shell: bash\n", "a Windows job gets bash for the step")
-  has(new_ci, 'repository: "StefanBartl/testing.nvim"', "testing.nvim is checked out")
+  has(new_ci, 'repository: "WKDSteve/testing.nvim"', "testing.nvim is checked out")
   has(
     new_ci,
     "path: .deps/testing.nvim\n          ref: ci-verified",
@@ -589,7 +589,7 @@ jobs:
     "-          repository: nvim-lua/plenary.nvim",
     "the diff shows the removed plenary checkout"
   )
-  has(wfop.diff, '+          repository: "StefanBartl/testing.nvim"', "and the added one")
+  has(wfop.diff, '+          repository: "WKDSteve/testing.nvim"', "and the added one")
   has(wfop.reason, "plenary.nvim checkout step is removed", "the reason names the edits")
   -- the comment above the removed checkout is removed with its step
   lacks(new_ci, "busted-compatible harness", "a step's own comment goes with it")
@@ -1117,7 +1117,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
         with:
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: lib.nvim
           ref: ci-verified
       - name: one
@@ -1320,7 +1320,7 @@ jobs:
       "      - uses: actions/checkout@v4",
       "      - uses: actions/checkout@v4 # the diff plugin",
       "        with:",
-      "          repository: StefanBartl/diff.nvim",
+      "          repository: WKDSteve/diff.nvim",
       "          path: .deps/diff.nvim",
       "",
     }, "\n")

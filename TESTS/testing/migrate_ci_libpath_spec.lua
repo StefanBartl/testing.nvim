@@ -61,7 +61,7 @@ return function(H)
     vim.list_extend(lines, {
       "      - uses: actions/checkout@v5",
       "        with:",
-      "          repository: StefanBartl/lib.nvim",
+      "          repository: WKDSteve/lib.nvim",
       "          path: " .. lib_path,
       "          ref: ci-verified",
       "      - name: Run the specs",

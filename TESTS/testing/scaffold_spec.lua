@@ -287,9 +287,9 @@ return function(H)
     "if: failure()",
     "testing-ir.json",
     "scripts/test.sh --json",
-    'repository: "StefanBartl/testing.nvim"',
+    'repository: "WKDSteve/testing.nvim"',
     "path: .deps/testing.nvim",
-    'repository: "StefanBartl/lib.nvim"',
+    'repository: "WKDSteve/lib.nvim"',
     "path: .deps/lib.nvim",
     "set -o pipefail",
   }) do
@@ -565,7 +565,7 @@ return function(H)
   -- dep_step: the checkout step of one dependency, in the layout of the job
   local step = assert(scaffold.dep_step("lib.nvim"))
   has(step, "path: .deps/lib.nvim\n", "dep_step: .deps/ by default")
-  has(step, 'repository: "StefanBartl/lib.nvim"', "dep_step: from the owner's repository")
+  has(step, 'repository: "WKDSteve/lib.nvim"', "dep_step: from the owner's repository")
   has(step, "ref: ci-verified", "dep_step: from the verified branch")
   has(
     assert(scaffold.dep_step("ui.nvim", "someone", "")),

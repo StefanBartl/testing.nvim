@@ -125,7 +125,7 @@ jobs:
 
       - uses: actions/checkout@v5
         with:
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: lib.nvim
           ref: ci-verified
 
@@ -189,7 +189,7 @@ jobs:
   local ci_text = ci_op.after
   has(
     ci_text,
-    'repository: "StefanBartl/color_my_ascii.nvim"\n          path: color_my_ascii.nvim\n          ref: main',
+    'repository: "WKDSteve/color_my_ascii.nvim"\n          path: color_my_ascii.nvim\n          ref: main',
     "a dependency without ci-verified is checked out from main"
   )
   has(
@@ -207,8 +207,8 @@ jobs:
     "dependency color_my_ascii.nvim has no ci-verified branch: pinned to main",
     "the plan says so"
   )
-  ok(vim.tbl_contains(asked, "StefanBartl/color_my_ascii.nvim"), "the seam was asked, not the net")
-  local ref_count = select(2, ci_text:gsub('repository: "StefanBartl/color_my_ascii.nvim"', ""))
+  ok(vim.tbl_contains(asked, "WKDSteve/color_my_ascii.nvim"), "the seam was asked, not the net")
+  local ref_count = select(2, ci_text:gsub('repository: "WKDSteve/color_my_ascii.nvim"', ""))
   eq(ref_count, 1, "and the step exists once")
   lacks(
     table.concat(plan.risks, "\n"),
@@ -224,7 +224,7 @@ jobs:
   local unknown_ci = assert(op_by_path(plan_unknown, ".github/workflows/ci.yml")).after
   has(
     unknown_ci,
-    'repository: "StefanBartl/color_my_ascii.nvim"\n          path: color_my_ascii.nvim\n          ref: ci-verified',
+    'repository: "WKDSteve/color_my_ascii.nvim"\n          path: color_my_ascii.nvim\n          ref: ci-verified',
     "an unanswerable question keeps ci-verified"
   )
   has(

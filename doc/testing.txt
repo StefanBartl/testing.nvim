@@ -38,7 +38,7 @@ help is in the repository's docs/ directory.
 2. Requirements                                               *testing-requirements*
 
   - Neovim 0.10 or newer
-  - lib.nvim (hard dependency): https://github.com/StefanBartl/lib.nvim, at
+  - lib.nvim (hard dependency): https://github.com/WKDSteve/lib.nvim, at
     least the commits 6304829 (fs.write.atomic) and 89cb912 (safe_call keeps
     non-string errors)
 
@@ -53,8 +53,8 @@ skipped.
 
 With lazy.nvim: >lua
     {
-      "StefanBartl/testing.nvim",
-      dependencies = { "StefanBartl/lib.nvim" },
+      "WKDSteve/testing.nvim",
+      dependencies = { "WKDSteve/lib.nvim" },
       cmd = "Testing",
       opts = {},
     }

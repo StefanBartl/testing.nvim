@@ -22,14 +22,14 @@
 [![Lua](https://img.shields.io/badge/Lua-5.1%2FLuaJIT-2C2D72?logo=lua&logoColor=white)](https://www.lua.org)
 ![Status](https://img.shields.io/badge/status-pre--alpha-red)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
-[![CI](https://github.com/StefanBartl/testing.nvim/actions/workflows/ci.yml/badge.svg)](https://github.com/StefanBartl/testing.nvim/actions/workflows/ci.yml)
+[![CI](https://github.com/WKDSteve/testing.nvim/actions/workflows/ci.yml/badge.svg)](https://github.com/WKDSteve/testing.nvim/actions/workflows/ci.yml)
 
-> Sister plugin: [runtime-analysis.nvim](https://github.com/StefanBartl/runtime-analysis.nvim) —
+> Sister plugin: [runtime-analysis.nvim](https://github.com/WKDSteve/runtime-analysis.nvim) —
 > runtime truth for plugins (telemetry, live module inspection), the counterpart to what a test
 > run tells you about them.
 
 A test runner and orchestration layer for Neovim plugins, built on
-[lib.nvim](https://github.com/StefanBartl/lib.nvim). The goal is to replace busted and plenary for
+[lib.nvim](https://github.com/WKDSteve/lib.nvim). The goal is to replace busted and plenary for
 the author's plugins and to replace, extend and improve their hand-written test harnesses, with the
 existing specs running **unchanged**. What is true today: the runner runs `describe`/`it` specs
 **without plenary or busted** (verified on the 13 plenary repositories of the fleet, with a probe that
@@ -259,7 +259,7 @@ runs); `assertions = "warn"` keeps their verdict and the terminal lists them.
 ## Requirements
 
 - Neovim 0.10 or newer.
-- [lib.nvim](https://github.com/StefanBartl/lib.nvim), a hard dependency, and new enough to contain
+- [lib.nvim](https://github.com/WKDSteve/lib.nvim), a hard dependency, and new enough to contain
   `lib.nvim.fs.write.atomic` (commit `6304829`) and the `lib.lua.error.safe_call` that keeps
   non-string errors (commit `89cb912`). An older checkout fails with
   `module 'lib.nvim.fs.write.atomic' not found`; `:checkhealth testing` names the missing module and
@@ -275,8 +275,8 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  "StefanBartl/testing.nvim",
-  dependencies = { "StefanBartl/lib.nvim" },
+  "WKDSteve/testing.nvim",
+  dependencies = { "WKDSteve/lib.nvim" },
   cmd = "Testing",
   opts = {},
 }

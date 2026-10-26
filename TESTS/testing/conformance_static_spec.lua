@@ -422,7 +422,7 @@ return function(H)
     S.remove(exempt, "stylua.toml")
     S.write(exempt .. "/.stylua.toml", 'line_endings = "Unix"\n')
     -- a lazy.nvim plugin spec and a generator's template share the name `*_spec.lua` with real tests
-    S.write(exempt .. "/lua/goodp/plugin_spec.lua", 'return { "StefanBartl/goodp.nvim" }\n')
+    S.write(exempt .. "/lua/goodp/plugin_spec.lua", 'return { "WKDSteve/goodp.nvim" }\n')
     S.write(exempt .. "/lua/goodp/tmpl_spec.lua", 'describe("${name}", function() end)\n')
     S.write(
       exempt .. "/TESTS/a_spec.lua",
@@ -564,7 +564,7 @@ return function(H)
     ok(created >= 4, "the hostile names exist on this platform (" .. created .. ")")
     S.write(
       hostile .. "/README.md",
-      '# goodp\n\n## Installation\n\n```lua\n{ "StefanBartl/goodp.nvim", cmd = "Goodp" }\n```\n\n'
+      '# goodp\n\n## Installation\n\n```lua\n{ "WKDSteve/goodp.nvim", cmd = "Goodp" }\n```\n\n'
         .. "## License\n\nWKDBooks/Development \27]0;pwned\7 \27[31mred\27[0m \226\128\174bidi \255\254 end\n"
     )
     rep = run(hostile, { "K1", "K7", "K15" })

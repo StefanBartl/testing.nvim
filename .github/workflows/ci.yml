@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1
@@ -125,14 +125,14 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: .deps/lib.nvim
           ref: ci-verified
       # telemetry_wrap_spec.lua needs the real runtime-analysis.telemetry module on the runtimepath.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-          repository: StefanBartl/runtime-analysis.nvim
+          repository: WKDSteve/runtime-analysis.nvim
           path: .deps/runtime-analysis.nvim
           ref: ci-verified
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1

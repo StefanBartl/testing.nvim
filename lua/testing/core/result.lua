@@ -475,7 +475,7 @@ end
 
 ---Plain, optionally case-insensitive replacement of `word` where it stands alone: not touching a
 ---letter, digit or underscore on either side, so `bartl` is replaced in `by bartl.` but not in
----`StefanBartl/x` or in `compass`.
+---`WKDSteve/x` or in `compass`.
 ---@param s string
 ---@param word string
 ---@param repl string
@@ -884,7 +884,7 @@ local function scan_leaks(value, path, opts, problems, depth)
       or path:find("%.reason$")
     for _, bad in ipairs((free_text or not opts.forbid_free_text_only) and opts.forbid or {}) do
       -- Whole word, case-insensitive: the user name `bartl` is a leak in `by bartl` but not in the
-      -- public handle `StefanBartl/lib.nvim`.
+      -- public handle `WKDSteve/lib.nvim`.
       if bad ~= "" and replace_word(value, bad, "", true) ~= value then
         problems[#problems + 1] = opts.leak_warnings
             and ("%s: contains a forbidden word (a user or host name)"):format(path)

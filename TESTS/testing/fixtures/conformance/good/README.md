@@ -6,7 +6,7 @@ A conformant fixture plugin of testing.nvim's conformance suite.
 
 ```lua
 {
-  "StefanBartl/goodp.nvim",
+  "WKDSteve/goodp.nvim",
   cmd = "Goodp",
   opts = {},
 }

@@ -143,7 +143,7 @@ jobs:
       # lib.nvim is found by scripts/minimal_init.lua in .deps/
       - uses: actions/checkout@v4
         with:
-          repository: StefanBartl/lib.nvim
+          repository: WKDSteve/lib.nvim
           path: .deps/lib.nvim
       - uses: actions/checkout@v4
         with:

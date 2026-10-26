@@ -90,7 +90,7 @@ local function check_lib(health)
     else
       all_ok = false
       health.error(("%s missing -- %s"):format(req[1], req[2]), {
-        'Install or update "StefanBartl/lib.nvim" and list it as a dependency',
+        'Install or update "WKDSteve/lib.nvim" and list it as a dependency',
         LIB_HINT,
       })
     end
