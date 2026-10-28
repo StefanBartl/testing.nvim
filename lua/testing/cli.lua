@@ -477,6 +477,10 @@ local function execute(argv, sv)
   if argv[1] == "conformance" or argv[1] == "surface" then
     return run_own(argv[1], vim.list_slice(argv, 2), sv)
   end
+  -- `testing ci`: the pipeline of `.testing.lua` (`ci` section), its own arguments and exit codes (docs/CI.md)
+  if argv[1] == "ci" then
+    return require("testing.ci").main(vim.list_slice(argv, 2), sv)
+  end
   -- `testing explain`: its own flags (--all, --json, --parts) are taken out, the rest is a run's arguments
   local explain_own
   if argv[1] == "explain" then

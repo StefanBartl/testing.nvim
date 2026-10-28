@@ -115,6 +115,10 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
   keymaps, commands and autocmds and, from a run with `surface = { track = true }`, how many of them the
   specs exercised. Both report first; neither is a gate by default.
+- **The pipeline** ([docs/CI.md](docs/CI.md)): `testing ci` runs a repository's whole check pipeline locally
+  (stylua, luacheck, the suite, conformance, steps of its own) from the `ci` section of `.testing.lua`: profiles,
+  presets, argv steps with a deadline that kills the process tree, a missing tool is exit `3` before anything
+  runs, and the document `testing-ci/1` in the state directory.
 - **The last result** ([docs/STATE.md](docs/STATE.md)): `testing.state` keeps the last result per case
   (`last.json`, merged over partial runs, with the staleness of each spec file) for an explorer, a hover or a
   statusline; a data module, no UI.
@@ -362,6 +366,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
+- [docs/CI.md](docs/CI.md): `testing ci`, the pipeline of a repository: the `ci` section, presets, exit codes, `testing-ci/1`.
 - [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format, the green stamp.
 - [docs/CI-CACHE.md](docs/CI-CACHE.md): the result cache and the stamp in CI with `actions/cache`.
 - [docs/HOOKS.md](docs/HOOKS.md): pre-push, pre-commit and Claude Code `Stop` hook recipes.

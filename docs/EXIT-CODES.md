@@ -44,6 +44,11 @@ and the `verdict:` line of the terminal report agree with that exit code (`RED .
 
 `scripts/test.sh` adds one case of its own: `nvim` not on `PATH` is exit `3`.
 
+`testing ci` ([CI.md](CI.md)) uses the four codes over its steps, the worst one decides: `0` every step green (or
+skipped for this system), `1` a red step (a timeout too), `2` a usage or pipeline error (every problem of the `ci`
+section is one), `3` a tool or dependency that is missing (checked before the first step: nothing runs) or a step
+that could not start. The sentinel `TESTING_CI_OK` follows only a complete green run, never a `--step` selection.
+
 ## A file that dies or hangs
 
 In a child editor (`isolated = "file"`, every `script`) one file cannot take the run down with it. A

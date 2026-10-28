@@ -484,6 +484,14 @@ local SCHEMA = {
     end,
     expect = "a table",
   },
+  -- `testing ci` validates the section itself and names every problem as an error (testing.ci.schema); loading the
+  -- configuration for anything else only checks that it is a table
+  ci = {
+    check = function(v)
+      return type(v) == "table"
+    end,
+    expect = "a table (the pipeline of `testing ci`, docs/CI.md)",
+  },
   conformance = {
     load_budget_ms = {
       check = function(v)
