@@ -331,6 +331,122 @@ function M.open_view(root)
   }
 end
 
+---Feed the live buffer from the two pipes of a child: one unfinished line per stream (a chunk of stdout that ends
+---mid-line is not glued to a chunk of stderr), a line shown as a terminal shows it (the text after the last carriage
+---return). `feed(stream)` is the pipe callback, `flush()` writes what is left when the process has ended.
+---@param view { append: fun(lines: string[]) }
+---@return fun(stream: "out"|"err"): fun(_: any, data: string|nil) feed
+---@return fun() flush
+function M.feeder(view)
+  local partial = { out = "", err = "" }
+  ---@param line string
+  ---@return string
+  local function shown(line)
+    return (line:gsub("\r+$", ""):match("[^\r]*$"))
+  end
+  local function feed(stream)
+    return function(_, data)
+      if not data or data == "" then
+        return
+      end
+      vim.schedule(function()
+        local lines = vim.split(partial[stream] .. data, "\n", { plain = true })
+        partial[stream] = table.remove(lines)
+        for i, line in ipairs(lines) do
+          lines[i] = shown(line)
+        end
+        if #lines > 0 then
+          view.append(lines)
+        end
+      end)
+    end
+  end
+  local function flush()
+    for _, stream in ipairs({ "out", "err" }) do
+      if partial[stream] ~= "" then
+        view.append({ shown(partial[stream]) })
+        partial[stream] = ""
+      end
+    end
+  end
+  return feed, flush
+end
+
+---The arguments of `testing ci --repos ...` for the settings of the editor and the flags of the command.
+---@param ci_cfg Testing.CiConfig
+---@param flags { force?: boolean, jobs?: string, profile?: string, refresh?: boolean, ["keep-going"]?: boolean, reuse?: boolean, ["repos-root"]?: string }
+---@return string[]
+function M.repos_args(ci_cfg, flags)
+  local args = {}
+  local roots = flags["repos-root"] and { flags["repos-root"] } or ci_cfg.repos.roots
+  for _, root in ipairs(roots) do
+    args[#args + 1] = "--repos-root=" .. vim.fs.normalize(root)
+  end
+  if #ci_cfg.repos.include > 0 then
+    args[#args + 1] = "--repos-include=" .. table.concat(ci_cfg.repos.include, ",")
+  end
+  if #ci_cfg.repos.exclude > 0 then
+    args[#args + 1] = "--repos-exclude=" .. table.concat(ci_cfg.repos.exclude, ",")
+  end
+  for _, name in ipairs({ "force", "refresh", "keep-going", "reuse" }) do
+    if flags[name] then
+      args[#args + 1] = "--" .. name
+    end
+  end
+  if flags.jobs then
+    args[#args + 1] = "--jobs=" .. flags.jobs
+  end
+  if flags.profile then
+    args[#args + 1] = "--profile=" .. flags.profile
+  end
+  return args
+end
+
+---Run the pipelines of several repositories (`testing ci --repos ...`) in a child; the output streams into the view
+---`testing-ci://repos`. Returns false with a reason when one is already running or the child cannot start.
+---@param o { args: string[], cwd: string, on_done?: fun(code: integer) }
+---@return boolean started
+---@return string|nil err
+function M.run_repos(o)
+  local entry = M.state["*repos*"] or {}
+  M.state["*repos*"] = entry
+  if entry.running then
+    return false, "a multi-repository run is already going"
+  end
+  local view = M.open_view("/repos")
+  local feed, flush = M.feeder(view)
+  local argv = M.child_argv(o.cwd, vim.list_extend({ "ci" }, o.args))
+  table.remove(argv) -- the multi-repository run takes no --root: it works on the repositories it is told about
+  entry.running = true
+  local ok, started = pcall(M.system, argv, {
+    cwd = o.cwd,
+    text = true,
+    timeout = M.TIMEOUT_MS,
+    stdout = feed("out"),
+    stderr = feed("err"),
+  }, function(res)
+    vim.schedule(function()
+      flush()
+      entry.running = false
+      local code = res.code or -1
+      local notify = require("testing.notify").get()
+      if code == 0 then
+        notify.info("ci repos: all green or proven")
+      else
+        notify.error(("ci repos: exit %d (see %s)"):format(code, M.view_name("/repos")))
+      end
+      if o.on_done then
+        o.on_done(code)
+      end
+    end)
+  end)
+  if not ok or not started then
+    entry.running = false
+    return false, tostring(started)
+  end
+  return true
+end
+
 ---Start a pipeline run. Returns false with a reason when one is already running or the child cannot start.
 ---@param o { root: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, on_done?: fun(verdict: table) }
 ---@return boolean started
@@ -352,41 +468,10 @@ function M.run(o)
     reuse = o.reuse,
   })
   local view = M.open_view(o.root)
-  -- one unfinished line per stream: a chunk of stdout that ends mid-line is not glued to a chunk of stderr
-  local partial = { out = "", err = "" }
-  ---A line as a terminal shows it: the text after the last carriage return (a progress line rewrites itself).
-  ---@param line string
-  ---@return string
-  local function shown(line)
-    return (line:gsub("\r+$", ""):match("[^\r]*$"))
-  end
-  ---@param stream "out"|"err"
-  ---@return fun(_: any, data: string|nil)
-  local function feed(stream)
-    return function(_, data)
-      if not data or data == "" then
-        return
-      end
-      vim.schedule(function()
-        local lines = vim.split(partial[stream] .. data, "\n", { plain = true })
-        partial[stream] = table.remove(lines)
-        for i, line in ipairs(lines) do
-          lines[i] = shown(line)
-        end
-        if #lines > 0 then
-          view.append(lines)
-        end
-      end)
-    end
-  end
+  local feed, flush = M.feeder(view)
   local function finish(res)
     vim.schedule(function()
-      for _, stream in ipairs({ "out", "err" }) do
-        if partial[stream] ~= "" then
-          view.append({ shown(partial[stream]) })
-          partial[stream] = ""
-        end
-      end
+      flush()
       entry.running = false
       local doc = read_json(json)
       pcall(os.remove, json)

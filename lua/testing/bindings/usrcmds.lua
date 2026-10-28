@@ -321,6 +321,28 @@ function M.ci_run(ctx)
   require("testing.notify").get().info("testing ci: " .. root)
 end
 
+---`:Testing ci repos`: the pipelines of the repositories of `ci.repos` (setup option) in one child.
+---@param ctx { args: table<string, any>, flags: table<string, any> }
+function M.ci_repos(ctx)
+  local editor = require("testing.ci.editor")
+  local cfg = require("testing.config").get().ci
+  if #cfg.repos.roots == 0 and not ctx.flags["repos-root"] then
+    require("testing.notify")
+      .get()
+      .error("testing ci repos: set ci.repos.roots in setup() (or pass --repos-root=<dir>)")
+    return
+  end
+  local started, err = editor.run_repos({
+    args = editor.repos_args(cfg, ctx.flags),
+    cwd = M.resolve_root(nil, vim.api.nvim_buf_get_name(0)),
+  })
+  if not started then
+    require("testing.notify").get().error("testing ci repos: " .. tostring(err))
+    return
+  end
+  require("testing.notify").get().info("testing ci repos: started")
+end
+
 ---`:Testing ci status`: the last document of the project as lines in a viewer.
 ---@param root string
 function M.ci_status(root)
@@ -808,6 +830,38 @@ function M.routes()
       },
       run = function(ctx)
         M.ci_run(ctx)
+      end,
+    },
+    {
+      path = { "ci", "repos" },
+      desc = "Run the pipelines of the repositories of ci.repos one after the other (verify first)",
+      flags = {
+        {
+          name = "force",
+          bool = true,
+          desc = "Run even a repository whose state is already proven",
+        },
+        {
+          name = "refresh",
+          bool = true,
+          desc = "Rebuild the cached detection of the repositories",
+        },
+        { name = "jobs", type = "STRING", desc = "Repositories at the same time (1 to 16)" },
+        { name = "profile", type = M.TYPE_CI_PROFILE, desc = "The profile of every repository" },
+        {
+          name = "keep-going",
+          bool = true,
+          desc = "Run every step of a repository after a red one",
+        },
+        { name = "reuse", bool = true, desc = "Skip a suite whose stamp still verifies" },
+        {
+          name = "repos-root",
+          type = "DIR",
+          desc = "Use this directory instead of ci.repos.roots",
+        },
+      },
+      run = function(ctx)
+        M.ci_repos(ctx)
       end,
     },
     {

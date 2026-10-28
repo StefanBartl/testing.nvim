@@ -14,7 +14,7 @@ local M = {}
 --- config object, which keeps the merge, `get()` and `reset()` the same as in every other plugin.
 local cfg = require("lib.lua.config").new(DEFAULTS, {
   name = "testing",
-  schema = { keymaps = "table|false" },
+  schema = { keymaps = "table|false", ci = "table" },
 })
 
 ---Per-key type check; the single source of truth for which keys exist.
@@ -25,6 +25,32 @@ local CHECKS = {
   end,
   keymaps = function(v)
     return v == false or type(v) == "table"
+  end,
+  ci = function(v)
+    if type(v) ~= "table" then
+      return false
+    end
+    local repos = v.repos
+    if repos == nil then
+      return true
+    end
+    if type(repos) ~= "table" then
+      return false
+    end
+    for _, list in ipairs({ "roots", "include", "exclude" }) do
+      local items = repos[list]
+      if items ~= nil then
+        if type(items) ~= "table" then
+          return false
+        end
+        for _, item in ipairs(items) do
+          if type(item) ~= "string" or item == "" then
+            return false
+          end
+        end
+      end
+    end
+    return true
   end,
 }
 

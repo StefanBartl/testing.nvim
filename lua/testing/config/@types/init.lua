@@ -11,10 +11,22 @@
 ---| table<string, string|string[]|false>
 ---| false
 
+---@class Testing.CiRepos
+---@field roots string[] Directories whose sub-directories with a `ci` section are run by `:Testing ci repos` (env variables are expanded).
+---@field include string[] Of the found ones only these directory names (empty: all).
+---@field exclude string[] Leave these directory names out.
+
+---@class Testing.CiConfig
+---@field repos Testing.CiRepos
+
+---@class Testing.CiConfigOptions
+---@field repos? { roots?: string[], include?: string[], exclude?: string[] }
+
 ---@class Testing.Config
 --- The effective configuration: `DEFAULTS` with the user's valid options merged on top.
 ---@field notify_prefix string Prefix of every message shown through lib.nvim.notify. Non-empty.
 ---@field keymaps Testing.KeymapsConfig Named keymap actions to rebind or drop; empty by default.
+---@field ci Testing.CiConfig `:Testing ci` from the editor.
 ---@field project Testing.ProjectConfig Defaults of a project's `.testing.lua`; not settable through `setup()`.
 
 -- #####################################################################
@@ -145,5 +157,6 @@
 --- What the user passes to `setup()`: every key of `Testing.Config`, each optional.
 ---@field notify_prefix? string
 ---@field keymaps? Testing.KeymapsConfig
+---@field ci? Testing.CiConfigOptions
 
 return {}

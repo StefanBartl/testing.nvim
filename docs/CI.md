@@ -198,6 +198,40 @@ show up (uncommitted changes do not make a result stale; `ci verify` says `dirty
 `testing ci list` either: the first <Tab> after `.testing.lua` changed starts it, the next one has the names. Not part of this version: the progress indicator, the table for
 several repositories (`--repos`) and the terminal.nvim view.
 
+## Several repositories
+
+```
+testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list>
+           [--repos-include=<names>] [--repos-exclude=<names>] [--refresh]
+           [--force] [--jobs=<n>] [--profile=<name>] [--keep-going] [--reuse] [--state-dir=<dir>]
+```
+
+The pipelines of several repositories, one after the other. Every repository is a child process of its own, so
+pipelines never share a Neovim, a global or a working directory. For each one `testing ci verify` runs first: a repository
+whose state is already proven is **skipped** (`--force` runs it anyway), otherwise `testing ci` runs. After a change in
+a library that is the big saving: only the repositories whose proof broke run again. Output is streamed line by line with
+the repository's name in front; at the end there is one row per repository (`proven`/`not proven`/`forced`, the result,
+the time) and a verdict line `ci repos: GREEN 3/3 (2 proven, not run)`. The exit code is the worst single result
+(`0` green or proven, `1` red, `2` a usage or pipeline error, `3` infrastructure); the last line of an all-green run is
+`TESTING_CI_OK`.
+
+Which repositories: an explicit list (`--repos`, a list file with one directory per line), or every directory directly
+below a root (`--repos-root`, repeatable) whose `.testing.lua` has a `ci` section. That detection is textual (the file is
+not executed by the multi-repository run), cached in the state directory and rebuilt by `--refresh`; `--repos-include`
+and `--repos-exclude` narrow it by directory name (an included name that does not exist is still asked for, and fails
+loudly). `--jobs=<n>` (1 to 16) runs that many repositories at the same time.
+
+From the editor, the repositories are a setting, not a hard-wired list:
+
+```lua
+require("testing").setup({
+  ci = { repos = { roots = { "$REPOS_DIR" }, include = {}, exclude = { "scratch" } } },
+})
+```
+
+`:Testing ci repos [--force] [--jobs=<n>] [--profile=<name>] [--refresh] [--keep-going] [--reuse] [--repos-root=<dir>]`
+runs them in one child and streams the output into the buffer `testing-ci://repos-<hash>`.
+
 ## Reports and findings
 
 A process preset has an **error format** (Vim's `errorformat` items `%f` (a file name, no blanks), `%l`, `%c`, `%m`

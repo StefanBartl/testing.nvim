@@ -15,6 +15,10 @@ local DEFAULTS = {
   -- Named keymap actions (action name -> lhs | list of lhs | false). The plugin has no action
   -- yet, so nothing is bound by default; the table is where a user spec rebinds or drops them.
   keymaps = {},
+  -- `testing ci` from the editor. `repos`: the repositories `:Testing ci repos` runs one after the other
+  -- (docs/CI.md): `roots` are directories whose sub-directories with a `ci` section count ("$VAR" is expanded),
+  -- `include` / `exclude` narrow them by directory name.
+  ci = { repos = { roots = {}, include = {}, exclude = {} } },
   -- Defaults of `.testing.lua` in a project root.
   project = {
     -- Lua module root of the project (conformance and coverage need it); "" = the directory name

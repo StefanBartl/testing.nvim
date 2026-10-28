@@ -37,6 +37,7 @@ M.SENTINEL = "TESTING_CI_OK"
 M.USAGE = table.concat({
   "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse] [--agent|--no-agent] [--json=<file>]",
   "       testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--root=<dir>]",
+  "       testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list> [--force] [--jobs=<n>] ...",
   "       testing ci list [--json] [--root=<dir>]",
   "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
@@ -819,6 +820,9 @@ M.internal = {
 function M.main(argv, sv)
   if argv[1] == "verify" then
     return require("testing.ci.verify").main(vim.list_slice(argv, 2), sv)
+  end
+  if require("testing.ci.repos").wanted(argv) then
+    return require("testing.ci.repos").main(argv, sv)
   end
   if argv[1] == "list" then
     return require("testing.ci.list").main(vim.list_slice(argv, 2), sv)

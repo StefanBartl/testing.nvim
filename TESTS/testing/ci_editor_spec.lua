@@ -453,6 +453,114 @@ return function(H)
     error(err, 0)
   end
 
+  -- ------------------------------------------------------- the settings and `:Testing ci repos`
+
+  do
+    local config = require("testing.config")
+    local valid, problems =
+      config.validate({ ci = { repos = { roots = { "$REPOS_DIR" }, include = { "a" } } } })
+    eq(problems, {}, "config: ci.repos is a valid option")
+    eq(valid.ci.repos.roots, { "$REPOS_DIR" }, "config: ... and kept")
+    problems = select(2, config.validate({ ci = { repos = { roots = "x" } } }))
+    eq(#problems, 1, "config: roots must be a list")
+    problems = select(2, config.validate({ ci = { repos = { exclude = { 1 } } } }))
+    eq(#problems, 1, "config: the names are strings")
+    problems = select(2, config.validate({ ci = "x" }))
+    eq(#problems, 1, "config: ci is a table")
+    eq(
+      config.get().ci.repos,
+      { roots = {}, include = {}, exclude = {} },
+      "config: the defaults list nothing"
+    )
+
+    local cfg = { repos = { roots = { "/r1", "/r2" }, include = { "a", "b" }, exclude = { "c" } } }
+    eq(
+      editor.repos_args(cfg, { force = true, jobs = "2", profile = "fast", ["keep-going"] = true }),
+      {
+        "--repos-root=/r1",
+        "--repos-root=/r2",
+        "--repos-include=a,b",
+        "--repos-exclude=c",
+        "--force",
+        "--keep-going",
+        "--jobs=2",
+        "--profile=fast",
+      },
+      "repos_args: the settings and the flags"
+    )
+    eq(
+      editor.repos_args(
+        { repos = { roots = { "/r1" }, include = {}, exclude = {} } },
+        { ["repos-root"] = "/other" }
+      ),
+      { "--repos-root=/other" },
+      "repos_args: --repos-root replaces the settings"
+    )
+  end
+
+  vim.notify = function(msg, level)
+    messages[#messages + 1] = { msg = tostring(msg), level = level }
+  end
+  local passed_repos, err_repos = pcall(function()
+    local argv_seen
+    local finish
+    editor.system = function(argv, opts, on_exit)
+      argv_seen = argv
+      opts.stdout(nil, "== repo | line\nci repos: GREEN 1/1")
+      finish = function(code)
+        on_exit({ code = code, stdout = "", stderr = "" })
+      end
+      return {}
+    end
+    messages = {}
+    local done
+    local started = editor.run_repos({
+      args = { "--repos-root=/r" },
+      cwd = root,
+      on_done = function(code)
+        done = code
+      end,
+    })
+    eq(started, true, "run_repos: starts")
+    local again, why = editor.run_repos({ args = {}, cwd = root })
+    eq(again, false, "run_repos: one at a time")
+    has(why, "already going", "run_repos: ... says why")
+    eq(
+      argv_seen[#argv_seen],
+      "--repos-root=/r",
+      "run_repos: no --root (it works on the repositories it is told about)"
+    )
+    eq(argv_seen[#argv_seen - 1], "ci", "run_repos: the ci subcommand")
+    finish(1)
+    ok(
+      vim.wait(2000, function()
+        return done ~= nil
+      end),
+      "run_repos: finishes"
+    )
+    has(said(), "ci repos: exit 1", "run_repos: a non-zero exit is notified as a failure")
+    local lines = vim.api.nvim_buf_get_lines(vim.fn.bufnr(editor.view_name("/repos")), 0, -1, false)
+    eq(
+      lines,
+      { "== repo | line", "ci repos: GREEN 1/1" },
+      "run_repos: the output is in the view, the last line flushed"
+    )
+    eq(editor.state["*repos*"].running, false, "run_repos: not stuck in running")
+    messages = {}
+    editor.run_repos({ args = {}, cwd = root })
+    finish(0)
+    ok(
+      vim.wait(2000, function()
+        return said():find("all green or proven", 1, true) ~= nil
+      end),
+      "run_repos: green is notified"
+    )
+  end)
+  restore()
+  if not passed_repos then
+    error(err_repos, 0)
+  end
+
   -- ------------------------------------------------------- list and a real run
 
   local function write(path, text)
