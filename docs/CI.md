@@ -6,8 +6,12 @@ exit codes as a run, no cloud, no container, no shell scripts that copy each oth
 
 ```
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going]
-                                                              [--json=<file>] [--root=<dir>] [-- <suite options>]
+                                                              [--agent|--no-agent] [--json=<file>] [--junit=<file>]
+                                                              [--root=<dir>] [-- <suite options>]
 ```
+
+Everything runs on this machine. `testing ci` is meant to do locally what a hosted CI runner does (a pipeline of
+steps, deadlines, a proof of the tested state, reports), without GitHub or any other service.
 
 ## The `ci` section
 
@@ -83,6 +87,23 @@ says `partial_why = "suite options"`.
 - Process steps stream their output line by line. A deadline ends the whole process tree
   (`lib.nvim.system.job`, `kill_tree`): POSIX process group, Windows `taskkill /T`.
 
+## Reports and findings
+
+A process preset has an **error format** (Vim's `errorformat` items `%f` (a file name, no blanks), `%l`, `%c`, `%m`
+and `%%`; any other item is an error; several alternatives per preset): `luacheck` `%f:%l:%c: %m`, `stylua`
+`Diff in %f:`. Each output line is matched as it arrives, and the **findings** (file, line, column, text; at most
+200 are listed, all are counted) go into the document. The suite's findings come from its Result-IR (one per case
+that is not green, at the failed assertion, with the first line of its message), so they do not depend on the
+reporter the suite printed with; a `--json` of yours after `--` is used for that, otherwise a temporary one. A
+repository step has no error format and no findings, only its last output lines.
+
+| Report | Shows |
+| --- | --- |
+| terminal (default) | the step output as it comes (`== <step>` before, `-- <step>: <state> (<duration>)` after), then one row per step, the verdict line and, after a complete green run, `TESTING_CI_OK` |
+| `--agent` | the verdict as the first line (`ci GREEN full 4/4`, `ci RED luacheck (2 findings) exit 1`; `ci PARTIAL ...` for a `--step` run, a suite selection or a HEAD that moved, never `GREEN`), then only what needs a look: per red step its findings, or its last output lines. Nothing is streamed. Chosen by default in an agent environment (`TESTING_AGENT=1`, `CLAUDECODE=1`, ..., as for a run); `--no-agent` forces the terminal report |
+| `--junit=<file>` | JUnit XML: one `testsuite` per step, its findings as failed `testcase`s (the step's reason in each body, one more testcase counts the findings over the cap), a skipped step as `skipped` |
+| `--json=<file>` | a copy of the document `testing-ci/1` (below) |
+
 ## Exit codes
 
 The worst step decides: `0` every step green (or skipped for this system), `1` a step red (also a timeout; a
@@ -104,7 +125,11 @@ canonical JSON, under the state lock; `--json=<file>` writes a copy.
   "verdict": "green", "exit": 0, "first_red": null,
   "nvim": "0.12.2", "pipeline_sha": "<sha256 of the resolved pipeline>", "time": "2026-10-28T12:00:00Z",
   "steps": [
-    { "name": "stylua", "state": "green", "exit": 0, "ms": 412, "tool_version": "stylua 2.5.2", "reason": null, "errors": [] }
+    { "name": "stylua", "state": "green", "exit": 0, "ms": 412, "tool_version": "stylua 2.5.2", "reason": null,
+      "errors": [], "findings": [], "findings_total": 0 },
+    { "name": "luacheck", "state": "red", "exit": 1, "ms": 980, "tool_version": "Luacheck: 1.2.0", "reason": null,
+      "errors": ["..."], "findings": [{ "file": "lua/a.lua", "line": 3, "col": 7, "text": "(W211) unused variable 'x'" }],
+      "findings_total": 1 }
   ]
 }
 ```

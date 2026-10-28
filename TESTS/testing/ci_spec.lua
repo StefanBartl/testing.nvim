@@ -292,6 +292,52 @@ return function(H)
     res = run(root, "--keep-going")
     eq(res.code, 1, "keep-going: still exit 1")
     has(res.out, "after|", "keep-going: the next step ran")
+
+    -- the agent report: the verdict is the first line, the step output is not streamed
+    local junit = tmp .. "/red-junit.xml"
+    res = run(root, "--agent", "--junit=" .. junit)
+    eq(res.code, 1, "agent: exit 1")
+    eq(vim.split(res.out, "\n")[1], "ci RED bad (0 findings) exit 1", "agent: the verdict first")
+    has(res.out, "[bad] red", "agent: the red step")
+    has(res.out, "a finding", "agent: its last output lines")
+    lacks(res.out, "== bad", "agent: no step headers")
+    local xml = read(junit)
+    has(xml, '<testsuite name="bad" tests="1" failures="1"', "junit: one testsuite per step")
+    has(
+      xml,
+      '<testsuite name="after" tests="1" failures="0" errors="0" skipped="1"',
+      "junit: the skipped step"
+    )
+  end
+
+  -- an agent environment chooses the agent report, --no-agent the terminal one
+  do
+    local root = project(
+      "agent-env",
+      ("{ profiles = { full = { 'a' } }, steps = { a = { run = %s } } }"):format(nv(echo, "x")),
+      { [echo] = ECHO }
+    )
+    local out = {}
+    local code = cli.main({ "ci", "--root=" .. root }, {
+      out = function(s)
+        out[#out + 1] = s
+      end,
+      err = function() end,
+      state_dir = state_dir,
+      env = { CLAUDECODE = "1" },
+    })
+    eq(code, 0, "agent env: green")
+    eq(out, { "ci GREEN full 1/1" }, "agent env: one line, nothing streamed")
+    out = {}
+    cli.main({ "ci", "--root=" .. root, "--no-agent" }, {
+      out = function(s)
+        out[#out + 1] = s
+      end,
+      err = function() end,
+      state_dir = state_dir,
+      env = { CLAUDECODE = "1" },
+    })
+    eq(out[#out], ci.SENTINEL, "--no-agent: the terminal report")
   end
 
   -- a missing tool: exit 3 before anything runs, the step and the places are named
@@ -381,6 +427,11 @@ return function(H)
     res = run(red)
     eq(res.code, 1, "suite: a red case makes the step red")
     has(res.out, "ci: RED suite", "suite: named")
+    -- the findings come from the suite's Result-IR, whatever reporter the inner run printed
+    local sdoc = doc_of(red).steps[1]
+    eq(sdoc.findings_total, 1, "suite: one finding from the IR")
+    eq(sdoc.findings[1].file, "TESTS/b_spec.lua", "suite: at the red spec")
+    has(sdoc.findings[1].text, "red on purpose", "suite: with the assertion's message")
 
     res = run(red, "--", "--file", "TESTS/a_spec.lua")
     eq(res.code, 0, "suite: options after -- reach the suite (" .. res.err .. ")")

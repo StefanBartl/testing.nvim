@@ -47,7 +47,7 @@ local NAME = "^[%a_][%w_%-]*$"
 ---@field timeout_ms integer
 ---@field os? table<string, boolean> Only on these systems (`windows`, `linux`, `macos`); nil = everywhere.
 ---@field stamp boolean `suite` only: write the stamp (`testing stamp`).
----@field efm? string The preset's error format (quickfix, annotations).
+---@field efm? string|string[] The preset's error format (quickfix, findings); alternatives as a list.
 ---@field version_argv? string[] How to ask the tool for its version.
 
 ---@class Testing.Ci.Pipeline

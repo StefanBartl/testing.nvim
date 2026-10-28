@@ -18,7 +18,7 @@ local M = {}
 ---@field inprocess? string The `testing.cli` command (`run`, `stamp`, `conformance`, ...).
 ---@field needs string[]
 ---@field version_argv? string[]
----@field efm? string Error format, Vim's `errorformat` syntax (quickfix and annotations read it).
+---@field efm? string|string[] Error format (`testing.ci.report.compile`: %f %l %c %m); alternatives as a list.
 
 ---@type table<string, Testing.Ci.Preset>
 local PRESETS = {
@@ -46,6 +46,7 @@ local PRESETS = {
     inprocess = "run",
     args = {},
     needs = {},
+    -- no error format: the findings come from the run's Result-IR (testing.ci.report.ir_findings)
   },
   conformance = {
     name = "conformance",

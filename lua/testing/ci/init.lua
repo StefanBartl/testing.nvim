@@ -30,11 +30,15 @@ M.SCHEMA = "testing-ci/1"
 M.SENTINEL = "TESTING_CI_OK"
 
 M.USAGE = table.concat({
-  "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--json=<file>] [--root=<dir>] [-- <suite options>]",
+  "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--agent|--no-agent] [--json=<file>]",
+  "                  [--junit=<file>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
   "  --step=<a,b>      only these steps (a partial run: no proof, no sentinel)",
   "  --keep-going      run every step even after a red one",
+  "  --agent           the agent report: the verdict first, then only the findings (default in an agent",
+  "                    environment: TESTING_AGENT, CLAUDECODE, ...); --no-agent: the terminal report",
   "  --json=<file>     also write the testing-ci/1 document there",
+  "  --junit=<file>    write a JUnit report there (one testsuite per step)",
   "  --root=<dir>      the project root (default: the current directory)",
   "  -- <options>      passed on to the suite step (testing run options, e.g. -- --jobs 4)",
 }, "\n")
@@ -44,6 +48,8 @@ M.USAGE = table.concat({
 ---@field steps? string[]
 ---@field keep_going boolean
 ---@field json? string
+---@field junit? string
+---@field agent? boolean nil: decided by the environment.
 ---@field root string
 ---@field suite_args string[]
 ---@field help boolean
@@ -67,7 +73,15 @@ function M.parse(argv)
       args.help = true
     elseif key == "keep-going" and value == nil then
       args.keep_going = true
-    elseif key == "profile" or key == "step" or key == "json" or key == "root" then
+    elseif (key == "agent" or key == "no-agent") and value == nil then
+      args.agent = key == "agent"
+    elseif
+      key == "profile"
+      or key == "step"
+      or key == "json"
+      or key == "junit"
+      or key == "root"
+    then
       if value == nil then
         i = i + 1
         value = argv[i]
@@ -294,7 +308,9 @@ end
 ---@field tool_version? string
 ---@field timed_out? boolean
 ---@field reason? string Why a step was skipped or is infra.
----@field errors string[] The first lines of the output that look like findings (up to 20).
+---@field errors string[] The last lines of the output (up to 20).
+---@field findings? Testing.Ci.Finding[]
+---@field findings_total? integer
 
 local MAX_ERRORS = 20
 
@@ -329,11 +345,13 @@ end
 local function run_process(planned, root, sv)
   local step = planned.step
   local errors, last = {}, {}
+  local matcher = require("testing.ci.report").matcher(step.efm)
   local function remember(line)
     last[#last + 1] = line
     if #last > MAX_ERRORS then
       table.remove(last, 1)
     end
+    matcher.feed(line)
   end
   local argv = planned.argv --[[@as string[] ]]
   local handle = require("lib.nvim.system.job").start({
@@ -375,12 +393,21 @@ local function run_process(planned, root, sv)
       state = "infra",
       ms = 0,
       errors = errors,
+      findings = matcher.list,
+      findings_total = matcher.total(),
       reason = "the step did not end",
     }
   end
   ---@type Testing.Ci.StepResult
-  local result =
-    { name = step.name, exit = r.code, ms = 0, errors = errors, timed_out = r.timed_out }
+  local result = {
+    name = step.name,
+    exit = r.code,
+    ms = 0,
+    errors = errors,
+    findings = matcher.list,
+    findings_total = matcher.total(),
+    timed_out = r.timed_out,
+  }
   if r.code == -1 then
     result.state, result.reason = "infra", "could not start: " .. tostring(r.stderr)
   elseif r.timed_out then
@@ -408,6 +435,19 @@ local function run_inprocess(planned, root, suite_args, sv)
   vim.list_extend(argv, planned.argv or {})
   if step.inprocess == "run" then
     vim.list_extend(argv, suite_args)
+  end
+  -- the suite's findings come from its Result-IR: a `--json` of the caller's, or one of ours
+  local ir_path, own_ir = nil, false
+  if step.inprocess == "run" then
+    for i, a in ipairs(argv) do
+      ir_path = ir_path or a:match("^%-%-json=(.+)$") or (a == "--json" and argv[i + 1]) or nil
+    end
+    if not ir_path then
+      ir_path, own_ir = vim.fn.tempname() .. "-ci-ir.json", true
+      vim.list_extend(argv, { "--json", ir_path })
+    end
+    -- the caller's path is read as the run writes it: relative to the current directory
+    ir_path = vim.fn.fnamemodify(ir_path, ":p")
   end
   local errors, last = {}, {}
   local function sink(fn)
@@ -445,6 +485,19 @@ local function run_inprocess(planned, root, suite_args, sv)
   end
   ---@type Testing.Ci.StepResult
   local result = { name = step.name, ms = 0, errors = errors }
+  if ir_path then
+    local f = io.open(ir_path, "rb")
+    if f then
+      local okd, ir = pcall(vim.json.decode, f:read("*a"))
+      f:close()
+      if okd then
+        result.findings, result.findings_total = require("testing.ci.report").ir_findings(ir)
+      end
+    end
+    if own_ir then
+      os.remove(ir_path)
+    end
+  end
   if not ok then
     result.state, result.exit, result.reason = "infra", M.EXIT_INFRA, tostring(code)
   else
@@ -674,6 +727,16 @@ function M.main(argv, sv)
     return code --[[@as integer]]
   end
 
+  local report = require("testing.ci.report")
+  -- the agent report replaces the streamed output: verdict first, then only the findings
+  local agent = args.agent
+  if agent == nil then
+    agent = require("testing.report.agent").choose(nil, sv.env) == "agent"
+  end
+  local function quiet() end
+  local say = agent and quiet or out
+  local step_sv = agent and vim.tbl_extend("force", sv, { out = quiet, err = quiet }) or sv
+
   local started = os.time()
   local results, first_red = {}, nil
   local stop = false
@@ -683,7 +746,7 @@ function M.main(argv, sv)
     local r
     if p.skip then
       r = { name = step.name, state = "skipped", ms = 0, errors = {}, reason = p.skip }
-      out(("== %s (skipped: %s)"):format(step.name, p.skip))
+      say(("== %s (skipped: %s)"):format(step.name, p.skip))
     elseif stop then
       r = {
         name = step.name,
@@ -693,7 +756,7 @@ function M.main(argv, sv)
         reason = "an earlier step failed",
       }
     else
-      out(
+      say(
         ("== %s%s"):format(
           step.name,
           p.argv and #p.argv > 0 and not step.inprocess and (": " .. table.concat(p.argv, " "))
@@ -702,13 +765,18 @@ function M.main(argv, sv)
       )
       local t0 = vim.uv.hrtime()
       if step.inprocess then
-        r = run_inprocess(p, root, args.suite_args, sv)
+        r = run_inprocess(p, root, args.suite_args, step_sv)
       else
-        r = run_process(p, root, sv)
-        r.tool_version = tool_version(step.version_argv)
+        r = run_process(p, root, step_sv)
+        -- ask the tool that ran (the found path), not a bare name: libuv cannot start a `.cmd` by name
+        local version_argv = step.version_argv and vim.deepcopy(step.version_argv)
+        if version_argv and p.argv and version_argv[1] == step.argv[1] then
+          version_argv[1] = p.argv[1]
+        end
+        r.tool_version = tool_version(version_argv)
       end
       r.ms = math.floor((vim.uv.hrtime() - t0) / 1e6)
-      out(
+      say(
         ("-- %s: %s (%s)%s"):format(
           step.name,
           r.state,
@@ -738,6 +806,11 @@ function M.main(argv, sv)
   end
   local steps_doc = {}
   for _, r in ipairs(results) do
+    local findings = {}
+    for _, f in ipairs(r.findings or {}) do
+      findings[#findings + 1] =
+        { file = f.file, line = f.line or vim.NIL, col = f.col or vim.NIL, text = f.text }
+    end
     steps_doc[#steps_doc + 1] = {
       name = r.name,
       state = r.state,
@@ -746,6 +819,8 @@ function M.main(argv, sv)
       tool_version = r.tool_version or vim.NIL,
       reason = r.reason or vim.NIL,
       errors = r.errors,
+      findings = findings,
+      findings_total = r.findings_total or 0,
     }
   end
   local doc = {
@@ -771,36 +846,19 @@ function M.main(argv, sv)
   for _, note in ipairs(write_doc(doc, root, args.json, sv.state_dir)) do
     err("testing ci: " .. note)
   end
-
-  local green = 0
-  for _, r in ipairs(results) do
-    out(
-      ("  %-14s %-8s %8s%s"):format(
-        r.name,
-        r.state,
-        seconds(r.ms),
-        r.reason and ("  " .. r.reason) or ""
-      )
+  if args.junit then
+    local ok_w, werr = require("lib.nvim.fs.write.atomic")(
+      vim.fn.fnamemodify(args.junit, ":p"),
+      report.junit(doc),
+      { mkdirp = true }
     )
-    if r.state == "green" then
-      green = green + 1
+    if not ok_w then
+      err(("testing ci: cannot write %s: %s"):format(args.junit, tostring(werr)))
     end
   end
-  if exit == M.EXIT_OK then
-    out(
-      ("ci: GREEN %s %d/%d%s"):format(
-        profile,
-        green,
-        #results,
-        partial and (" (partial: " .. partial_why .. ")") or ""
-      )
-    )
-    if not partial and not head_moved then
-      out(M.SENTINEL)
-    end
-  else
-    local word = exit == M.EXIT_FAILED and "RED" or exit == M.EXIT_USAGE and "ERROR" or "INFRA"
-    out(("ci: %s %s (exit %d)"):format(word, first_red or "?", exit))
+
+  for _, line in ipairs(agent and report.agent(doc) or report.term(doc, M.SENTINEL)) do
+    out(line)
   end
   return exit
 end
