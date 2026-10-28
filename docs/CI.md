@@ -5,7 +5,7 @@ conformance, whatever else the repository checks. One definition in the `ci` sec
 exit codes as a run, no cloud, no container, no shell scripts that copy each other.
 
 ```
-nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse]
                                                               [--agent|--no-agent] [--json=<file>] [--junit=<file>]
                                                               [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]
 ```
@@ -115,6 +115,36 @@ with `scripts/test.sh ci -- --cached`.
 - A run is also partial when every step was skipped for this system (`no step ran on <os>`) and when the working
   tree changed during the run (a step wrote files: `tree_changed`).
 - The processes `testing ci` starts itself (git facts, tool versions) are started together, not one after the other.
+
+## Verify: is this state already proven?
+
+```
+testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--state-dir=<dir>] [--root=<dir>]
+```
+
+Nothing is run. `verify` reads `ci-<profile>.json` (the last complete run of the profile) and compares it with now:
+the tree (`HEAD^{tree}`: a rebase or a reworded commit keeps the proof), the system, Neovim, the hash of the
+resolved pipeline and the version of every tool of the profile. The suite is asked last, through `testing verify`
+on its stamp ([CLI.md](CLI.md#stamp-and-verify)), which brings the trust levels of a stamp along (a local stamp is
+no proof in CI, `--require-hmac`).
+
+| Answer | Meaning | Exit |
+| --- | --- | --- |
+| `verified` | same tree, system, Neovim, pipeline and tools, the suite's stamp verifies; the last line is `TESTING_CI_OK` | `0` |
+| `changed` | another tree (or the suite's stamp says `changed`); `run again:` names the steps that must run | `1` |
+| `rejected` | Neovim, the pipeline, a tool version or the system differs, or a tool is missing | `1` |
+| `dirty` | `git status` is not empty (`--allow-dirty` overrules, explicitly) | `1` |
+| `expired` | the proof is older than `--max-age` (default `7d`) | `1` |
+| `untrusted`, `partial`, `invalid`, `no-stamp` | as for `testing verify`; `no-stamp` is also: no complete run of this profile yet | `1` |
+
+`invalid` also covers a document that is no proof: red, partial, on a dirty tree, or a tree that changed during the
+run. `--json` prints the document `testing-ci-verify/1` (`status`, `verified`, `profile`, `tree`, `proof_tree`,
+`suite`, `reasons`, `rerun`). A usage error is `2`, an internal failure `3`.
+
+**A change no spec can see** (a README, a docs file) changes the tree but not the suite's stamp: `verify` says
+`changed` with `suite: verified` and `rerun` without the suite, and `testing ci --reuse` then skips the suite
+(`reused: its stamp verifies`) and runs the other steps, so the new tree is proven within seconds. `--reuse` never
+skips a suite whose stamp does not verify, and a suite with options after `--` always runs.
 
 ## Reports and findings
 

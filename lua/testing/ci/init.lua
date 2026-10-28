@@ -35,11 +35,13 @@ M.SCHEMA = "testing-ci/1"
 M.SENTINEL = "TESTING_CI_OK"
 
 M.USAGE = table.concat({
-  "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--agent|--no-agent] [--json=<file>]",
+  "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse] [--agent|--no-agent] [--json=<file>]",
+  "       testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
   "  --step=<a,b>      only these steps (a partial run: no proof, no sentinel)",
   "  --keep-going      run every step even after a red one",
+  "  --reuse           skip the suite when its stamp still verifies (a docs-only change reruns the other steps)",
   "  --agent           the agent report: the verdict first, then only the findings (default in an agent",
   "                    environment: TESTING_AGENT, CLAUDECODE, ...); --no-agent: the terminal report",
   "  --json=<file>     also write the testing-ci/1 document there",
@@ -54,6 +56,7 @@ M.USAGE = table.concat({
 ---@field profile? string
 ---@field steps? string[]
 ---@field keep_going boolean
+---@field reuse boolean
 ---@field json? string
 ---@field junit? string
 ---@field state_dir? string
@@ -70,7 +73,7 @@ local VALUED =
 ---@return string|nil problem
 function M.parse(argv)
   ---@type Testing.Ci.Args
-  local args = { keep_going = false, root = ".", suite_args = {}, help = false }
+  local args = { keep_going = false, reuse = false, root = ".", suite_args = {}, help = false }
   local i = 1
   while i <= #argv do
     local a = argv[i]
@@ -84,6 +87,8 @@ function M.parse(argv)
       args.help = true
     elseif key == "keep-going" and value == nil then
       args.keep_going = true
+    elseif key == "reuse" and value == nil then
+      args.reuse = true
     elseif (key == "agent" or key == "no-agent") and value == nil then
       args.agent = key == "agent"
     elseif key and VALUED[key] then
@@ -693,6 +698,25 @@ local function git_facts(root)
   return facts
 end
 
+---Start `--version` of every tool a plan will run (together; collect each with `collect`).
+---@param planned Testing.Ci.Planned[]
+---@return table<string, table> started By step name.
+local function start_versions(planned)
+  local versions = {}
+  for _, p in ipairs(planned) do
+    local step = p.step
+    if not p.skip and not step.inprocess and step.version_argv then
+      -- ask the tool that will run (the found path), not a bare name: libuv cannot start a `.cmd` by name
+      local version_argv = vim.deepcopy(step.version_argv)
+      if p.argv and version_argv[1] == step.argv[1] then
+        version_argv[1] = p.argv[1]
+      end
+      versions[step.name] = start(version_argv)
+    end
+  end
+  return versions
+end
+
 ---After the steps: did HEAD move, did the tree change? (Started together.)
 ---@param root string
 ---@param facts Testing.Ci.Facts
@@ -777,11 +801,23 @@ local function seconds(ms)
   return ("%.1f s"):format(ms / 1000)
 end
 
+---Helpers `testing.ci.verify` shares with a run (not an API).
+M.internal = {
+  plan = plan,
+  git_facts = git_facts,
+  start_versions = start_versions,
+  collect = collect,
+  this_os = this_os,
+}
+
 ---`testing ci ...`.
 ---@param argv string[] The arguments after `ci`.
 ---@param sv table `out`, `err` (sinks), `env`, `script`; `state_dir` (specs).
 ---@return integer exit_code
 function M.main(argv, sv)
+  if argv[1] == "verify" then
+    return require("testing.ci.verify").main(vim.list_slice(argv, 2), sv)
+  end
   local out, err = sv.out, sv.err
   local args, problem = M.parse(argv)
   if not args then
@@ -953,18 +989,7 @@ function M.main(argv, sv)
 
   -- every process of our own is started now and collected later: git facts and the tool versions
   local facts = git_facts(root)
-  local versions = {}
-  for _, p in ipairs(planned) do
-    local step = p.step
-    if not p.skip and not step.inprocess and step.version_argv then
-      -- ask the tool that will run (the found path), not a bare name: libuv cannot start a `.cmd` by name
-      local version_argv = vim.deepcopy(step.version_argv)
-      if p.argv and version_argv[1] == step.argv[1] then
-        version_argv[1] = p.argv[1]
-      end
-      versions[step.name] = start(version_argv)
-    end
-  end
+  local versions = start_versions(planned)
 
   -- the agent report replaces the streamed output: verdict first, then only the findings
   local function quiet() end
@@ -1002,7 +1027,26 @@ function M.main(argv, sv)
         )
       )
       local t0 = vim.uv.hrtime()
-      if step.inprocess then
+      local reused = args.reuse
+        and step.inprocess == "run"
+        and step.stamp
+        and not suite_selects
+        and require("testing.ci.verify").suite_status(
+            root,
+            state_dir,
+            step_sv,
+            { allow_dirty = true }
+          )
+          == "verified"
+      if reused then
+        r = {
+          name = step.name,
+          state = "green",
+          exit = 0,
+          errors = {},
+          reason = "reused: its stamp verifies",
+        }
+      elseif step.inprocess then
         r = run_inprocess(
           p,
           root,
