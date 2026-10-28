@@ -207,7 +207,7 @@ end
 
 ---Guard names that take a table (everything but `clock`) and the keys each accepts besides `mode`.
 ---Every list is checked entry by entry (`is_allow_entry` or a Lua pattern).
----@type table<string, table<string, "list"|"patterns"|"state_modes"|"notify"|"count">>
+---@type table<string, table<string, "list"|"patterns"|"state_modes"|"notify"|"count"|"flag">>
 local GUARD_KEYS = {
   fs = {
     allow = "list",
@@ -229,7 +229,7 @@ local GUARD_KEYS = {
     max_per_category = "count",
   },
   scheduled_error = { allow_patterns = "patterns", notify = "notify" },
-  prompt = { getchar_wait_ms = "count" },
+  prompt = { getchar_wait_ms = "count", kit = "flag" },
   deprecation = {},
   process_net = { allow_exec = "list", allow_hosts = "list" },
 }
@@ -254,6 +254,7 @@ local GUARD_EXPECT = {
   patterns = "a list of Lua patterns",
   notify = '"error", "warn", "info" or "off"',
   count = "an integer between 0 and 100000",
+  flag = "true or false",
   state_modes = 'a table { <category> = "error"|"warn"|"info"|"off" } of known categories',
 }
 
@@ -267,6 +268,8 @@ local function guard_value_ok(kind, v)
     return list_of(is_lua_pattern, 0)(v)
   elseif kind == "notify" then
     return v == "error" or v == "warn" or v == "info" or v == "off"
+  elseif kind == "flag" then
+    return type(v) == "boolean"
   elseif kind == "count" then
     return type(v) == "number" and v == math.floor(v) and v >= 0 and v <= 100000
   elseif kind == "state_modes" then

@@ -98,7 +98,7 @@ B.case("green_scripted_answers", {
 local kit = require("lib.nvim.ui.kit")
 
 B.case("green_kit_dialogs", {
-  cfg = only_prompt(),
+  cfg = only_prompt({ kit = true }),
   body = function(h)
     h:answer_prompts({ confirm = 2, input = "typed", select = "b", form = { name = "x" } })
     local got = {}
@@ -156,9 +156,17 @@ B.case("green_kit_dialogs", {
 })
 
 B.case("red_kit_dialog_unanswered", {
-  cfg = only_prompt(),
+  cfg = only_prompt({ kit = true }),
   body = function()
     kit.confirm({ question = "Really?", on_answer = function() end })
+  end,
+})
+
+B.case("green_kit_off_by_default", {
+  cfg = only_prompt(),
+  body = function()
+    local hooked = kit.get_dialog_hook() ~= nil
+    return { hooked = hooked }
   end,
 })
 

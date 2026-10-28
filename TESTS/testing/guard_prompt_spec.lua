@@ -79,6 +79,12 @@ return function(H)
   ok(c.body_error:find("asked a prompt nobody answered", 1, true), "...like a native prompt")
   eq(#S.of(c, "prompt.unanswered"), 1, "...and is a finding")
 
+  eq(
+    r.green_kit_off_by_default.value.hooked,
+    false,
+    "kit dialogs: no hook unless guards.prompt.kit is on"
+  )
+
   c = r.green_kit_dialogs
   eq(c.findings, {}, "kit dialogs: answered, no finding")
   eq(c.body_error, nil, "kit dialogs: nothing raises")

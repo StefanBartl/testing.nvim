@@ -25,7 +25,8 @@
 ---   * `input`   the text the user would type
 ---   * `select`  index or item
 ---   * `form`    the keyed table of values of a `kit.form` / `kit.sheet` (a list of such tables is a queue)
---- The hook is set when a case starts, for a kit that is loaded by then and has `set_dialog_hook`.
+--- The hook is set when a case starts, for a kit that is loaded by then and has `set_dialog_hook`, and only when
+--- `guards.prompt.kit = true` (off by default: a spec that opens a real kit dialog on purpose would be refused).
 ---
 --- Limits: `:call input()` and other Vimscript callers do not go through these Lua wrappers (the
 --- child runner's null stdin ends such a prompt); prompts of plugins that call
@@ -268,6 +269,9 @@ end
 
 ---Set the dialog hook of the kit, when one is loaded that has it. Inert while no case is open.
 function G:hook_kit()
+  if self.cfg.kit ~= true then
+    return
+  end
   local kit = package.loaded["lib.nvim.ui.kit"]
   if self.kit == kit or type(kit) ~= "table" or type(kit.set_dialog_hook) ~= "function" then
     return

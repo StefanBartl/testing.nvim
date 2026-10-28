@@ -108,6 +108,11 @@ M.DEFAULTS = {
       -- A blocking `getchar()` / `getcharstr()` with no key typed ahead waits this long (ms, the event
       -- loop runs) for the spec to feed one, e.g. from a timer; then it is refused. 0: refuse at once.
       getchar_wait_ms = 300,
+      -- Answer the dialogs of the kit (lib.nvim.ui.kit) through its dialog hook, and refuse an unanswered
+      -- one like a native prompt. Off by default: a spec that opens a REAL kit dialog on purpose (a test
+      -- of the kit itself, or of a plugin's dialog) would be refused, so a project turns it on once its
+      -- specs answer their dialogs (`h:answer_prompts{ confirm = ... }`).
+      kit = false,
     },
     deprecation = { mode = "warn" },
     process_net = {

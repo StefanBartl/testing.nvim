@@ -76,6 +76,7 @@ A section is a table or a bare mode string (`fs = "off"`, `prompt = false`).
 | `guards.<name>.mode` | see below | `off` (not installed at all), `warn`, `error`. |
 | `guards.fs.watch_stdpath` | `false` | Also walk the real stdpath config / data / state / cache trees in the tree snapshot (see below). |
 | `guards.prompt.getchar_wait_ms` | `300` | How long a blocking `getchar()` with nothing typed ahead waits for the spec to feed a key (see below). |
+| `guards.prompt.kit` | `false` | Answer the dialogs of the kit through its dialog hook and refuse an unanswered one (see below). Off: a spec may open a real kit dialog. |
 
 (`testing.guard.install` takes all of these; `.testing.lua` and the flags reach the modes and
 `guard_allow` only, through `testing.run.options.guard_config`.)
@@ -115,7 +116,7 @@ configuration) is dropped with a note: the tree snapshot then sees more files, a
 | `state` | `categories` (`{ <category> = "error"|"warn"|"info"|"off" }`, capped at the guard's mode), `ignore_groups`, `ignore_vars`, `ignore_options`, `ignore_env`, `ignore_globals`, `ignore_highlights`, `ignore_usercmds`, `ignore_keymaps` (name or left-hand-side prefixes), `keep`, `max_per_category` |
 | `scheduled_error` | `allow_patterns`, `notify` |
 | `process_net` | `allow_exec`, `allow_hosts` (added to `guard_allow.spawn` / `.network`) |
-| `prompt` | `getchar_wait_ms` |
+| `prompt` | `getchar_wait_ms`, `kit` |
 
 `state.keep` is the short way to say "`setup()` leaves these on purpose": every name in it is ignored as an
 autocmd group, a user command and a keymap left-hand side (prefix match). A plugin whose `setup()`
@@ -243,8 +244,8 @@ it. In mode `warn` the call does not raise: the finding is a warning and the pro
 cancelled one (`""`, Esc, `nil`, `0`), because nothing may wait for a key in a headless run (mode
 `warn` used to fail the case anyway; under `--strict` a `warn` is an `error` and raises). Every prompt is in the ledger kind `prompts`. Answers belong to a case (reset by `enter`).
 
-The dialogs of the kit (`lib.nvim.ui.kit`, the table `ui.kit` re-exports) are answered by the same guard:
-at the start of a case it sets the kit's dialog hook (`kit.set_dialog_hook`), so no window opens. A kit
+The dialogs of the kit (`lib.nvim.ui.kit`, the table `ui.kit` re-exports) can be answered by the same guard:
+with `guards.prompt.kit = true` (off by default: a spec that opens a real kit dialog on purpose would be refused) it sets, at the start of a case, the kit's dialog hook (`kit.set_dialog_hook`), so no window opens. A kit
 that is not loaded yet at that moment, or has no hook, is left alone. The answer keys are `confirm`
 (also for `kit.ask`: an index or a label, `true`/`false`/1/2 for a plain question), `input` (the text),
 `select` (an index or an item) and `form` (the keyed table of a `kit.form` / `kit.sheet`); `guard.CANCEL`
