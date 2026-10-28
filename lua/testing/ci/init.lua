@@ -37,6 +37,7 @@ M.SENTINEL = "TESTING_CI_OK"
 M.USAGE = table.concat({
   "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse] [--agent|--no-agent] [--json=<file>]",
   "       testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--root=<dir>]",
+  "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
   "  --step=<a,b>      only these steps (a partial run: no proof, no sentinel)",
@@ -817,6 +818,9 @@ M.internal = {
 function M.main(argv, sv)
   if argv[1] == "verify" then
     return require("testing.ci.verify").main(vim.list_slice(argv, 2), sv)
+  end
+  if argv[1] == "hook" then
+    return require("testing.ci.hook").main(vim.list_slice(argv, 2), sv)
   end
   local out, err = sv.out, sv.err
   local args, problem = M.parse(argv)

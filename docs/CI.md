@@ -146,6 +146,28 @@ run. `--json` prints the document `testing-ci-verify/1` (`status`, `verified`, `
 (`reused: its stamp verifies`) and runs the other steps, so the new tree is proven within seconds. `--reuse` never
 skips a suite whose stamp does not verify, and a suite with options after `--` always runs.
 
+## The pre-push hook
+
+```
+testing ci hook install [--run=<profile>] [--verify=<profile>] [--root=<dir>]
+testing ci hook remove [--root=<dir>]
+```
+
+`install` writes `pre-push` into the hooks folder git uses for the repository (a worktree, `core.hooksPath`), `remove`
+deletes it. The hook computes no verdict of its own:
+
+1. `testing ci verify [--profile=<verify>]`. A state that is already proven ends the hook with exit `0`, in a tenth of
+   a second, without a step.
+2. Otherwise `testing ci --profile=<run> --reuse` (default `fast`). Its exit code is the hook's: a red pipeline blocks
+   the push, and an unchanged suite is not run again (`--reuse`).
+
+`git push --no-verify` skips the hook. It finds testing.nvim without any Neovim configuration: `$TESTING_NVIM_DIR`,
+`<repo>/.deps/testing.nvim`, `<repo>/../testing.nvim`, then the checkout `install` ran from. Both profiles must exist
+in the `ci` section, or `install` refuses (exit `2`) and writes nothing.
+
+A pre-push hook that is not ours is never overwritten or removed (exit `1`). The hook of `:MyPlugins ci hook`
+(mark `# MyPlugins ci pre-push hook`) is recognised and replaced; `remove` takes it away as well.
+
 ## Reports and findings
 
 A process preset has an **error format** (Vim's `errorformat` items `%f` (a file name, no blanks), `%l`, `%c`, `%m`
