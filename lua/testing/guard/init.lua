@@ -515,7 +515,8 @@ end
 -- =========================================================
 
 ---Queue / set scripted answers for prompts (prompt guard). `nil` clears every answer.
----Keys: `input`, `select`, `confirm`, `getchar`. A scalar answers every such prompt, a list is
+---Keys: `input`, `select`, `confirm`, `getchar`, `form` (the last three of the kit's dialogs: see
+---`testing.guard.prompt`). A scalar answers every such prompt, a list is
 ---consumed in order, a function is called with the prompt arguments.
 ---@param answers? table
 function Handle:answer_prompts(answers)

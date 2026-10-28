@@ -71,6 +71,31 @@ return function(H)
   eq(c.value.last, "y", "function answer (the last of two items)")
   eq(c.value.cancelled, true, "CANCEL cancels vim.ui.select")
 
+  c = r.red_kit_dialog_unanswered
+  ok(
+    c.body_error and c.body_error:find("kit.confirm", 1, true),
+    "a kit dialog nobody answers raises and names it"
+  )
+  ok(c.body_error:find("asked a prompt nobody answered", 1, true), "...like a native prompt")
+  eq(#S.of(c, "prompt.unanswered"), 1, "...and is a finding")
+
+  c = r.green_kit_dialogs
+  eq(c.findings, {}, "kit dialogs: answered, no finding")
+  eq(c.body_error, nil, "kit dialogs: nothing raises")
+  eq(c.value.label, "Drop", "kit confirm: the index 2 picks the second button")
+  eq(c.value.idx, 2, "kit confirm: and says which")
+  eq(c.value.input, "typed", "kit input: the text")
+  eq(c.value.item, "b", "kit select: an item")
+  eq(c.value.item_idx, 2, "kit select: and its index")
+  eq(c.value.form, { name = "x" }, "kit form: the keyed table")
+  eq(c.value.cancelled, true, "kit input: CANCEL dismisses it")
+  eq(c.value.floats, 0, "kit dialogs: no window opened")
+  eq(
+    c.extra.prompts,
+    4,
+    "kit dialogs: in the ledger (the two identical input prompts are one entry)"
+  )
+
   c = r.green_select_by_item
   eq(c.value, { item = "b", idx = 2 }, "select by item value")
 

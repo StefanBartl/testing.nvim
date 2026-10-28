@@ -18,13 +18,32 @@
 --- carries the stack, and the finding `prompt.unanswered` is recorded (also when the spec `pcall`s
 --- the error). Every prompt is written to the ledger kind `prompts`.
 ---
+--- The dialogs of the kit (`lib.nvim.ui.kit`, which `ui.kit` re-exports) are answered the same way,
+--- through the kit's dialog hook, and no window opens:
+---   * `confirm` (also for `kit.ask`) choice index or label; for a plain question `true`/`false` or
+---               1 (yes) / 2 (no)
+---   * `input`   the text the user would type
+---   * `select`  index or item
+---   * `form`    the keyed table of values of a `kit.form` / `kit.sheet` (a list of such tables is a queue)
+--- The hook is set when a case starts, for a kit that is loaded by then and has `set_dialog_hook`.
+---
 --- Limits: `:call input()` and other Vimscript callers do not go through these Lua wrappers (the
 --- child runner's null stdin ends such a prompt); prompts of plugins that call
 --- `vim.api.nvim_input`-style key loops are not seen.
 
 local M = {}
 
-local KEYS = { input = true, select = true, confirm = true, getchar = true }
+local KEYS = { input = true, select = true, confirm = true, getchar = true, form = true }
+
+--- The answer kind of each kit dialog kind.
+local KIT_ANSWER = {
+  confirm = "confirm",
+  ask = "confirm",
+  input = "input",
+  select = "select",
+  form = "form",
+  sheet = "form",
+}
 
 ---@class Testing.Guard.Prompt
 ---@field h Testing.Guard.Handle
@@ -50,16 +69,17 @@ function G:set_answers(map)
   for k, v in pairs(map) do
     if not KEYS[k] then
       error(
-        ("testing.guard: unknown prompt answer %q (known: input, select, confirm, getchar)"):format(
+        ("testing.guard: unknown prompt answer %q (known: input, select, confirm, getchar, form)"):format(
           tostring(k)
         ),
         3
       )
     end
-    self.answers[k] = type(v) == "table"
-        and v ~= require("testing.guard").CANCEL
-        and { queue = vim.deepcopy(v) }
-      or { value = v }
+    -- a list is a queue; for `form` a keyed table is the one answer of every form (a list of them is a queue)
+    local queue = type(v) == "table"
+      and v ~= require("testing.guard").CANCEL
+      and (k ~= "form" or #v > 0)
+    self.answers[k] = queue and { queue = vim.deepcopy(v) } or { value = v }
   end
 end
 
@@ -242,11 +262,60 @@ function G:install()
       end
     end, "vim.ui.select")
   end
+
+  self:hook_kit()
+end
+
+---Set the dialog hook of the kit, when one is loaded that has it. Inert while no case is open.
+function G:hook_kit()
+  local kit = package.loaded["lib.nvim.ui.kit"]
+  if self.kit == kit or type(kit) ~= "table" or type(kit.set_dialog_hook) ~= "function" then
+    return
+  end
+  local h, g = self.h, self
+  local CANCEL = require("testing.guard").CANCEL
+  self.kit = kit
+  self.previous_hook = type(kit.get_dialog_hook) == "function" and kit.get_dialog_hook() or nil
+  self.kit_hook = function(kind, opts)
+    local answer_kind = KIT_ANSWER[kind]
+    if not answer_kind or not h:is_active() then
+      return false
+    end
+    opts = opts or {}
+    local text = prompt_text(opts.question or opts.prompt or opts.message or opts.title)
+    local found, value = g:answer(answer_kind, opts)
+    if not found then
+      refuse(g, "kit." .. kind, text ~= "" and text or nil, answer_kind)
+      value = CANCEL
+    end
+    h:log("prompts", ("kit.%s(%s)"):format(kind, vim.inspect(text)))
+    if value == CANCEL then
+      value = nil
+    end
+    return true, value
+  end
+  kit.set_dialog_hook(self.kit_hook)
+end
+
+---Take the dialog hook out again (only when it is still ours).
+function G:uninstall()
+  local kit = self.kit
+  self.kit = nil
+  if
+    type(kit) == "table"
+    and type(kit.get_dialog_hook) == "function"
+    and kit.get_dialog_hook() == self.kit_hook
+  then
+    kit.set_dialog_hook(self.previous_hook)
+  end
+  self.kit_hook, self.previous_hook = nil, nil
 end
 
 function G:begin()
   -- answers belong to a case: the next case starts without
   self.answers = {}
+  -- a kit that was loaded after the guard was installed gets its hook now
+  self:hook_kit()
 end
 
 return M

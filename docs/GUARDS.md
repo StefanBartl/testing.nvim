@@ -243,6 +243,13 @@ it. In mode `warn` the call does not raise: the finding is a warning and the pro
 cancelled one (`""`, Esc, `nil`, `0`), because nothing may wait for a key in a headless run (mode
 `warn` used to fail the case anyway; under `--strict` a `warn` is an `error` and raises). Every prompt is in the ledger kind `prompts`. Answers belong to a case (reset by `enter`).
 
+The dialogs of the kit (`lib.nvim.ui.kit`, the table `ui.kit` re-exports) are answered by the same guard:
+at the start of a case it sets the kit's dialog hook (`kit.set_dialog_hook`), so no window opens. A kit
+that is not loaded yet at that moment, or has no hook, is left alone. The answer keys are `confirm`
+(also for `kit.ask`: an index or a label, `true`/`false`/1/2 for a plain question), `input` (the text),
+`select` (an index or an item) and `form` (the keyed table of a `kit.form` / `kit.sheet`); `guard.CANCEL`
+dismisses. Without an answer the dialog raises like a native prompt (finding `prompt.unanswered`).
+
 ### deprecation
 
 `vim.deprecate` is recorded (once per API and case) instead of printed: `warn`, `error` under

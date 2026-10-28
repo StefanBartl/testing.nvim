@@ -94,6 +94,74 @@ B.case("green_scripted_answers", {
   end,
 })
 
+-- the dialogs of the kit (lib.nvim): answered through the kit's dialog hook, no window
+local kit = require("lib.nvim.ui.kit")
+
+B.case("green_kit_dialogs", {
+  cfg = only_prompt(),
+  body = function(h)
+    h:answer_prompts({ confirm = 2, input = "typed", select = "b", form = { name = "x" } })
+    local got = {}
+    kit.confirm({
+      question = "Keep?",
+      choices = { "Keep", "Drop" },
+      on_answer = function(label, idx)
+        got.label, got.idx = label, idx
+      end,
+    })
+    kit.input({
+      prompt = "Name",
+      on_submit = function(v)
+        got.input = v
+      end,
+    })
+    kit.select({
+      items = { "a", "b" },
+      on_select = function(item, idx)
+        got.item, got.item_idx = item, idx
+      end,
+    })
+    kit.form({
+      fields = { { name = "name" } },
+      on_submit = function(v)
+        got.form = v
+      end,
+    })
+    vim.wait(500, function()
+      return got.form ~= nil
+    end, 5)
+    h:answer_prompts({ input = B.guard.CANCEL })
+    kit.input({
+      prompt = "Name",
+      on_submit = function() end,
+      on_cancel = function()
+        got.cancelled = true
+      end,
+    })
+    vim.wait(500, function()
+      return got.cancelled
+    end, 5)
+    local wins = 0
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_config(w).relative ~= "" then
+        wins = wins + 1
+      end
+    end
+    got.floats = wins
+    return got
+  end,
+  after = function(_, res)
+    return { prompts = #res.ledger:entries("prompts") }
+  end,
+})
+
+B.case("red_kit_dialog_unanswered", {
+  cfg = only_prompt(),
+  body = function()
+    kit.confirm({ question = "Really?", on_answer = function() end })
+  end,
+})
+
 B.case("green_queue_and_function_and_cancel", {
   cfg = only_prompt(),
   body = function(h)
