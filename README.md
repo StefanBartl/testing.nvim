@@ -311,6 +311,7 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua verify .             # no spec runs: is the tree still the stamped one?
 ... -l scripts/testing.lua . --cached --cache-audit all # re-run every cache hit: the measured stale-pass rate
 ... -l scripts/testing.lua conformance .        # the conformance checks K1 to K15
+... -l scripts/testing.lua ci                   # the repository's pipeline from .testing.lua (docs/CI.md)
 ... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
 ```
 
@@ -391,7 +392,12 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 scripts/test.sh                  # all specs, through this repository's own runner
 scripts/test.sh --file config    # specs whose file name contains "config"
 TESTING_CACHE_HOME=~/.cache/testing-nvim-tests scripts/test.sh --cached   # unchanged specs do not run again
+scripts/test.sh ci               # the whole pipeline locally: stylua, luacheck, the specs, the conformance gate
+scripts/test.sh ci --profile=fast   # formatting and lint only, before a push
 ```
+
+The pipeline is the `ci` section of [`.testing.lua`](.testing.lua) ([docs/CI.md](docs/CI.md)): `full` checks what
+the CI workflow checks, on this machine.
 
 `scripts/test.sh` is `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua .` plus an isolated
 state directory. It exits `3` (and names the four places) when `nvim` or lib.nvim cannot be found.

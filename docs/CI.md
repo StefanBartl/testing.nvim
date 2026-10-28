@@ -7,7 +7,7 @@ exit codes as a run, no cloud, no container, no shell scripts that copy each oth
 ```
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going]
                                                               [--agent|--no-agent] [--json=<file>] [--junit=<file>]
-                                                              [--root=<dir>] [-- <suite options>]
+                                                              [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]
 ```
 
 Everything runs on this machine. `testing ci` is meant to do locally what a hosted CI runner does (a pipeline of
@@ -74,7 +74,19 @@ The in-process presets do not start `nvim -l` inside `nvim -l`: they run through
 and with the same services. Options after `--` go to the `suite` step: `testing ci -- --jobs 4` (an error when no
 suite step is selected). An option that selects part of the suite (`--file`, `--filter`, `--tags`, `--shard`,
 `--changed`, ... the ones `testing stamp` refuses) makes the whole run **partial**: no sentinel, and the document
-says `partial_why = "suite options"`.
+says `partial_why = "suite options"`. A stamping suite step then runs as a plain run (a selection cannot earn a
+stamp), so `testing ci --step=suite -- --file TESTS/x_spec.lua` checks one file.
+
+A green suite whose own verdict is `green-partial` (a skipped case, an accepted flaky case, a stop) also makes the
+run partial (`partial_why = "suite green-partial"`). Options after `--` that run no suite (`--cache-clear`,
+`--help`) are refused with exit `2`.
+
+A repository whose specs need an isolated state and cache directory runs `testing ci` through its
+`scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same
+environment as a plain run. Such a wrapper asks for the real `stdpath("state")` before it isolates and passes it
+as `--state-dir=<dir>`: the document and the suite's stamp go there (they would be lost with the scratch
+directory), while the suite's own history stays isolated. A shared cache (`TESTING_CACHE_HOME`) reaches the suite
+with `scripts/test.sh ci -- --cached`.
 
 ## A run
 

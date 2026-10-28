@@ -39,6 +39,8 @@ M.USAGE = table.concat({
   "                    environment: TESTING_AGENT, CLAUDECODE, ...); --no-agent: the terminal report",
   "  --json=<file>     also write the testing-ci/1 document there",
   "  --junit=<file>    write a JUnit report there (one testsuite per step)",
+  "  --state-dir=<dir> where the document (ci.json) and the suite's stamp go (default: stdpath('state'));",
+  "                    a wrapper that isolates the suite's state passes the real one here",
   "  --root=<dir>      the project root (default: the current directory)",
   "  -- <options>      passed on to the suite step (testing run options, e.g. -- --jobs 4)",
 }, "\n")
@@ -49,6 +51,7 @@ M.USAGE = table.concat({
 ---@field keep_going boolean
 ---@field json? string
 ---@field junit? string
+---@field state_dir? string
 ---@field agent? boolean nil: decided by the environment.
 ---@field root string
 ---@field suite_args string[]
@@ -80,6 +83,7 @@ function M.parse(argv)
       or key == "step"
       or key == "json"
       or key == "junit"
+      or key == "state-dir"
       or key == "root"
     then
       if value == nil then
@@ -93,6 +97,8 @@ function M.parse(argv)
         args.steps = vim.split(value, ",", { trimempty = true })
       elseif key == "profile" then
         args.profile = value
+      elseif key == "state-dir" then
+        args.state_dir = value
       else
         args[key] = value
       end
@@ -311,6 +317,7 @@ end
 ---@field errors string[] The last lines of the output (up to 20).
 ---@field findings? Testing.Ci.Finding[]
 ---@field findings_total? integer
+---@field partial? boolean The suite's own verdict was `green-partial`.
 
 local MAX_ERRORS = 20
 
@@ -424,17 +431,23 @@ end
 ---@param root string
 ---@param suite_args string[]
 ---@param sv table The services of the outer run (`out`, `err`, `env`, `script`).
+---@param o { selects: boolean, stamp_out?: string } `selects`: the suite options select part of the suite (a run
+---that cannot earn a stamp); `stamp_out`: where the stamp goes (`--state-dir`).
 ---@return Testing.Ci.StepResult
-local function run_inprocess(planned, root, suite_args, sv)
+local function run_inprocess(planned, root, suite_args, sv, o)
   local step = planned.step
   local command = step.inprocess
-  if command == "run" and step.stamp then
+  -- a stamp needs a full run (`testing stamp` refuses a selection with exit 2): a selected run is a plain run
+  if command == "run" and step.stamp and not o.selects then
     command = "stamp"
   end
   local argv = { command, root }
   vim.list_extend(argv, planned.argv or {})
   if step.inprocess == "run" then
     vim.list_extend(argv, suite_args)
+  end
+  if command == "stamp" and o.stamp_out and not vim.tbl_contains(argv, "--out") then
+    vim.list_extend(argv, { "--out", o.stamp_out })
   end
   -- the suite's findings come from its Result-IR: a `--json` of the caller's, or one of ours
   local ir_path, own_ir = nil, false
@@ -492,6 +505,9 @@ local function run_inprocess(planned, root, suite_args, sv)
       f:close()
       if okd then
         result.findings, result.findings_total = require("testing.ci.report").ir_findings(ir)
+        -- a green suite that did not look at everything (a skip, an accepted flaky case, a stop, ...)
+        local verdict = type(ir) == "table" and type(ir.run) == "table" and ir.run.verdict
+        result.partial = type(verdict) == "table" and verdict.kind == "green-partial"
       end
     end
     if own_ir then
@@ -694,11 +710,23 @@ function M.main(argv, sv)
     names, partial, partial_why = chosen, true, "--step"
   end
 
+  local suite_selects = false
   -- options after `--` reach the suite step: a selection there (`--file`, `--filter`, `--shard`, ...) is part of the
   -- suite only, so the run is partial (the same rule as a stamp, which refuses them)
   local has_suite = false
   for _, n in ipairs(names) do
     has_suite = has_suite or pipeline.steps[n].inprocess == "run"
+  end
+  for _, a in ipairs(args.suite_args) do
+    if a == "--cache-clear" or a == "--help" or a == "-h" then
+      err(
+        ("testing ci: %s after -- runs no suite; call `testing %s` itself"):format(
+          a,
+          a == "-h" and "--help" or a
+        )
+      )
+      return M.EXIT_USAGE
+    end
   end
   if #args.suite_args > 0 then
     if not has_suite then
@@ -713,6 +741,7 @@ function M.main(argv, sv)
     end
     local refused = require("testing.stamp.write").refuse(run_args)
     if refused then
+      suite_selects = true
       partial = true
       partial_why = partial_why and (partial_why .. ", suite options") or "suite options"
     end
@@ -736,6 +765,11 @@ function M.main(argv, sv)
   local function quiet() end
   local say = agent and quiet or out
   local step_sv = agent and vim.tbl_extend("force", sv, { out = quiet, err = quiet }) or sv
+
+  local state_dir = args.state_dir and vim.fn.fnamemodify(args.state_dir, ":p") or sv.state_dir
+  local stamp_out = args.state_dir
+      and require("testing.stamp").path(root, { state_dir = state_dir })
+    or nil
 
   local started = os.time()
   local results, first_red = {}, nil
@@ -765,7 +799,18 @@ function M.main(argv, sv)
       )
       local t0 = vim.uv.hrtime()
       if step.inprocess then
-        r = run_inprocess(p, root, args.suite_args, step_sv)
+        r = run_inprocess(
+          p,
+          root,
+          args.suite_args,
+          step_sv,
+          { selects = suite_selects, stamp_out = stamp_out }
+        )
+        if r.partial and r.state == "green" and not suite_selects then
+          partial = true
+          partial_why = partial_why and (partial_why .. ", suite green-partial")
+            or "suite green-partial"
+        end
       else
         r = run_process(p, root, step_sv)
         -- ask the tool that ran (the found path), not a bare name: libuv cannot start a `.cmd` by name
@@ -843,7 +888,7 @@ function M.main(argv, sv)
     time = os.date("!%Y-%m-%dT%H:%M:%SZ", started),
     steps = steps_doc,
   }
-  for _, note in ipairs(write_doc(doc, root, args.json, sv.state_dir)) do
+  for _, note in ipairs(write_doc(doc, root, args.json, state_dir)) do
     err("testing ci: " .. note)
   end
   if args.junit then

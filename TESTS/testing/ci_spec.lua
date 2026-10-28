@@ -443,6 +443,65 @@ return function(H)
 
     res = run(root, "--", "--jobs", "1")
     eq(res.last, ci.SENTINEL, "suite: an option that selects nothing keeps the run complete")
+
+    -- a stamping suite step (the default) with a selection after --: a plain run (a stamp refuses a selection
+    -- with exit 2), the run is partial
+    local stamping = project(
+      "suite-stamp",
+      "{ profiles = { full = { 'suite' } } }",
+      { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_spec.lua"] = FAIL }
+    )
+    res = run(stamping, "--", "--file", "TESTS/a_spec.lua")
+    eq(res.code, 0, "stamp + selection: the selected run, not a refused stamp (" .. res.err .. ")")
+    eq(doc_of(stamping).partial, true, "stamp + selection: partial")
+    res = run(stamping, "--", "--file", "TESTS/b_spec.lua")
+    eq(res.code, 1, "stamp + selection: a red selected file is red, not a usage error")
+
+    -- --state-dir: the document and the suite's stamp go there (a wrapper that isolates the suite's state)
+    local other = tmp .. "/real-state"
+    local green_only =
+      project("state-dir", "{ profiles = { full = { 'suite' } } }", { ["TESTS/a_spec.lua"] = PASS })
+    res = run(green_only, "--state-dir=" .. other)
+    eq(res.code, 0, "state-dir: green (" .. res.err .. ")")
+    local st = require("testing.state")
+    ok(
+      vim.uv.fs_stat(st.dir(green_only, { state_dir = other }) .. "/ci.json") ~= nil,
+      "state-dir: the document is there"
+    )
+    ok(
+      vim.uv.fs_stat(require("testing.stamp").path(green_only, { state_dir = other })) ~= nil,
+      "state-dir: the stamp is there"
+    )
+    eq(
+      vim.uv.fs_stat(st.dir(green_only, { state_dir = state_dir }) .. "/ci.json"),
+      nil,
+      "state-dir: not in the services' state directory"
+    )
+
+    -- options after -- that run no suite are refused
+    eq(run(root, "--", "--cache-clear").code, 2, "-- --cache-clear: exit 2")
+    eq(run(root, "--", "--help").code, 2, "-- --help: exit 2")
+  end
+
+  -- a suite whose own verdict is green-partial (a skipped case): the ci run is partial, no sentinel
+  do
+    local SKIP = table.concat({
+      "describe('s', function()",
+      "  it('a', function() assert.is_true(true) end)",
+      "  pending('later')",
+      "end)",
+      "",
+    }, "\n")
+    local root = project(
+      "suite-partial",
+      "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false } } }",
+      { ["TESTS/s_spec.lua"] = SKIP }
+    )
+    local res = run(root)
+    eq(res.code, 0, "suite green-partial: exit 0 (" .. res.err .. ")")
+    lacks(res.out, ci.SENTINEL, "suite green-partial: no sentinel")
+    eq(doc_of(root).partial, true, "suite green-partial: the run is partial")
+    has(tostring(doc_of(root).partial_why), "suite green-partial", "suite green-partial: said why")
   end
 
   -- options after -- without a suite step, a timeout on an in-process preset, an unknown dependency in args

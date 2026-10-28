@@ -53,6 +53,18 @@ return {
       },
     },
   },
+  -- `scripts/test.sh ci` (docs/CI.md): the pipeline of this repository, run locally. `full` checks what the CI
+  -- workflow checks (stylua, luacheck with the workflow's paths, the specs, the conformance gate); `fast` is the
+  -- quick check before a push.
+  ci = {
+    profiles = {
+      fast = { "stylua", "luacheck" },
+      full = { "fast", "suite", "conformance" },
+    },
+    steps = {
+      luacheck = { preset = "luacheck", args = { "lua", "TESTS", "scripts", "plugin" } },
+    },
+  },
   -- What the specs of this repository start ON PURPOSE (their subject is the process driver): real child
   -- editors (`nvim`), the process-tree kill of the driver (`taskkill`, `powershell` for the Windows process table), `git` for the run header,
   -- `stylua` for the migrate writer and `bash` for the generated test script.
