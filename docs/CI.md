@@ -192,8 +192,10 @@ since. `verify` and `hook` run the driver's subcommands of the same name and sho
 
 **Statusline.** `require("testing.ci.editor").statusline()` returns `ci: ✓ full @abc1234`, `ci: ✗ luacheck`, `ci: ~ fast`
 (green but partial), `ci: ! infra`, `ci: … full` while a run goes, and appends `stale` when the tree is no longer the one
-the result was for. It reads a cache and starts nothing; `editor.refresh(root)` re-reads the document and asks git for
-the tree asynchronously (a run does that when it ends). Not part of this version: the progress indicator, the table for
+the result was for. It reads a cache and blocks on nothing: every 5 seconds (`editor.REFRESH_AFTER`) and after a run it re-reads
+the document and asks git for the tree of HEAD in the background, so a run in a terminal, a commit or the pre-push hook
+show up (uncommitted changes do not make a result stale; `ci verify` says `dirty`). Completion never waits for
+`testing ci list` either: the first <Tab> after `.testing.lua` changed starts it, the next one has the names. Not part of this version: the progress indicator, the table for
 several repositories (`--repos`) and the terminal.nvim view.
 
 ## Reports and findings

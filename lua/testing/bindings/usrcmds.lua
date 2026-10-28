@@ -926,7 +926,8 @@ local function register_types(composer)
       return true, raw, nil
     end,
     complete = function(lead)
-      local list = require("testing.ci.editor").list(M.resolve_root())
+      local list =
+        require("testing.ci.editor").list(M.resolve_root(nil, vim.api.nvim_buf_get_name(0)))
       return list and prefix(vim.tbl_keys(list.profiles), lead) or {}
     end,
   })
@@ -939,7 +940,8 @@ local function register_types(composer)
       return true, raw, nil
     end,
     complete = function(lead)
-      local list = require("testing.ci.editor").list(M.resolve_root())
+      local list =
+        require("testing.ci.editor").list(M.resolve_root(nil, vim.api.nvim_buf_get_name(0)))
       if not list then
         return {}
       end

@@ -76,7 +76,7 @@ end
 ---@param root string
 ---@return string
 local function resolve(file, root)
-  if file:sub(1, 1) == "/" or file:match("^%a:") then
+  if file:sub(1, 1) == "/" or file:sub(1, 2) == "\\\\" or file:match("^%a:") then
     return file
   end
   return root .. "/" .. file
@@ -92,8 +92,9 @@ function M.items(doc, root)
     if step.state ~= "green" and step.state ~= "skipped" then
       local findings = type(step.findings) == "table" and step.findings or {}
       for _, f in ipairs(findings) do
+        local named = type(f.file) == "string" and f.file ~= "" and f.file ~= "?"
         items[#items + 1] = {
-          filename = resolve(f.file, root),
+          filename = named and resolve(f.file, root) or nil,
           lnum = type(f.line) == "number" and f.line or 1,
           col = type(f.col) == "number" and f.col or 1,
           text = ("[%s] %s"):format(step.name, tostring(f.text)),
@@ -230,6 +231,7 @@ function M.refresh(root, on_done)
   local entry = M.state[k] or {}
   M.state[k] = entry
   entry.doc = read_json(M.doc_path(root))
+  entry.at = os.time()
   local function done()
     if on_done then
       on_done(entry)
@@ -251,26 +253,42 @@ function M.refresh(root, on_done)
   end
 end
 
+---Seconds after which the statusline component asks for a fresh document and tree again.
+M.REFRESH_AFTER = 5
+
 ---The statusline component: the cached result of the project of the current buffer (or `root`); starts nothing
----except one asynchronous refresh the first time a project is asked about.
+---except an asynchronous refresh (the first time a project is asked about, and every `REFRESH_AFTER` seconds), so
+---a run in a terminal, a commit or the pre-push hook show up. `stale` compares the tree of HEAD.
 ---@param root? string
 ---@return string
 function M.statusline(root)
   root = root or require("testing.bindings.usrcmds").resolve_root(nil, vim.api.nvim_buf_get_name(0))
   local entry = M.state[key(root)]
   if not entry then
-    M.state[key(root)] = {}
+    M.state[key(root)] = { at = os.time() }
     M.refresh(root)
     return ""
   end
+  if not entry.running and os.time() - (entry.at or 0) >= M.REFRESH_AFTER then
+    entry.at = os.time()
+    M.refresh(root)
+  end
   return M.status_text(entry)
+end
+
+---Name of the live buffer of a project: the directory name and a short hash of the root (two checkouts called `app`
+---must not share one).
+---@param root string
+---@return string
+function M.view_name(root)
+  return ("testing-ci://%s-%s"):format(vim.fs.basename(root), vim.fn.sha256(key(root)):sub(1, 6))
 end
 
 ---The live buffer of a project: one per root, cleared at the start of a run, shown in a split when it is not visible.
 ---@param root string
 ---@return { buf: integer, append: fun(lines: string[]) }
 function M.open_view(root)
-  local name = "testing-ci://" .. vim.fs.basename(root)
+  local name = M.view_name(root)
   local buf = vim.fn.bufnr(name)
   if buf == -1 then
     buf = vim.api.nvim_create_buf(false, true)
@@ -334,26 +352,40 @@ function M.run(o)
     reuse = o.reuse,
   })
   local view = M.open_view(o.root)
-  local partial = ""
-  ---@param data string|nil
-  local function feed(data)
-    if not data or data == "" then
-      return
-    end
-    vim.schedule(function()
-      local text = partial .. data:gsub("\r", "")
-      local lines = vim.split(text, "\n", { plain = true })
-      partial = table.remove(lines)
-      if #lines > 0 then
-        view.append(lines)
+  -- one unfinished line per stream: a chunk of stdout that ends mid-line is not glued to a chunk of stderr
+  local partial = { out = "", err = "" }
+  ---A line as a terminal shows it: the text after the last carriage return (a progress line rewrites itself).
+  ---@param line string
+  ---@return string
+  local function shown(line)
+    return (line:gsub("\r+$", ""):match("[^\r]*$"))
+  end
+  ---@param stream "out"|"err"
+  ---@return fun(_: any, data: string|nil)
+  local function feed(stream)
+    return function(_, data)
+      if not data or data == "" then
+        return
       end
-    end)
+      vim.schedule(function()
+        local lines = vim.split(partial[stream] .. data, "\n", { plain = true })
+        partial[stream] = table.remove(lines)
+        for i, line in ipairs(lines) do
+          lines[i] = shown(line)
+        end
+        if #lines > 0 then
+          view.append(lines)
+        end
+      end)
+    end
   end
   local function finish(res)
     vim.schedule(function()
-      if partial ~= "" then
-        view.append({ partial })
-        partial = ""
+      for _, stream in ipairs({ "out", "err" }) do
+        if partial[stream] ~= "" then
+          view.append({ shown(partial[stream]) })
+          partial[stream] = ""
+        end
       end
       entry.running = false
       local doc = read_json(json)
@@ -375,12 +407,8 @@ function M.run(o)
     cwd = o.root,
     text = true,
     timeout = M.TIMEOUT_MS,
-    stdout = function(_, data)
-      feed(data)
-    end,
-    stderr = function(_, data)
-      feed(data)
-    end,
+    stdout = feed("out"),
+    stderr = feed("err"),
   }, finish)
   if not ok or not started then
     entry.running = false
@@ -411,10 +439,16 @@ function M.capture(root, args, cb)
   return true
 end
 
----@type table<string, { stamp: integer|nil, list: table|nil }>
+---@type table<string, { stamp: integer, list: table|nil, failed_at: integer|nil }>
 local list_cache = {}
+---@type table<string, true>
+local loading = {}
 
----Profiles and steps of the project (`testing ci list`, cached until `.testing.lua` changes); nil when unknown.
+---Seconds before a failed `testing ci list` is tried again (until `.testing.lua` changes).
+M.LIST_RETRY = 30
+
+---Profiles and steps of the project (`testing ci list`, cached until `.testing.lua` changes). Never waits: a miss
+---starts the child in the background and returns what is known (the earlier list, or nil), so the next <Tab> has it.
 ---@param root string
 ---@return { default: string, profiles: table<string, string[]>, steps: string[] }|nil
 function M.list(root)
@@ -422,24 +456,38 @@ function M.list(root)
   if not cfg then
     return nil
   end
+  local k = key(root)
   local stamp = cfg.mtime.sec * 1000000000 + cfg.mtime.nsec
-  local cached = list_cache[key(root)]
+  local cached = list_cache[k]
   if cached and cached.stamp == stamp then
-    return cached.list
+    if cached.list or os.time() - (cached.failed_at or 0) < M.LIST_RETRY then
+      return cached.list
+    end
   end
-  local ok, obj = pcall(
-    M.system,
-    M.child_argv(root, { "ci", "list", "--json" }),
-    { cwd = root, text = true, timeout = 8000 }
-  )
-  local res = ok and obj and obj:wait(10000) or nil
-  local list
-  if res and res.code == 0 then
-    local okd, doc = pcall(vim.json.decode, res.stdout or "")
-    list = okd and type(doc) == "table" and type(doc.profiles) == "table" and doc or nil
+  if not loading[k] then
+    loading[k] = true
+    local ok = pcall(
+      M.system,
+      M.child_argv(root, { "ci", "list", "--json" }),
+      { cwd = root, text = true, timeout = 8000 },
+      function(res)
+        vim.schedule(function()
+          loading[k] = nil
+          local list
+          if res.code == 0 then
+            local okd, doc = pcall(vim.json.decode, res.stdout or "")
+            list = okd and type(doc) == "table" and type(doc.profiles) == "table" and doc or nil
+          end
+          list_cache[k] =
+            { stamp = stamp, list = list, failed_at = (not list) and os.time() or nil }
+        end)
+      end
+    )
+    if not ok then
+      loading[k] = nil
+    end
   end
-  list_cache[key(root)] = { stamp = stamp, list = list }
-  return list
+  return cached and cached.list or nil
 end
 
 return M

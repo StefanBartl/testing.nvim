@@ -95,6 +95,28 @@ return function(H)
     eq(items[3].filename, nil, "items: a red step without findings has no file")
     has(items[3].text, "the suite wrote no result", "items: ... but its reason")
 
+    local odd = editor.items({
+      steps = {
+        {
+          name = "suite",
+          state = "red",
+          findings = {
+            { file = "?", line = vim.NIL, col = vim.NIL, text = "no file" },
+            { file = "\\\\srv\\share\\a.lua", line = 2, col = 1, text = "unc" },
+            { file = "C:/x/a.lua", line = 2, col = 1, text = "drive" },
+          },
+        },
+      },
+    }, "/r")
+    eq(odd[1].filename, nil, "items: the placeholder file `?` is a text-only item")
+    eq(odd[2].filename, "\\\\srv\\share\\a.lua", "items: a UNC path stays as it is")
+    eq(odd[3].filename, "C:/x/a.lua", "items: a drive path stays as it is")
+    ok(
+      editor.view_name("/a/app") ~= editor.view_name("/b/app"),
+      "view: two checkouts of one name do not share a buffer"
+    )
+    has(editor.view_name("/a/app"), "testing-ci://app-", "view: named after the directory")
+
     local v = editor.verdict(RED, 1, "/r")
     eq(v.level, "error", "verdict: red is an error")
     has(v.message, "luacheck failed, 3 in the quickfix list", "verdict: names the deciding step")
@@ -238,12 +260,12 @@ return function(H)
     has(why, "already running", "run: ... and says why")
     ok(
       vim.wait(2000, function()
-        local b = vim.fn.bufnr("testing-ci://proj")
+        local b = vim.fn.bufnr(editor.view_name(root))
         return b ~= -1 and #vim.api.nvim_buf_get_lines(b, 0, -1, false) >= 2
       end),
       "run: the output arrives in the live buffer"
     )
-    local buf = vim.fn.bufnr("testing-ci://proj")
+    local buf = vim.fn.bufnr(editor.view_name(root))
     local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     eq(lines[1], "== stylua", "view: first line")
     eq(lines[2], "-- stylua: green (0.1 s)", "view: a line split between two chunks is whole")
@@ -319,6 +341,104 @@ return function(H)
     eq(done.level, "error", "no document: an error")
     eq(editor.state[root].running, false, "no document: not stuck in running")
 
+    -- streams: an unfinished stdout line is not glued to stderr; a carriage return keeps the last segment; the end
+    -- flushes what is left
+    system, seen = fake({}, nil, 0)
+    editor.system = system
+    done = nil
+    editor.run({
+      root = root,
+      on_done = function(v)
+        done = v
+      end,
+    })
+    seen.opts.stdout(nil, "abc")
+    seen.opts.stderr(nil, "warn\n")
+    seen.opts.stdout(nil, "def\np1\rp2\r\nlast")
+    seen.finish()
+    ok(
+      vim.wait(2000, function()
+        return done ~= nil
+      end),
+      "streams: finishes"
+    )
+    local got = vim.api.nvim_buf_get_lines(vim.fn.bufnr(editor.view_name(root)), 0, -1, false)
+    eq(
+      got,
+      { "warn", "abcdef", "p2", "last" },
+      "streams: per stream, whole lines, progress rewritten, the rest flushed"
+    )
+
+    -- the statusline asks again after a while, and never starts more than the refresh
+    local calls = 0
+    editor.system = function(argv, opts, cb)
+      calls = calls + 1
+      cb({ code = 0, stdout = "TREE" .. calls .. "\n", stderr = "" })
+      return {}
+    end
+    editor.state[root] = nil
+    eq(editor.statusline(root), "", "statusline: unknown project, nothing yet")
+    ok(
+      vim.wait(2000, function()
+        return editor.state[root] and editor.state[root].tree == "TREE1"
+      end),
+      "statusline: the first call refreshes in the background"
+    )
+    editor.state[root].doc = RED
+    editor.state[root].doc.tree = "TREE1"
+    eq(editor.statusline(root), "ci: ✗ luacheck", "statusline: the cached result")
+    eq(calls, 1, "statusline: within the interval nothing is started")
+    editor.state[root].at = os.time() - editor.REFRESH_AFTER - 1
+    editor.statusline(root)
+    ok(
+      vim.wait(2000, function()
+        return calls == 2 and editor.state[root].tree == "TREE2"
+      end),
+      "statusline: after the interval it asks git again"
+    )
+    editor.state[root].doc = RED
+    eq(
+      editor.statusline(root),
+      "ci: ✗ luacheck stale",
+      "statusline: the tree moved, the result is stale"
+    )
+    editor.state[root].running = true
+    editor.state[root].at = os.time() - 100
+    editor.statusline(root)
+    eq(calls, 2, "statusline: no refresh while a run goes")
+    editor.state[root].running = false
+
+    -- :Testing ci verify | hook through a child (fake): the first line is the message, a non-zero exit warns
+    messages = {}
+    local captured
+    editor.system = function(argv, opts, cb)
+      captured = argv
+      cb({
+        code = 1,
+        stdout = "ci verify: changed (profile full)\n  run again: echo\n",
+        stderr = "",
+      })
+      return {}
+    end
+    require("testing.bindings.usrcmds").ci_capture(
+      { args = {}, flags = { profile = "full", ["allow-dirty"] = true, root = root } },
+      { "verify" },
+      { value = { "profile" }, bool = { "allow-dirty" } },
+      "verify"
+    )
+    ok(
+      vim.wait(2000, function()
+        return #messages > 0
+      end),
+      "capture: the answer is notified"
+    )
+    has(said(), "ci verify: changed", "capture: the first line")
+    eq(messages[1].level, vim.log.levels.WARN, "capture: a non-zero exit is a warning")
+    local joined = table.concat(captured, " ")
+    has(joined, "ci verify --allow-dirty --profile=full", "capture: the subcommand and its options")
+    has(joined, "--root=" .. root, "capture: for the project")
+    vim.cmd("silent! bwipeout!")
+
     -- a process that cannot start
     editor.system = function()
       error("no such program")
@@ -389,8 +509,18 @@ return function(H)
   )
 
   -- through a real child (the completion path)
-  local real = editor.list(root)
-  ok(real ~= nil, "editor.list: asks a child")
+  local t0 = vim.uv.hrtime()
+  local first = editor.list(root)
+  ok((vim.uv.hrtime() - t0) / 1e6 < 200, "editor.list: a miss does not wait for the child")
+  eq(first, nil, "editor.list: nothing known yet")
+  local real
+  ok(
+    vim.wait(30000, function()
+      real = editor.list(root)
+      return real ~= nil
+    end),
+    "editor.list: the next ask has the answer"
+  )
   eq(real and real.steps, { "again", "echo" }, "editor.list: the steps")
   eq(editor.list(tmp), nil, "editor.list: nil without .testing.lua")
 
@@ -427,7 +557,7 @@ return function(H)
       )
       eq(done and done.level, "info", "real run: green")
       has(said(), "all 1 steps green", "real run: notified")
-      local buf = vim.fn.bufnr("testing-ci://proj")
+      local buf = vim.fn.bufnr(editor.view_name(root))
       local out = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
       has(out, "== echo", "real run: the live buffer shows the step")
       has(out, "TESTING_CI_OK", "real run: ... and the sentinel")
