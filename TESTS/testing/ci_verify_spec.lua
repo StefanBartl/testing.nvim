@@ -101,6 +101,12 @@ return function(H)
     return root
   end
 
+  -- the environment the stamp code sees: nothing from the real one (on a CI runner `CI=true` makes every local stamp
+  -- `untrusted`, which is the trust model, not what this spec is about)
+  local function getenv()
+    return nil
+  end
+
   ---@param head string[] The leading arguments (`ci` or `ci verify`).
   ---@param root string
   ---@param ... string
@@ -117,7 +123,8 @@ return function(H)
       state_dir = state_dir,
       cache_dir = cache_dir,
       color = false,
-      affected = { provider = false },
+      affected = { getenv = getenv, provider = false },
+      stamp = { getenv = getenv },
     })
     return {
       code = code,
