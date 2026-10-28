@@ -1035,6 +1035,7 @@ function M.main(argv, sv)
         and step.inprocess == "run"
         and step.stamp
         and not suite_selects
+        and #args.suite_args == 0
         and require("testing.ci.verify").suite_status(
             root,
             state_dir,

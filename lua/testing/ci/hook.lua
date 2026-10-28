@@ -118,6 +118,18 @@ local function read(path)
   return text
 end
 
+---Does a hook carry the mark as its second line (right after the shebang)? A foreign hook that merely mentions it does not.
+---@param text string|nil
+---@param mark string
+---@return boolean
+function M.marked(text, mark)
+  if not text then
+    return false
+  end
+  local second = text:match("^[^\n]*\n([^\n]*)")
+  return second ~= nil and second:sub(1, #mark) == mark
+end
+
 ---@class Testing.Ci.Hook.Args
 ---@field action "install"|"remove"|nil
 ---@field run string
@@ -177,8 +189,8 @@ function M.main(argv, sv)
   end
   local path = hooks .. "/pre-push"
   local existing = read(path)
-  local ours = existing ~= nil and existing:find(M.MARK, 1, true) ~= nil
-  local legacy = existing ~= nil and existing:find(M.LEGACY_MARK, 1, true) ~= nil
+  local ours = M.marked(existing, M.MARK)
+  local legacy = M.marked(existing, M.LEGACY_MARK)
 
   if args.action == "remove" then
     if not existing then
@@ -238,7 +250,11 @@ function M.main(argv, sv)
     sv.err(("testing ci hook: cannot write %s: %s"):format(path, tostring(err)))
     return M.EXIT_INFRA
   end
-  vim.uv.fs_chmod(path, tonumber("755", 8))
+  local chmod_ok, chmod_err = vim.uv.fs_chmod(path, tonumber("755", 8))
+  if not chmod_ok then
+    sv.err(("testing ci hook: cannot make %s executable: %s"):format(path, tostring(chmod_err)))
+    return M.EXIT_INFRA
+  end
   sv.out(
     ("testing ci hook: pre-push hook installed%s (git push --no-verify skips it)"):format(
       legacy and ", replacing the one of :MyPlugins ci" or ""

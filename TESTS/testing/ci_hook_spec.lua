@@ -189,6 +189,14 @@ return function(H)
     has(res.out, "replacing the one of :MyPlugins ci", "legacy: said so")
     has(read(path), hook.MARK, "legacy: now ours")
     lacks(read(path), "scripts/ci.sh", "legacy: the old command is gone")
+    -- a foreign hook that merely mentions a mark is still foreign
+    write(path, "#!/bin/sh\n# see " .. hook.MARK .. " and " .. hook.LEGACY_MARK .. "\necho mine\n")
+    eq(
+      run("install", "--root=" .. root).code,
+      1,
+      "a mark inside a comment does not make a hook ours"
+    )
+    eq(run("remove", "--root=" .. root).code, 1, "... nor may remove take it away")
     write(path, "#!/bin/sh\n" .. hook.LEGACY_MARK .. "\n")
     eq(run("remove", "--root=" .. root).code, 0, "legacy: remove takes the MyPlugins hook away too")
   end

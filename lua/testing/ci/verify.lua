@@ -133,7 +133,8 @@ function M.suite_status(root, state_dir, sv, opts)
   return doc.status, doc
 end
 
----The seconds since an ISO-8601 UTC time (`2026-10-28T12:00:00Z`), nil when it is not one.
+---The seconds since an ISO-8601 UTC time (`2026-10-28T12:00:00Z`); nil when it is not a valid one. Negative for a
+---time in the future. Plain UTC arithmetic: no time zone and no daylight saving time is involved.
 ---@param text any
 ---@return integer|nil
 local function age_of(text)
@@ -142,19 +143,21 @@ local function age_of(text)
   if not y then
     return nil
   end
-  -- `os.time` reads a table as local time; the offset of the zone is taken out
-  local as_local = os.time({
-    year = tonumber(y),
-    month = tonumber(mo),
-    day = tonumber(d),
-    hour = tonumber(h),
-    min = tonumber(mi),
-    sec = tonumber(s),
-  })
-  local now = os.time()
-  local offset = os.difftime(now, os.time(os.date("!*t", now) --[[@as osdateparam]]))
-  return math.floor(os.time() - (as_local + offset))
+  y, mo, d, h, mi, s =
+    tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
+  if mo < 1 or mo > 12 or d < 1 or d > 31 or h > 23 or mi > 59 or s > 60 or y < 1970 then
+    return nil
+  end
+  -- days from civil (proleptic Gregorian), counted from 1970-01-01
+  local yy = mo <= 2 and y - 1 or y
+  local era = math.floor(yy / 400)
+  local yoe = yy - era * 400
+  local doy = math.floor((153 * (mo + (mo > 2 and -3 or 9)) + 2) / 5) + d - 1
+  local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+  local days = era * 146097 + doe - 719468
+  return os.time() - (days * 86400 + h * 3600 + mi * 60 + s)
 end
+M._age_of = age_of
 
 ---Why a document cannot be a proof at all (an incomplete or red run).
 ---@param doc any
@@ -279,6 +282,14 @@ local function check(args, sv)
     )
   end
 
+  if facts.dirty == nil and not args.allow_dirty then
+    return fail(
+      "invalid",
+      M.EXIT_NOT_PROVEN,
+      "git status did not answer: the tree cannot be called clean"
+    )
+  end
+
   local rejected = {}
   if doc.os ~= internal.this_os() then
     rejected[#rejected + 1] = ("system: proof on %s, now %s"):format(doc.os, internal.this_os())
@@ -322,8 +333,12 @@ local function check(args, sv)
   end
   local max_age = require("testing.stamp").parse_age(args.max_age) --[[@as integer]]
   local age = age_of(doc.time)
-  if age == nil then
-    return fail("invalid", M.EXIT_NOT_PROVEN, "the document has no valid time")
+  if age == nil or age < -300 then
+    return fail(
+      "invalid",
+      M.EXIT_NOT_PROVEN,
+      "the document has no valid time (or one in the future)"
+    )
   end
   if age > max_age then
     return fail(

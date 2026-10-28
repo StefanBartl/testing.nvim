@@ -225,6 +225,21 @@ return function(H)
     lacks(res.out, "reused: its stamp verifies", "changed spec + --reuse: not reused")
     eq(vrun(root).code, 0, "changed spec: verified after the rerun")
 
+    -- options after -- belong to the suite: it runs, the stamp is not taken as proof of them
+    res = run(root, "--reuse", "--", "--jobs", "1")
+    eq(res.code, 0, "--reuse with suite options: green (" .. res.err .. ")")
+    lacks(res.out, "reused: its stamp verifies", "--reuse with suite options: the suite runs")
+
+    -- an untracked file: dirty, unless allowed (the commit's tree is the proven one)
+    write(root .. "/scratch.txt", "x\n")
+    has(vrun(root).out, "ci verify: dirty", "untracked file: dirty")
+    eq(
+      vrun(root, "--allow-dirty").code,
+      0,
+      "untracked file + --allow-dirty: the tree is the proven one"
+    )
+    os.remove(root .. "/scratch.txt")
+
     -- another pipeline is another proof
     local cfg = read(root .. "/.testing.lua"):gsub("{ 'suite', 'echo' }", "{ 'echo', 'suite' }", 1)
     write(root .. "/.testing.lua", cfg)
@@ -281,6 +296,10 @@ return function(H)
     has(res.out, "ci verify: expired", "an old proof: expired")
     eq(vrun(root, "--max-age=3d").code, 0, "...unless the limit is generous")
     res = with(function(d)
+      d.time = "2999-01-01T00:00:00Z"
+    end)
+    has(res.out, "ci verify: invalid", "a proof from the future is invalid")
+    res = with(function(d)
       d.verdict, d.exit = "red", 1
     end)
     has(res.out, "ci verify: invalid", "a red document is no proof")
@@ -297,6 +316,29 @@ return function(H)
     eq(res.code, 2, "an unknown profile is a usage error")
     has(res.err, "unknown profile", "... named")
     eq(vrun(root, "--max-age=soon").code, 2, "a bad duration is a usage error")
+  end
+
+  -- the age of a proof is plain UTC arithmetic: no zone, no daylight saving time
+  do
+    local age_of = verify._age_of
+    eq(age_of("1960-01-01T00:00:00Z"), nil, "age: before 1970 is no time")
+    eq(age_of("2026-13-01T00:00:00Z"), nil, "age: month 13")
+    eq(age_of("yesterday"), nil, "age: not a time")
+    ok(age_of("2999-01-01T00:00:00Z") < 0, "age: the future is negative")
+    local now = age_of(os.date("!%Y-%m-%dT%H:%M:%SZ") --[[@as string]])
+    ok(now >= -2 and now <= 5, "age: now is about 0 (" .. tostring(now) .. ")")
+    local d2 = age_of(os.date("!%Y-%m-%dT%H:%M:%SZ", os.time() - 2 * 86400) --[[@as string]])
+    ok(math.abs(d2 - 172800) <= 5, "age: two days ago (" .. tostring(d2) .. ")")
+    eq(
+      age_of("2026-07-15T12:00:00Z") - age_of("2026-07-15T13:00:00Z"),
+      3600,
+      "age: an hour is 3600 s in every season"
+    )
+    eq(
+      age_of("2026-01-15T12:00:00Z") - age_of("2026-07-15T12:00:00Z"),
+      181 * 86400,
+      "age: winter and summer differ by their calendar days only"
+    )
   end
 
   vim.fn.delete(tmp, "rf")
