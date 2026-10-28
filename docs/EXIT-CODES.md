@@ -47,7 +47,9 @@ and the `verdict:` line of the terminal report agree with that exit code (`RED .
 `testing ci` ([CI.md](CI.md)) uses the four codes over its steps, the worst one decides: `0` every step green (or
 skipped for this system), `1` a red step (a timeout too), `2` a usage or pipeline error (every problem of the `ci`
 section is one), `3` a tool or dependency that is missing (checked before the first step: nothing runs) or a step
-that could not start. The sentinel `TESTING_CI_OK` follows only a complete green run, never a `--step` selection.
+that could not start, or a report (`ci.json`, `--json`, `--junit`) that could not be written. A suite step is green only
+when its Result-IR says so (exit `0` without a result is `3`). The sentinel `TESTING_CI_OK` follows only a complete green
+run, never a `--step` selection.
 
 ## A file that dies or hangs
 

@@ -25,7 +25,9 @@ local PRESETS = {
   stylua = {
     name = "stylua",
     tool = "stylua",
-    args = { "--check", "." },
+    -- `--check` is fixed: `args` names what is checked, never turns the step into a formatter
+    fixed = { "--check" },
+    args = { "." },
     needs = { "stylua" },
     version_argv = { "stylua", "--version" },
     -- `Diff in <file>:` heads each file that is not formatted
@@ -51,7 +53,8 @@ local PRESETS = {
   conformance = {
     name = "conformance",
     inprocess = "conformance",
-    args = {},
+    -- a gate: without it `testing conformance` only reports and the step is always green
+    args = { "--gate" },
     needs = {},
   },
   surface = {

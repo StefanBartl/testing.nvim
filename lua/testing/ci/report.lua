@@ -262,7 +262,11 @@ function M.term(doc, sentinel)
     end
   else
     local word = doc.exit == 1 and "RED" or doc.exit == 2 and "ERROR" or "INFRA"
-    lines[#lines + 1] = ("ci: %s %s (exit %d)"):format(word, val(doc.first_red) or "?", doc.exit)
+    lines[#lines + 1] = ("ci: %s %s (exit %d)"):format(
+      word,
+      val(doc.deciding) or val(doc.first_red) or "?",
+      doc.exit
+    )
   end
   return lines
 end
@@ -291,11 +295,18 @@ function M.agent(doc)
   end
   lines[1] = ("ci %s %s (%d finding%s) exit %d"):format(
     word,
-    val(doc.first_red) or "?",
+    val(doc.deciding) or val(doc.first_red) or "?",
     total,
     total == 1 and "" or "s",
     doc.exit
   )
+  -- a run that stopped before its first step: why
+  for _, p in ipairs(type(doc.problems) == "table" and doc.problems or {}) do
+    lines[#lines + 1] = "  " .. clean(p)
+  end
+  for _, note in ipairs(type(doc.write_errors) == "table" and doc.write_errors or {}) do
+    lines[#lines + 1] = "  " .. clean(note)
+  end
   for _, s in ipairs(doc.steps) do
     if s.state ~= "green" and s.state ~= "skipped" then
       local reason = val(s.reason)

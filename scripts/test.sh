@@ -43,6 +43,11 @@ fi
 real_state=""
 if [ "${1:-}" = "ci" ]; then
   real_state="$(nvim -n -i NONE --headless -u NONE --cmd 'lua io.stdout:write(vim.fn.stdpath("state"))' --cmd 'qa!' 2>/dev/null)"
+  if [ -z "$real_state" ]; then
+    # without it the document and the stamp would go into the scratch directory and be deleted on exit
+    printf '\033[31m%s\033[0m\n' 'error: cannot ask nvim for stdpath("state"); the ci document would be lost.' >&2
+    exit 3
+  fi
 fi
 
 # Throwaway app name, state and cache: the run never reads or writes the developer's real stdpath("state") and

@@ -169,6 +169,26 @@ return function(H)
     '  lua/b.lua:1:1: (W113) <y> & "z"',
   }, "agent: the verdict first, then only the findings")
 
+  -- the headline names the step that decided the exit code, not merely the first red one (--keep-going)
+  local MIXED = vim.deepcopy(RED)
+  MIXED.exit, MIXED.deciding = 3, "suite"
+  MIXED.steps[3] = vim.tbl_extend(
+    "force",
+    MIXED.steps[3],
+    { state = "infra", reason = "the suite wrote no result" }
+  )
+  eq(report.term(MIXED, "SENTINEL")[4], "ci: INFRA suite (exit 3)", "term: the deciding step")
+  eq(report.agent(MIXED)[1], "ci INFRA suite (2 findings) exit 3", "agent: the deciding step")
+
+  -- a run that stopped before its first step: its problems in the agent report
+  local EARLY =
+    { profile = "full", exit = 3, first_red = vim.NIL, problems = { "step b needs x" }, steps = {} }
+  eq(
+    report.agent(EARLY),
+    { "ci INFRA ? (0 findings) exit 3", "  step b needs x" },
+    "agent: an early stop"
+  )
+
   local GREEN = vim.deepcopy(RED)
   GREEN.exit, GREEN.verdict, GREEN.first_red = 0, "green", vim.NIL
   GREEN.steps = { RED.steps[1] }

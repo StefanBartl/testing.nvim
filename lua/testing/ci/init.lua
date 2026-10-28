@@ -11,12 +11,17 @@
 --- need is looked up: a missing one is exit 3 (infrastructure), never a green run, and the message names the step and
 --- the places searched. Process steps are argv (`.sh` through Git Bash / bash, `.ps1` through pwsh), each with a
 --- deadline that kills the whole process tree (`lib.nvim.system.job`, `kill_tree`). The presets of testing.nvim itself
---- (`suite`, `conformance`, `surface`, `budget`) run in this process through `testing.cli`.
+--- (`suite`, `conformance`, `surface`, `budget`) run in this process through `testing.cli`; the suite counts as green
+--- only when its Result-IR says so (an exit code 0 alone is no proof: `--help` exits 0 too).
 ---
 --- Exit codes, the worst step wins: 0 every step green (or skipped for this system), 1 a step red, 2 a usage or
 --- pipeline error (also a step that ended with 2), 3 infrastructure (a tool or dependency missing, a step that could
---- not start, a step that ended with 3). The document `testing-ci/1` is written to the project's state directory
---- (`ci.json` beside `runs.jsonl`); `--step` is a partial selection and the document says so.
+--- not start, a step that ended with 3, a report that could not be written). The document `testing-ci/1` is written to
+--- the project's state directory after every run, also one that stopped before the first step (`ci.json` beside
+--- `runs.jsonl`; a complete run also as `ci-<profile>.json`); `--step` is a partial selection and the document says so.
+---
+--- Every process this module starts itself (git facts, tool versions) is started together and waited for together:
+--- on a machine whose endpoint protection inspects each start, one spawn costs a large part of a second.
 
 local schema = require("testing.ci.schema")
 
@@ -31,7 +36,7 @@ M.SENTINEL = "TESTING_CI_OK"
 
 M.USAGE = table.concat({
   "usage: testing ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--agent|--no-agent] [--json=<file>]",
-  "                  [--junit=<file>] [--root=<dir>] [-- <suite options>]",
+  "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
   "  --step=<a,b>      only these steps (a partial run: no proof, no sentinel)",
   "  --keep-going      run every step even after a red one",
@@ -57,6 +62,9 @@ M.USAGE = table.concat({
 ---@field suite_args string[]
 ---@field help boolean
 
+local VALUED =
+  { profile = true, step = true, json = true, junit = true, ["state-dir"] = true, root = true }
+
 ---@param argv string[] The arguments after `ci`.
 ---@return Testing.Ci.Args|nil args
 ---@return string|nil problem
@@ -78,25 +86,20 @@ function M.parse(argv)
       args.keep_going = true
     elseif (key == "agent" or key == "no-agent") and value == nil then
       args.agent = key == "agent"
-    elseif
-      key == "profile"
-      or key == "step"
-      or key == "json"
-      or key == "junit"
-      or key == "state-dir"
-      or key == "root"
-    then
+    elseif key and VALUED[key] then
       if value == nil then
         i = i + 1
         value = argv[i]
+        -- `--step --keep-going` is a missing value, not a step called "--keep-going"
+        if value ~= nil and value:sub(1, 1) == "-" then
+          return nil, ("--%s needs a value (got the option %s)"):format(key, value)
+        end
       end
       if value == nil or value == "" then
         return nil, ("--%s needs a value"):format(key)
       end
       if key == "step" then
         args.steps = vim.split(value, ",", { trimempty = true })
-      elseif key == "profile" then
-        args.profile = value
       elseif key == "state-dir" then
         args.state_dir = value
       else
@@ -120,6 +123,12 @@ local function this_os()
     return "macos"
   end
   return "linux"
+end
+
+---@param s any
+---@return string
+local function clean(s)
+  return require("testing.report.util").clean(tostring(s))
 end
 
 ---Replace `${root}` and `${deps.<name>}` in `s`. A dependency is found the way `deps` of `.testing.lua` is (also
@@ -190,6 +199,23 @@ local function is_absolute(s)
   return s:find("^[/\\]") ~= nil or s:find("^%a:[/\\]") ~= nil
 end
 
+---Whether a path written relative to the root stays below it (`../x` does not).
+---@param root string
+---@param rel string
+---@return boolean
+local function below_root(root, rel)
+  local full = vim.fs.normalize(root .. "/" .. rel)
+  local base = vim.fs.normalize(root)
+  local a, b = full, base .. "/"
+  if require("testing.platform").is_windows() then
+    a, b = a:lower(), b:lower()
+  end
+  return a:sub(1, #b) == b
+end
+
+---Characters cmd.exe interprets inside the arguments of a batch file (libuv does not quote for cmd.exe).
+local CMD_META = '[&|<>%^%%!"]'
+
 ---Prepare the selected steps: placeholders, interpreters, the `needs` check. The path the check finds is the path
 ---that is started: a relative command with a separator is a file below the root, a bare name is looked up on PATH
 ---(`bash` and `pwsh` through their own lookup, so a `bash` step never starts the WSL launcher).
@@ -256,10 +282,18 @@ local function plan(pipeline, names, root)
       if step.inprocess then
         p.argv = expand_all(name, step.argv)
       else
+        local first_raw = step.argv[1]
         local argv = expand_all(name, step.argv)
         local first = argv[1]
         local script = first:match("%.sh$") and "bash" or first:match("%.ps1$") and "pwsh" or nil
-        local file = is_absolute(first) and first
+        local relative = not is_absolute(first)
+        if relative and first:find("[/\\]") and not below_root(root, first) then
+          problems[#problems + 1] = ("step %s: %s lies outside the root (a file below it, an absolute path or ${deps.<name>})"):format(
+            name,
+            first_raw
+          )
+        end
+        local file = not relative and first
           or (first:find("[/\\]") and (root .. "/" .. first))
           or nil
         if script then
@@ -289,6 +323,18 @@ local function plan(pipeline, names, root)
         else
           seen[first] = true
           argv[1] = need(name, first) or first
+        end
+        -- a batch file runs through cmd.exe, which reads `&`, `|`, `%`, ... in its arguments: no such argument
+        if argv[1]:lower():match("%.bat$") or argv[1]:lower():match("%.cmd$") then
+          for k = 2, #argv do
+            if argv[k]:find(CMD_META) then
+              problems[#problems + 1] = ("step %s: argument %q runs through cmd.exe (%s is a batch file) and contains a character cmd.exe interprets"):format(
+                name,
+                argv[k],
+                vim.fs.basename(argv[1])
+              )
+            end
+          end
         end
         p.argv = argv
       end
@@ -329,20 +375,27 @@ local function keep_error(lines, line)
   end
 end
 
----First line of `<tool> --version`, or nil.
----@param argv string[]|nil
+---Start a process without waiting (several are started together and then collected).
+---@param argv string[]
+---@param cwd? string
+---@return table|nil obj The `vim.SystemObj`, nil when it could not be started.
+local function start(argv, cwd)
+  local ok, obj = pcall(vim.system, argv, { cwd = cwd, text = true })
+  return ok and obj or nil
+end
+
+---Collect a process from `start`: its trimmed stdout when it exited 0.
+---@param obj table|nil
 ---@return string|nil
-local function tool_version(argv)
-  if not argv then
+local function collect(obj)
+  if not obj then
     return nil
   end
-  local ok, res = pcall(function()
-    return vim.system(argv, { text = true }):wait(10000)
-  end)
+  local ok, res = pcall(obj.wait, obj, 10000)
   if not ok or not res or res.code ~= 0 then
     return nil
   end
-  return vim.trim((res.stdout or ""):match("[^\r\n]+") or "")
+  return vim.trim(res.stdout or "")
 end
 
 ---@param planned Testing.Ci.Planned
@@ -427,6 +480,34 @@ local function run_process(planned, root, sv)
   return result
 end
 
+---@param path string
+---@return integer|nil ns The modification time, nil when the file does not exist.
+local function mtime_ns(path)
+  local st = vim.uv.fs_stat(path)
+  return st and (st.mtime.sec * 1e9 + (st.mtime.nsec or 0)) or nil
+end
+
+---The value of the last `--<name> x` / `--<name>=x` in `argv`, and whether the option is there at all.
+---@param argv string[]
+---@param name string
+---@return string|nil value
+---@return boolean present
+local function last_option(argv, name)
+  local value, present = nil, false
+  for i, a in ipairs(argv) do
+    if a == "--" then
+      break
+    end
+    local v = a:match("^%-%-" .. name .. "=(.*)$")
+    if v then
+      value, present = v, true
+    elseif a == "--" .. name then
+      value, present = argv[i + 1], true
+    end
+  end
+  return value, present
+end
+
 ---@param planned Testing.Ci.Planned
 ---@param root string
 ---@param suite_args string[]
@@ -437,31 +518,41 @@ end
 local function run_inprocess(planned, root, suite_args, sv, o)
   local step = planned.step
   local command = step.inprocess
+  local is_suite = command == "run"
   -- a stamp needs a full run (`testing stamp` refuses a selection with exit 2): a selected run is a plain run
-  if command == "run" and step.stamp and not o.selects then
+  if is_suite and step.stamp and not o.selects then
     command = "stamp"
   end
-  local argv = { command, root }
-  vim.list_extend(argv, planned.argv or {})
-  if step.inprocess == "run" then
-    vim.list_extend(argv, suite_args)
+  local rest = vim.deepcopy(planned.argv or {})
+  if is_suite then
+    vim.list_extend(rest, suite_args)
   end
-  if command == "stamp" and o.stamp_out and not vim.tbl_contains(argv, "--out") then
-    vim.list_extend(argv, { "--out", o.stamp_out })
-  end
-  -- the suite's findings come from its Result-IR: a `--json` of the caller's, or one of ours
-  local ir_path, own_ir = nil, false
-  if step.inprocess == "run" then
-    for i, a in ipairs(argv) do
-      ir_path = ir_path or a:match("^%-%-json=(.+)$") or (a == "--json" and argv[i + 1]) or nil
-    end
+  -- our own options go right after the root: an argument `--` of the caller's later on cannot turn them into paths
+  local ours = {}
+  local ir_path, own_ir, ir_before = nil, false, nil
+  if is_suite then
+    -- the suite's findings and verdict come from its Result-IR: the caller's `--json` (the run takes the last
+    -- one), or one of ours
+    ir_path = last_option(rest, "json")
     if not ir_path then
       ir_path, own_ir = vim.fn.tempname() .. "-ci-ir.json", true
-      vim.list_extend(argv, { "--json", ir_path })
+      vim.list_extend(ours, { "--json", ir_path })
     end
     -- the caller's path is read as the run writes it: relative to the current directory
     ir_path = vim.fn.fnamemodify(ir_path, ":p")
+    -- a file left from an earlier run is not this run's result
+    ir_before = mtime_ns(ir_path)
   end
+  if command == "stamp" and o.stamp_out then
+    local _, has_out = last_option(rest, "out")
+    if not has_out then
+      vim.list_extend(ours, { "--out", o.stamp_out })
+    end
+  end
+  local argv = { command, root }
+  vim.list_extend(argv, ours)
+  vim.list_extend(argv, rest)
+
   local errors, last = {}, {}
   local function sink(fn)
     return function(s)
@@ -474,10 +565,12 @@ local function run_inprocess(planned, root, suite_args, sv, o)
       end
     end
   end
-  -- the step's own environment, for the duration of the step
+  -- the step's own environment, for the duration of the step: every outer value is saved before any is set
   local saved = {}
-  for k, v in pairs(planned.env) do
+  for k in pairs(planned.env) do
     saved[k] = vim.uv.os_getenv(k) or false
+  end
+  for k, v in pairs(planned.env) do
     vim.uv.os_setenv(k, v)
   end
   -- every service of the outer run (state and cache directory, colour, the specs' fakes), only the sinks are ours
@@ -498,16 +591,18 @@ local function run_inprocess(planned, root, suite_args, sv, o)
   end
   ---@type Testing.Ci.StepResult
   local result = { name = step.name, ms = 0, errors = errors }
+  local verdict
   if ir_path then
-    local f = io.open(ir_path, "rb")
+    local now = mtime_ns(ir_path)
+    local fresh = now ~= nil and (ir_before == nil or now ~= ir_before)
+    local f = fresh and io.open(ir_path, "rb") or nil
     if f then
       local okd, ir = pcall(vim.json.decode, f:read("*a"))
       f:close()
       if okd then
         result.findings, result.findings_total = require("testing.ci.report").ir_findings(ir)
-        -- a green suite that did not look at everything (a skip, an accepted flaky case, a stop, ...)
-        local verdict = type(ir) == "table" and type(ir.run) == "table" and ir.run.verdict
-        result.partial = type(verdict) == "table" and verdict.kind == "green-partial"
+        local v = type(ir) == "table" and type(ir.run) == "table" and ir.run.verdict
+        verdict = type(v) == "table" and v.kind or nil
       end
     end
     if own_ir then
@@ -516,8 +611,26 @@ local function run_inprocess(planned, root, suite_args, sv, o)
   end
   if not ok then
     result.state, result.exit, result.reason = "infra", M.EXIT_INFRA, tostring(code)
+    return result
+  end
+  result.exit = code
+  if is_suite then
+    -- the suite is green only when its own result says so: an exit code 0 without a result (`--help`,
+    -- `--cache-clear`, a run that wrote nothing) proves nothing
+    if code == 0 and (verdict == "green" or verdict == "green-partial") then
+      result.state, result.partial = "green", verdict == "green-partial"
+    elseif code == 0 then
+      result.state, result.reason = "infra", "the suite wrote no result (Result-IR)"
+    elseif code == 1 and command == "stamp" and verdict == "green-partial" then
+      -- `testing stamp` exits 1 when it cannot write a stamp: a green-partial suite is partial, not red
+      result.state, result.partial = "green", true
+      result.reason = "no stamp: the suite is green-partial"
+    elseif code == 1 then
+      result.state = "red"
+    else
+      result.state = code == M.EXIT_USAGE and "error" or "infra"
+    end
   else
-    result.exit = code
     result.state = code == 0 and "green"
       or code == 1 and "red"
       or code == M.EXIT_USAGE and "error"
@@ -527,7 +640,8 @@ local function run_inprocess(planned, root, suite_args, sv, o)
 end
 
 ---@param results Testing.Ci.StepResult[]
----@return integer
+---@return integer exit
+---@return string|nil deciding The first step whose state decided the exit code.
 local function exit_code(results)
   local worst = M.EXIT_OK
   for _, r in ipairs(results) do
@@ -539,61 +653,97 @@ local function exit_code(results)
       worst = M.EXIT_FAILED
     end
   end
-  return worst
-end
-
----@param root string
----@param ... string
----@return string|nil stdout (trimmed) when git exits 0
-local function git_out(root, ...)
-  local argv = { "git", ... }
-  local ok, res = pcall(function()
-    return vim.system(argv, { cwd = root, text = true }):wait(10000)
-  end)
-  if not ok or not res or res.code ~= 0 then
-    return nil
-  end
-  return vim.trim(res.stdout or "")
-end
-
----Commit, tree and dirty state of the root, taken BEFORE the first step (the document is about what was tested).
----Unknown values stay nil (no git, not a repository): never `dirty = false` for a commit nobody knows.
----@param root string
----@return { commit?: string, tree?: string, dirty?: boolean, repo: string }
-local function git_facts(root)
-  local facts = { repo = vim.fs.basename(root) }
-  facts.commit = git_out(root, "rev-parse", "HEAD")
-  if facts.commit then
-    facts.tree = git_out(root, "rev-parse", "HEAD^{tree}")
-    local status = git_out(root, "status", "--porcelain")
-    if status ~= nil then
-      facts.dirty = status ~= ""
+  local want = ({ [M.EXIT_FAILED] = "red", [M.EXIT_USAGE] = "error", [M.EXIT_INFRA] = "infra" })[worst]
+  for _, r in ipairs(results) do
+    if r.state == want then
+      return worst, r.name
     end
   end
+  return worst, nil
+end
+
+---@class Testing.Ci.Facts
+---@field repo string
+---@field commit? string
+---@field tree? string
+---@field dirty? boolean
+---@field status? string The porcelain status (compared at the end: a step that changed the tree).
+---@field legacy_ignored boolean git ignores `.ci-last.json`.
+
+---Commit, tree, dirty state and whether `.ci-last.json` is ignored, taken BEFORE the first step (the document is
+---about what was tested), with the processes started together. Unknown values stay nil (no git, not a
+---repository): never `dirty = false` for a commit nobody knows.
+---@param root string
+---@return Testing.Ci.Facts
+local function git_facts(root)
+  local revs = start({ "git", "rev-parse", "HEAD", "HEAD^{tree}" }, root)
+  local status = start({ "git", "--no-optional-locks", "status", "--porcelain" }, root)
+  local ignore = start({ "git", "check-ignore", "-q", ".ci-last.json" }, root)
+  local facts = { repo = vim.fs.basename(root), legacy_ignored = false }
+  local out = collect(revs)
+  if out then
+    local lines = vim.split(out, "\n", { trimempty = true })
+    facts.commit, facts.tree = lines[1], lines[2]
+  end
+  local st = collect(status)
+  if facts.commit and st ~= nil then
+    facts.status, facts.dirty = st, st ~= ""
+  end
+  facts.legacy_ignored = collect(ignore) ~= nil
   return facts
 end
 
----Write the document (state directory, and `--json`), and the transitional `.ci-last.json` when git ignores it.
+---After the steps: did HEAD move, did the tree change? (Started together.)
+---@param root string
+---@param facts Testing.Ci.Facts
+---@return boolean head_moved
+---@return boolean tree_changed
+local function after_facts(root, facts)
+  if not facts.commit then
+    return false, false
+  end
+  local head = start({ "git", "rev-parse", "HEAD" }, root)
+  local status = facts.status
+    and start({ "git", "--no-optional-locks", "status", "--porcelain" }, root)
+  local now = collect(head)
+  local st = status and collect(status)
+  return now ~= facts.commit, facts.status ~= nil and st ~= nil and st ~= facts.status
+end
+
+---Write the document (state directory, `--json`) and the transitional `.ci-last.json` where git ignores it.
 ---@param doc table
 ---@param root string
 ---@param json_path string|nil
 ---@param state_dir string|nil
----@return string[] notes
-local function write_doc(doc, root, json_path, state_dir)
+---@param legacy_ignored boolean
+---@return string[] notes One per write that failed (a failed write is exit 3).
+local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
   local canonical = require("lib.nvim.json.canonical")
   local atomic = require("lib.nvim.fs.write.atomic")
   local text = canonical.encode(doc) .. "\n"
   local notes = {}
   local dir = require("testing.state").dir(root, { state_dir = state_dir })
-  local path = dir .. "/ci.json"
-  local locked, note = require("testing.statelock").with(path, function()
-    local ok, err = atomic(path, text, { mkdirp = true })
-    if not ok then
-      notes[#notes + 1] = ("cannot write %s: %s"):format(path, tostring(err))
+  -- (a run that stopped before its first step proves nothing and never replaces a profile's document)
+  local complete = #doc.steps > 0
+    and not doc.partial
+    and not doc.head_moved
+    and not doc.tree_changed
+  -- `ci.json` is the last run; a complete run is also `ci-<profile>.json`, which a later `--step` or another
+  -- profile never replaces (the proof `testing ci verify` reads)
+  local paths = { dir .. "/ci.json" }
+  if complete and type(doc.profile) == "string" then
+    paths[#paths + 1] = dir .. "/ci-" .. doc.profile .. ".json"
+  end
+  for _, path in ipairs(paths) do
+    local locked, note = require("testing.statelock").with(path, function()
+      local ok, err = atomic(path, text, { mkdirp = true })
+      if not ok then
+        notes[#notes + 1] = ("cannot write %s: %s"):format(path, tostring(err))
+      end
+    end)
+    if not locked then
+      notes[#notes + 1] = note or ("cannot lock %s"):format(path)
     end
-  end)
-  if not locked and note then
-    notes[#notes + 1] = note
   end
   if json_path then
     local ok, err = atomic(vim.fn.fnamemodify(json_path, ":p"), text, { mkdirp = true })
@@ -603,11 +753,7 @@ local function write_doc(doc, root, json_path, state_dir)
   end
   -- transitional: the old `.ci-last.json` of `scripts/ci.sh`, only where git ignores it (never dirty the tree),
   -- and only for a complete run on the commit that was tested
-  if
-    not doc.partial
-    and not doc.head_moved
-    and git_out(root, "check-ignore", "-q", ".ci-last.json")
-  then
+  if complete and legacy_ignored then
     local legacy = vim.json.encode({
       repo = doc.repo,
       commit = type(doc.commit) == "string" and doc.commit or "unknown",
@@ -652,62 +798,116 @@ function M.main(argv, sv)
     err(("testing ci: root %s is not a directory"):format(args.root))
     return M.EXIT_USAGE
   end
+  local report = require("testing.ci.report")
+  local agent = args.agent
+  if agent == nil then
+    agent = require("testing.report.agent").choose(nil, sv.env) == "agent"
+  end
+  local state_dir = args.state_dir and vim.fn.fnamemodify(args.state_dir, ":p") or sv.state_dir
+
+  ---A run that stops before its first step still leaves its document (never yesterday's green one) and its
+  ---reports; the problems go to stderr, the agent report's first line is the verdict.
+  ---@param code integer
+  ---@param problems string[]
+  ---@param profile_name? string
+  ---@param with_usage? boolean
+  ---@return integer
+  local function stop_early(code, problems, profile_name, with_usage)
+    for _, p in ipairs(problems) do
+      err("testing ci: " .. p)
+    end
+    if with_usage then
+      err(M.USAGE)
+    end
+    local doc = {
+      schema = M.SCHEMA,
+      repo = vim.fs.basename(root),
+      os = this_os(),
+      profile = profile_name or vim.NIL,
+      partial = false,
+      verdict = code == M.EXIT_USAGE and "error" or "infra",
+      exit = code,
+      first_red = vim.NIL,
+      problems = problems,
+      time = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+      steps = {},
+    }
+    for _, note in ipairs(write_doc(doc, root, args.json, state_dir, false)) do
+      err("testing ci: " .. note)
+    end
+    if args.junit then
+      pcall(
+        require("lib.nvim.fs.write.atomic"),
+        vim.fn.fnamemodify(args.junit, ":p"),
+        report.junit(doc),
+        {
+          mkdirp = true,
+        }
+      )
+    end
+    if agent then
+      for _, line in ipairs(report.agent(doc)) do
+        out(line)
+      end
+    end
+    return code
+  end
 
   local loaded = require("testing.config.project").load(root)
   if loaded.error then
-    err("testing ci: " .. loaded.error)
-    return M.EXIT_USAGE
+    return stop_early(M.EXIT_USAGE, { loaded.error })
   end
   local raw = loaded.config.ci
   if raw == nil then
     -- a `ci` that is not a table was dropped by the loader with a warning: say that, not "no section"
     for _, p in ipairs(loaded.problems or {}) do
       if p:find("'ci'", 1, true) then
-        err("testing ci: " .. p)
-        return M.EXIT_USAGE
+        return stop_early(M.EXIT_USAGE, { p })
       end
     end
-    err(("testing ci: %s/.testing.lua has no `ci` section (docs/CI.md)"):format(root))
-    return M.EXIT_USAGE
+    return stop_early(
+      M.EXIT_USAGE,
+      { ("%s/.testing.lua has no `ci` section (docs/CI.md)"):format(root) }
+    )
   end
   local pipeline, problems = schema.resolve(raw)
   if not pipeline then
-    for _, p in ipairs(problems) do
-      err("testing ci: " .. p)
-    end
-    return M.EXIT_USAGE
+    return stop_early(M.EXIT_USAGE, problems)
   end
 
   local profile = args.profile or pipeline.default
   if not pipeline.profiles[profile] then
     local names = vim.tbl_keys(pipeline.profiles)
     table.sort(names)
-    err(
-      ("testing ci: unknown profile %s (profiles: %s)"):format(profile, table.concat(names, ", "))
+    return stop_early(
+      M.EXIT_USAGE,
+      { ("unknown profile %s (profiles: %s)"):format(profile, table.concat(names, ", ")) }
     )
-    return M.EXIT_USAGE
   end
   local names = pipeline.profiles[profile]
-  local partial, partial_why = false, nil
+  local partial_why = {}
   if args.steps then
     if #args.steps == 0 then
-      err("testing ci: --step names no step")
-      return M.EXIT_USAGE
+      return stop_early(M.EXIT_USAGE, { "--step names no step" }, profile)
     end
     local chosen, seen = {}, {}
     for _, s in ipairs(args.steps) do
       if not pipeline.steps[s] then
         local known = vim.tbl_keys(pipeline.steps)
         table.sort(known)
-        err(("testing ci: unknown step %s (steps: %s)"):format(s, table.concat(known, ", ")))
-        return M.EXIT_USAGE
+        return stop_early(
+          M.EXIT_USAGE,
+          { ("unknown step %s (steps: %s)"):format(s, table.concat(known, ", ")) },
+          profile
+        )
       end
       if not seen[s] then
         seen[s] = true
         chosen[#chosen + 1] = s
       end
     end
-    names, partial, partial_why = chosen, true, "--step"
+    names = chosen
+    partial_why[#partial_why + 1] = "--step"
   end
 
   local suite_selects = false
@@ -718,62 +918,65 @@ function M.main(argv, sv)
     has_suite = has_suite or pipeline.steps[n].inprocess == "run"
   end
   for _, a in ipairs(args.suite_args) do
-    if a == "--cache-clear" or a == "--help" or a == "-h" then
-      err(
-        ("testing ci: %s after -- runs no suite; call `testing %s` itself"):format(
+    if schema.NO_RUN_OPTIONS[a] then
+      return stop_early(M.EXIT_USAGE, {
+        ("%s after -- runs no suite; call `testing %s` itself"):format(
           a,
           a == "-h" and "--help" or a
-        )
-      )
-      return M.EXIT_USAGE
+        ),
+      }, profile)
     end
   end
   if #args.suite_args > 0 then
     if not has_suite then
-      err("testing ci: options after -- go to the suite step, and no suite step is selected")
-      return M.EXIT_USAGE
+      return stop_early(
+        M.EXIT_USAGE,
+        { "options after -- go to the suite step, and no suite step is selected" },
+        profile
+      )
     end
     local run_args, bad =
       require("testing.args").parse(vim.list_extend({ "run", root }, args.suite_args))
     if not run_args then
-      err("testing ci: the options after --: " .. tostring(bad))
-      return M.EXIT_USAGE
+      return stop_early(M.EXIT_USAGE, { "the options after --: " .. tostring(bad) }, profile)
     end
-    local refused = require("testing.stamp.write").refuse(run_args)
-    if refused then
+    if require("testing.stamp.write").refuse(run_args) then
       suite_selects = true
-      partial = true
-      partial_why = partial_why and (partial_why .. ", suite options") or "suite options"
+      partial_why[#partial_why + 1] = "suite options"
     end
   end
-  local facts = git_facts(root)
 
   local planned, code, why = plan(pipeline, names, root)
   if not planned then
-    for _, p in ipairs(why) do
-      err("testing ci: " .. p)
-    end
-    return code --[[@as integer]]
+    return stop_early(code --[[@as integer]], why, profile)
   end
 
-  local report = require("testing.ci.report")
-  -- the agent report replaces the streamed output: verdict first, then only the findings
-  local agent = args.agent
-  if agent == nil then
-    agent = require("testing.report.agent").choose(nil, sv.env) == "agent"
+  -- every process of our own is started now and collected later: git facts and the tool versions
+  local facts = git_facts(root)
+  local versions = {}
+  for _, p in ipairs(planned) do
+    local step = p.step
+    if not p.skip and not step.inprocess and step.version_argv then
+      -- ask the tool that will run (the found path), not a bare name: libuv cannot start a `.cmd` by name
+      local version_argv = vim.deepcopy(step.version_argv)
+      if p.argv and version_argv[1] == step.argv[1] then
+        version_argv[1] = p.argv[1]
+      end
+      versions[step.name] = start(version_argv)
+    end
   end
+
+  -- the agent report replaces the streamed output: verdict first, then only the findings
   local function quiet() end
   local say = agent and quiet or out
   local step_sv = agent and vim.tbl_extend("force", sv, { out = quiet, err = quiet }) or sv
-
-  local state_dir = args.state_dir and vim.fn.fnamemodify(args.state_dir, ":p") or sv.state_dir
   local stamp_out = args.state_dir
       and require("testing.stamp").path(root, { state_dir = state_dir })
     or nil
 
   local started = os.time()
   local results, first_red = {}, nil
-  local stop = false
+  local stop, ran = false, 0
   for _, p in ipairs(planned) do
     local step = p.step
     ---@type Testing.Ci.StepResult
@@ -790,6 +993,7 @@ function M.main(argv, sv)
         reason = "an earlier step failed",
       }
     else
+      ran = ran + 1
       say(
         ("== %s%s"):format(
           step.name,
@@ -807,18 +1011,10 @@ function M.main(argv, sv)
           { selects = suite_selects, stamp_out = stamp_out }
         )
         if r.partial and r.state == "green" and not suite_selects then
-          partial = true
-          partial_why = partial_why and (partial_why .. ", suite green-partial")
-            or "suite green-partial"
+          partial_why[#partial_why + 1] = "suite green-partial"
         end
       else
         r = run_process(p, root, step_sv)
-        -- ask the tool that ran (the found path), not a bare name: libuv cannot start a `.cmd` by name
-        local version_argv = step.version_argv and vim.deepcopy(step.version_argv)
-        if version_argv and p.argv and version_argv[1] == step.argv[1] then
-          version_argv[1] = p.argv[1]
-        end
-        r.tool_version = tool_version(version_argv)
       end
       r.ms = math.floor((vim.uv.hrtime() - t0) / 1e6)
       say(
@@ -826,7 +1022,7 @@ function M.main(argv, sv)
           step.name,
           r.state,
           seconds(r.ms),
-          r.reason and (", " .. r.reason) or ""
+          r.reason and (", " .. clean(r.reason)) or ""
         )
       )
       if r.state ~= "green" then
@@ -836,19 +1032,28 @@ function M.main(argv, sv)
         end
       end
     end
+    local v = versions[step.name]
+    if v then
+      local line = collect(v)
+      r.tool_version = line and vim.trim(line:match("[^\r\n]+") or "") or nil
+    end
     results[#results + 1] = r
   end
+  if ran == 0 then
+    partial_why[#partial_why + 1] = "no step ran on " .. this_os()
+  end
 
-  local exit = exit_code(results)
-  local verdict = exit == M.EXIT_OK and (partial and "green-partial" or "green")
-    or exit == M.EXIT_FAILED and "red"
-    or exit == M.EXIT_USAGE and "error"
-    or "infra"
-  -- a commit or checkout during the run: the document must not claim the new tree was tested
-  local head_moved = facts.commit ~= nil and git_out(root, "rev-parse", "HEAD") ~= facts.commit
+  local exit, deciding = exit_code(results)
+  -- a commit, a checkout or a step that changed files: the document must not claim the new tree was tested
+  local head_moved, tree_changed = after_facts(root, facts)
   if head_moved then
     err("testing ci: HEAD moved during the run; the result is about " .. facts.commit)
   end
+  if tree_changed then
+    partial_why[#partial_why + 1] = "the tree changed during the run"
+    err("testing ci: the working tree changed during the run (a step wrote files)")
+  end
+  local partial = #partial_why > 0
   local steps_doc = {}
   for _, r in ipairs(results) do
     local findings = {}
@@ -868,6 +1073,12 @@ function M.main(argv, sv)
       findings_total = r.findings_total or 0,
     }
   end
+  local function verdict_of(x)
+    return x == M.EXIT_OK and (partial and "green-partial" or "green")
+      or x == M.EXIT_FAILED and "red"
+      or x == M.EXIT_USAGE and "error"
+      or "infra"
+  end
   local doc = {
     schema = M.SCHEMA,
     repo = facts.repo,
@@ -875,22 +1086,24 @@ function M.main(argv, sv)
     tree = facts.tree or vim.NIL,
     dirty = facts.dirty == nil and vim.NIL or facts.dirty,
     head_moved = head_moved,
+    tree_changed = tree_changed,
     os = this_os(),
     profile = profile,
     partial = partial,
-    partial_why = partial_why or vim.NIL,
+    partial_why = partial and table.concat(partial_why, ", ") or vim.NIL,
     suite_args = args.suite_args,
-    verdict = verdict,
+    verdict = verdict_of(exit),
     exit = exit,
     first_red = first_red or vim.NIL,
+    deciding = deciding or vim.NIL,
     nvim = tostring(vim.version()),
     pipeline_sha = vim.fn.sha256(require("lib.nvim.json.canonical").encode(pipeline.digest_input)),
     time = os.date("!%Y-%m-%dT%H:%M:%SZ", started),
     steps = steps_doc,
   }
-  for _, note in ipairs(write_doc(doc, root, args.json, state_dir)) do
-    err("testing ci: " .. note)
-  end
+
+  -- the reports: a report that could not be written is exit 3 (as for a run), and the document says so
+  local notes = {}
   if args.junit then
     local ok_w, werr = require("lib.nvim.fs.write.atomic")(
       vim.fn.fnamemodify(args.junit, ":p"),
@@ -898,8 +1111,18 @@ function M.main(argv, sv)
       { mkdirp = true }
     )
     if not ok_w then
-      err(("testing ci: cannot write %s: %s"):format(args.junit, tostring(werr)))
+      notes[#notes + 1] = ("cannot write %s: %s"):format(args.junit, tostring(werr))
     end
+  end
+  vim.list_extend(notes, write_doc(doc, root, args.json, state_dir, facts.legacy_ignored))
+  if #notes > 0 then
+    doc.exit, doc.verdict, doc.write_errors = M.EXIT_INFRA, "infra", notes
+    exit = M.EXIT_INFRA
+    for _, note in ipairs(notes) do
+      err("testing ci: " .. note)
+    end
+    -- best effort: the document on disk must not keep the green it had before the failure
+    write_doc(doc, root, nil, state_dir, false)
   end
 
   for _, line in ipairs(agent and report.agent(doc) or report.term(doc, M.SENTINEL)) do

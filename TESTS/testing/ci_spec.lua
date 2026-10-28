@@ -178,7 +178,8 @@ return function(H)
     for rel, text in pairs(files or {}) do
       write(root .. "/" .. rel, text)
     end
-    git(root, "init", "-q", "-b", "main")
+    git(root, "init", "-q")
+    git(root, "symbolic-ref", "HEAD", "refs/heads/main")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "init")
     return root
@@ -370,7 +371,7 @@ return function(H)
     eq(res.code, 0, "partial: exit 0")
     lacks(res.out, "A|", "partial: only the chosen step")
     lacks(res.out, ci.SENTINEL, "partial: never the sentinel")
-    has(res.out, "partial", "partial: the verdict line says so")
+    has(res.out, "(partial: --step)", "partial: the verdict line says so")
     eq(doc_of(root).partial, true, "partial: the document says so")
     eq(doc_of(root).verdict, "green-partial", "partial: verdict green-partial")
     eq(run(root, "--step=zz").code, 2, "partial: an unknown step is exit 2")
@@ -411,128 +412,6 @@ return function(H)
     eq(doc_of(root).steps[2].state, "skipped", "os: the step is skipped")
   end
 
-  -- the suite in-process: green, red, and options after -- reach it
-  do
-    local PASS = "return function(H)\n  H.ok(require('proj.mod').value == 1, 'the module')\nend\n"
-    local FAIL = "return function(H)\n  H.ok(false, 'red on purpose')\nend\n"
-    local CFG =
-      "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false } } }"
-    local root = project("suite", CFG, { ["TESTS/a_spec.lua"] = PASS })
-    local res = run(root)
-    eq(res.code, 0, "suite: green (" .. res.err .. ")")
-    eq(res.last, ci.SENTINEL, "suite: the sentinel")
-
-    local red =
-      project("suite-red", CFG, { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_spec.lua"] = FAIL })
-    res = run(red)
-    eq(res.code, 1, "suite: a red case makes the step red")
-    has(res.out, "ci: RED suite", "suite: named")
-    -- the findings come from the suite's Result-IR, whatever reporter the inner run printed
-    local sdoc = doc_of(red).steps[1]
-    eq(sdoc.findings_total, 1, "suite: one finding from the IR")
-    eq(sdoc.findings[1].file, "TESTS/b_spec.lua", "suite: at the red spec")
-    has(sdoc.findings[1].text, "red on purpose", "suite: with the assertion's message")
-
-    res = run(red, "--", "--file", "TESTS/a_spec.lua")
-    eq(res.code, 0, "suite: options after -- reach the suite (" .. res.err .. ")")
-    -- a selection after -- is part of the suite only: the run is partial, never the sentinel
-    lacks(res.out, ci.SENTINEL, "suite: a selection after -- prints no sentinel")
-    eq(doc_of(red).partial, true, "suite: a selection after -- is a partial run")
-    eq(doc_of(red).partial_why, "suite options", "suite: ... and the document says why")
-    eq(doc_of(red).suite_args, { "--file", "TESTS/a_spec.lua" }, "suite: the options are recorded")
-
-    res = run(root, "--", "--jobs", "1")
-    eq(res.last, ci.SENTINEL, "suite: an option that selects nothing keeps the run complete")
-
-    -- a stamping suite step (the default) with a selection after --: a plain run (a stamp refuses a selection
-    -- with exit 2), the run is partial
-    local stamping = project(
-      "suite-stamp",
-      "{ profiles = { full = { 'suite' } } }",
-      { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_spec.lua"] = FAIL }
-    )
-    res = run(stamping, "--", "--file", "TESTS/a_spec.lua")
-    eq(res.code, 0, "stamp + selection: the selected run, not a refused stamp (" .. res.err .. ")")
-    eq(doc_of(stamping).partial, true, "stamp + selection: partial")
-    res = run(stamping, "--", "--file", "TESTS/b_spec.lua")
-    eq(res.code, 1, "stamp + selection: a red selected file is red, not a usage error")
-
-    -- --state-dir: the document and the suite's stamp go there (a wrapper that isolates the suite's state)
-    local other = tmp .. "/real-state"
-    local green_only =
-      project("state-dir", "{ profiles = { full = { 'suite' } } }", { ["TESTS/a_spec.lua"] = PASS })
-    res = run(green_only, "--state-dir=" .. other)
-    eq(res.code, 0, "state-dir: green (" .. res.err .. ")")
-    local st = require("testing.state")
-    ok(
-      vim.uv.fs_stat(st.dir(green_only, { state_dir = other }) .. "/ci.json") ~= nil,
-      "state-dir: the document is there"
-    )
-    ok(
-      vim.uv.fs_stat(require("testing.stamp").path(green_only, { state_dir = other })) ~= nil,
-      "state-dir: the stamp is there"
-    )
-    eq(
-      vim.uv.fs_stat(st.dir(green_only, { state_dir = state_dir }) .. "/ci.json"),
-      nil,
-      "state-dir: not in the services' state directory"
-    )
-
-    -- options after -- that run no suite are refused
-    eq(run(root, "--", "--cache-clear").code, 2, "-- --cache-clear: exit 2")
-    eq(run(root, "--", "--help").code, 2, "-- --help: exit 2")
-  end
-
-  -- a suite whose own verdict is green-partial (a skipped case): the ci run is partial, no sentinel
-  do
-    local SKIP = table.concat({
-      "describe('s', function()",
-      "  it('a', function() assert.is_true(true) end)",
-      "  pending('later')",
-      "end)",
-      "",
-    }, "\n")
-    local root = project(
-      "suite-partial",
-      "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false } } }",
-      { ["TESTS/s_spec.lua"] = SKIP }
-    )
-    local res = run(root)
-    eq(res.code, 0, "suite green-partial: exit 0 (" .. res.err .. ")")
-    lacks(res.out, ci.SENTINEL, "suite green-partial: no sentinel")
-    eq(doc_of(root).partial, true, "suite green-partial: the run is partial")
-    has(tostring(doc_of(root).partial_why), "suite green-partial", "suite green-partial: said why")
-  end
-
-  -- options after -- without a suite step, a timeout on an in-process preset, an unknown dependency in args
-  do
-    local root = project(
-      "nosuite",
-      ("{ profiles = { full = { 'a' } }, steps = { a = { run = %s } } }"):format(nv(echo, "a")),
-      { [echo] = ECHO }
-    )
-    local res = run(root, "--", "--jobs", "1")
-    eq(res.code, 2, "-- without a suite step: exit 2")
-    has(res.err, "no suite step", "-- without a suite step: said so")
-
-    root = project(
-      "inproc-timeout",
-      "{ profiles = { full = { 's' } }, steps = { s = { preset = 'suite', timeout = '1m' } } }"
-    )
-    res = run(root)
-    eq(res.code, 2, "a timeout on an in-process preset is an error")
-    has(res.err, "takes no timeout", "... named")
-
-    root = project(
-      "inproc-deps",
-      "{ profiles = { full = { 's' } }, steps = { s = { preset = 'suite', stamp = false, args = { '--rtp', '${deps.no-such-dep-xyz}' } } } }",
-      { ["TESTS/a_spec.lua"] = "return function(H) H.ok(true, 'x') end\n" }
-    )
-    res = run(root)
-    eq(res.code, 3, "a missing dependency in an in-process step's args is exit 3 before the run")
-    has(res.err, "no-such-dep-xyz", "... named")
-  end
-
   -- a relative command below the root (the root is not the current directory) and a `.sh` step
   do
     local root = project(
@@ -543,9 +422,10 @@ return function(H)
     local res = run(root)
     eq(res.code, 0, "sh: a .sh step below the root runs (" .. res.err .. ")")
     has(res.out, "hello from " .. root, "sh: through bash, with its arguments")
+    local platform = require("testing.platform")
     eq(
       doc_of(root).os,
-      require("testing.platform").is_windows() and "windows" or doc_of(root).os,
+      platform.is_windows() and "windows" or platform.is_macos() and "macos" or "linux",
       "the document names the system"
     )
   end

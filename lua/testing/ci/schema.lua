@@ -24,6 +24,17 @@ local M = {}
 ---Default deadline of a process step (milliseconds).
 M.DEFAULT_TIMEOUT_MS = 600000
 
+---Options of a run that run no suite (or not to its end): in a suite step's `args` and after `--` they are an error,
+---a suite step that runs nothing must not read as green.
+M.NO_RUN_OPTIONS = {
+  ["--help"] = true,
+  ["-h"] = true,
+  ["--cache-clear"] = true,
+  ["--list"] = true,
+  ["--dry-run"] = true,
+  ["--watch"] = true,
+}
+
 local STEP_KEYS = {
   preset = true,
   run = true,
@@ -158,6 +169,17 @@ local function resolve_step(step_name, raw, problems)
       )
     elseif not preset then
       problems[#problems + 1] = ("%s.args: only a preset takes `args`"):format(where)
+    elseif preset.inprocess then
+      for _, a in ipairs(raw.args) do
+        local opt = a:match("^(%-%-?[%w%-]+)")
+        if opt and M.NO_RUN_OPTIONS[opt] then
+          problems[#problems + 1] = ("%s.args: %s runs no %s (the step would read as green)"):format(
+            where,
+            opt,
+            preset.name
+          )
+        end
+      end
     end
   end
   if raw.needs ~= nil and not is_str_list(raw.needs) then
@@ -172,6 +194,19 @@ local function resolve_step(step_name, raw, problems)
       if type(k) ~= "string" or not k:match("^[%a_][%w_]*$") or type(v) ~= "string" then
         ok_env = false
       end
+    end
+    -- on Windows the environment ignores case: `Path` and `PATH` would set one variable twice
+    local lower = {}
+    for k in pairs(ok_env and raw.env or {}) do
+      local l = tostring(k):lower()
+      if lower[l] then
+        problems[#problems + 1] = ("%s.env: %s and %s differ only in case"):format(
+          where,
+          lower[l],
+          k
+        )
+      end
+      lower[l] = k
     end
     if not ok_env then
       problems[#problems + 1] = ('%s.env: expected { NAME = "value" }, got %s'):format(

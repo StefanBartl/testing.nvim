@@ -56,30 +56,44 @@ Placeholders, in `run`, `args` and `env` values: `${root}` (the project root) an
 found like `deps` of `.testing.lua`: `$<NAME>_DIR`, `.deps/<name>`, a sibling checkout, ...). Nothing else.
 
 **Every problem in the section is an error** (exit `2`): an unknown key, a typo in a step, an unknown preset, a
-profile cycle, a name that is neither a profile, a step nor a preset. Elsewhere in `.testing.lua` a bad key is a
-warning and the default stays; a pipeline with a typo must not run green.
+profile cycle, a name that is neither a profile, a step nor a preset, `env` names that differ only in case (one
+variable on Windows), a `timeout` on an in-process preset, an option in a suite step's `args` that runs no suite
+(`--help`, `--cache-clear`, `--list`, `--dry-run`, `--watch`). Elsewhere in `.testing.lua` a bad key is a warning and
+the default stays; a pipeline with a typo must not run green.
+
+Also refused before anything runs (exit `2`): a relative `run` path that leaves the root (`../x.sh`; use an absolute
+path or `${deps.<name>}`), and an argument with a character cmd.exe interprets (`& | < > ^ % ! "`) for a step whose
+command is a batch file (`.bat`/`.cmd` run through cmd.exe, whose quoting libuv does not do).
+
+**Trust.** The `ci` section is part of `.testing.lua`, which runs as code anyway (the same trust as the project's
+specs). Its steps add no shell (argv only; `${root}` and `${deps.<name>}` are the only placeholders, expanded once).
+Process steps inherit the environment of `testing ci` with the step's `env` on top, as `scripts/ci.sh` did: the
+tools a step runs (luacheck needs `LUA_PATH`) are not child editors, so the allowlist of `testing.child` does not
+apply to them.
 
 ## Presets
 
 | Preset | Runs | Needs |
 | --- | --- | --- |
-| `stylua` | `stylua --check .` | `stylua` |
+| `stylua` | `stylua --check .` (`--check` is fixed, `args` replaces `.`: a step never turns into a formatter) | `stylua` |
 | `luacheck` | `luacheck --formatter plain --codes .` (`args` replaces `.`) | `luacheck` |
 | `suite` | the suite, in this process (`testing stamp <root>`, or `testing run` with `stamp = false`) | |
-| `conformance` | `testing conformance <root>` in this process | |
+| `conformance` | `testing conformance <root> --gate` in this process (a gate: without `--gate` it only reports) | |
 | `surface` | `testing surface <root>` in this process | |
 | `budget` | `testing budget <root>` in this process | |
 
 The in-process presets do not start `nvim -l` inside `nvim -l`: they run through `testing.cli` in the same process
-and with the same services. Options after `--` go to the `suite` step: `testing ci -- --jobs 4` (an error when no
+and with the same services. The suite step is green only when its Result-IR says so: exit `0` without a result is
+`infra` ("the suite wrote no result"), and a `--json` file left from an earlier run is not read. Options after `--` go to the `suite` step: `testing ci -- --jobs 4` (an error when no
 suite step is selected). An option that selects part of the suite (`--file`, `--filter`, `--tags`, `--shard`,
 `--changed`, ... the ones `testing stamp` refuses) makes the whole run **partial**: no sentinel, and the document
 says `partial_why = "suite options"`. A stamping suite step then runs as a plain run (a selection cannot earn a
 stamp), so `testing ci --step=suite -- --file TESTS/x_spec.lua` checks one file.
 
 A green suite whose own verdict is `green-partial` (a skipped case, an accepted flaky case, a stop) also makes the
-run partial (`partial_why = "suite green-partial"`). Options after `--` that run no suite (`--cache-clear`,
-`--help`) are refused with exit `2`.
+run partial (`partial_why = "suite green-partial"`); a stamping step then writes no stamp and says so ("no stamp:
+the suite is green-partial"), it is not red. Options after `--` that run no suite (`--cache-clear`, `--help`,
+`--list`, ...) are refused with exit `2`.
 
 A repository whose specs need an isolated state and cache directory runs `testing ci` through its
 `scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same
@@ -98,6 +112,9 @@ with `scripts/test.sh ci -- --cached`.
   step and reports all red ones (one run, all findings).
 - Process steps stream their output line by line. A deadline ends the whole process tree
   (`lib.nvim.system.job`, `kill_tree`): POSIX process group, Windows `taskkill /T`.
+- A run is also partial when every step was skipped for this system (`no step ran on <os>`) and when the working
+  tree changed during the run (a step wrote files: `tree_changed`).
+- The processes `testing ci` starts itself (git facts, tool versions) are started together, not one after the other.
 
 ## Reports and findings
 
@@ -121,13 +138,17 @@ repository step has no error format and no findings, only its last output lines.
 The worst step decides: `0` every step green (or skipped for this system), `1` a step red (also a timeout; a
 process step's own exit code other than 0 is red), `2` a usage or pipeline error, or an in-process step that ended
 with `2` (state `error`), `3` a missing tool or dependency, a step that could not start, or an in-process step that
-ended with `3` (state `infra`). The last line of a complete green run is `TESTING_CI_OK`; never after a partial
-run, and never when HEAD moved during the run. See [EXIT-CODES.md](EXIT-CODES.md).
+ended with `3` (state `infra`), and a report (`ci.json`, `--json`, `--junit`) that could not be written. The last
+line of a complete green run is `TESTING_CI_OK`; never after a partial run, and never when HEAD moved during the run.
+The headline names the step that decided the exit code. See [EXIT-CODES.md](EXIT-CODES.md).
 
 ## The document `testing-ci/1`
 
 Written after every run to the project's state directory (`ci.json` beside `runs.jsonl`, see [STATE.md](STATE.md)),
-canonical JSON, under the state lock; `--json=<file>` writes a copy.
+canonical JSON, under the state lock; `--json=<file>` writes a copy. That includes a run that stopped before its first
+step (verdict `error` or `infra`, its `problems`, no steps), so an old green document never stays behind. A
+complete run (all its steps, not partial) is also `ci-<profile>.json`: the last complete run of that profile, which a
+`--step` run or another profile never replaces.
 
 ```json
 {
@@ -147,7 +168,8 @@ canonical JSON, under the state lock; `--json=<file>` writes a copy.
 ```
 
 `commit`, `tree` and `dirty` are taken before the first step (`null` when unknown: no git, not a repository);
-`head_moved` is true when HEAD changed during the run. `verdict` is `green`, `green-partial` (`--step` or a suite
+`head_moved` is true when HEAD changed during the run, `tree_changed` when the working tree did; `deciding` is the
+step that decided the exit code; `write_errors` lists reports that could not be written. `verdict` is `green`, `green-partial` (`--step` or a suite
 selection, `partial_why` says which), `red`, `error` (exit 2) or `infra` (exit 3). A step's `state` is `green`,
 `red`, `skipped`, `error` or `infra`; `errors` holds up to 20 of its last output lines.
 
