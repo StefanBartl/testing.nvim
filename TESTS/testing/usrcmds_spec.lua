@@ -56,6 +56,7 @@ return function(H)
   local subcommands = {
     "budget",
     "cache",
+    "ci",
     "config",
     "conformance",
     "doctor",

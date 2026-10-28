@@ -172,6 +172,30 @@ the second push of the same state pass at once, install with `--verify=<run>` or
 A pre-push hook that is not ours is never overwritten or removed (exit `1`). The hook of `:MyPlugins ci hook`
 (mark `# MyPlugins ci pre-push hook`) is recognised and replaced; `remove` takes it away as well.
 
+## In the editor
+
+```
+:Testing ci [<profile>] [--step=<a,b>] [--keep-going] [--reuse] [--root=<dir>]
+:Testing ci status | verify | hook install | hook remove
+```
+
+The same pipeline, from Neovim, without ever blocking it. `:Testing ci` starts `testing ci --no-agent` in a headless
+child (a step that hangs cannot take the session down), streams its output into the buffer `testing-ci://<repo>` (a
+split opens when it is not visible; one `== <step>` section per step) and, when the child ends, reads back the document
+`testing-ci/1` it wrote: the verdict is notified, and a red run fills the quickfix list with the findings of the red
+steps (a red step without findings gets a text-only entry with its reason). The list opens only on red. One pipeline
+runs per project at a time. `<profile>` and `--step=` complete from the project: the names come from `testing ci list
+[--json]`, which runs in a child, so the editor never executes `.testing.lua` on a keypress.
+
+`:Testing ci status` shows the last result (one line per step, the findings) and says `stale` when the tree changed
+since. `verify` and `hook` run the driver's subcommands of the same name and show their text.
+
+**Statusline.** `require("testing.ci.editor").statusline()` returns `ci: ✓ full @abc1234`, `ci: ✗ luacheck`, `ci: ~ fast`
+(green but partial), `ci: ! infra`, `ci: … full` while a run goes, and appends `stale` when the tree is no longer the one
+the result was for. It reads a cache and starts nothing; `editor.refresh(root)` re-reads the document and asks git for
+the tree asynchronously (a run does that when it ends). Not part of this version: the progress indicator, the table for
+several repositories (`--repos`) and the terminal.nvim view.
+
 ## Reports and findings
 
 A process preset has an **error format** (Vim's `errorformat` items `%f` (a file name, no blanks), `%l`, `%c`, `%m`

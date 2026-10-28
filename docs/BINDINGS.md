@@ -35,6 +35,11 @@ require("testing").setup({
 | `:Testing conformance [<root>]` | `--gate`, `--only=<ids>`, `--skip=<ids>`, `--bridge`, `--markdown` | Run the conformance checks K1..K15 on the project in a headless child Neovim and show the report ([CONFORMANCE.md](CONFORMANCE.md)). Report only unless `--gate` (or `conformance.gate` in `.testing.lua`); a failed gate is a warning with the report, not an error. |
 | `:Testing surface [<root>]` | `--from=<ir.json>`, `--threshold=<n>`, `--markdown` | List the plugin's keymaps, commands, autocmds and how much of it the specs exercised ([SURFACE.md](SURFACE.md)). Without `--from` (the IR of a tracked run) nothing is measured and the report says so. |
 | `:Testing budget [<root>]` | `--update`, `--allow-new`, `--factor=<x>` | Measure the performance budgets of the runner and compare them with the baseline ([PERFORMANCE.md](PERFORMANCE.md)). |
+| `:Testing ci [<profile>]` | `--step=<a,b>`, `--keep-going`, `--reuse`, `--root=<dir>` | Run the pipeline of the `ci` section of `.testing.lua` ([CI.md](CI.md)) in a headless child: the output streams into the buffer `testing-ci://<repo>` (a split opens when it is not visible), the verdict is notified, and a red run fills the quickfix list with the findings of the red steps (opened only on red). The editor never blocks. `<profile>` and `--step=` complete from the project (`testing ci list`, run in a child: the editor does not execute `.testing.lua`). |
+| `:Testing ci status` | `--root=<dir>` | The last result of the project in a viewer: the verdict, one line per step, the findings. Says when the tree changed since (`stale`). |
+| `:Testing ci verify` | `--profile=<name>`, `--allow-dirty`, `--root=<dir>` | `testing ci verify` in a child: is this state already proven by a complete green run? Nothing runs. |
+| `:Testing ci hook install` | `--run=<profile>`, `--verify=<profile>`, `--root=<dir>` | Install the pre-push hook (`testing ci hook install`, [CI.md](CI.md#the-pre-push-hook)). |
+| `:Testing ci hook remove` | `--root=<dir>` | Remove it again (a hook that is not ours stays). |
 | `:Testing cache stats [<root>]` | none | Show entries, size and directory of the result cache of the project. |
 | `:Testing cache clear [<root>]` | none | Delete the result cache of the project. It is regenerable: deleting it costs time, never correctness. |
 | `:Testing health` | none | Run `:checkhealth testing`. |
@@ -85,6 +90,14 @@ Not a Neovim binding, but the other way in: `nvim -n -i NONE --headless -u NONE 
 (exit 0 done, 1 `--check` found work, 2 refused or bad usage, 3 unreadable root). Options and
 exit codes are in the README and in `:help testing-cli`. It registers no command, keymap or
 autocommand in an interactive session.
+
+## Statusline
+
+`require("testing.ci.editor").statusline()` returns the text for the project of the current buffer: `ci: ✓ full @abc1234`,
+`ci: ✗ luacheck`, `ci: ~ fast` (green but partial), `ci: ! infra`, `ci: … full` while a run is going, and `stale`
+appended when the tree is no longer the one the result was for. It reads the cached result only and starts nothing,
+except one asynchronous refresh (`editor.refresh(root)`) the first time a project is asked about; a run refreshes it
+when it ends. Example (lualine): `{ function() return require("testing.ci.editor").statusline() end }`.
 
 ## Autocommands
 

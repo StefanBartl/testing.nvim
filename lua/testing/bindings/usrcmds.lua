@@ -12,6 +12,8 @@
 ---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
 ---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
+---   :Testing ci [<profile>] [--step=a,b] [--keep-going] [--reuse]   the pipeline of the ci section: live view, quickfix on red (docs/CI.md)
+---   :Testing ci status | verify | hook install | hook remove   the last result, the proof of this state, the pre-push hook
 ---   :Testing cache stats | clear [<root>]   the result cache of the project
 ---   :Testing hover               the last result of the test under the cursor (hover.nvim shows the same on `:Hover show`)
 ---   :Testing terminal            repeat the last run as the job of a terminal.nvim terminal (soft dependency, see docs/BINDINGS.md)
@@ -35,6 +37,8 @@ M.last_run = nil
 M.TYPE_REPORTER = "TESTING_REPORTER"
 M.TYPE_SPEC = "TESTING_SPEC"
 M.TYPE_MIGRATE = "TESTING_MIGRATE"
+M.TYPE_CI_PROFILE = "TESTING_CI_PROFILE"
+M.TYPE_CI_STEPS = "TESTING_CI_STEPS"
 
 ---Where the text of `:Testing migrate` goes (a viewer); a spec replaces it.
 ---@type fun(lines: string[], title: string)
@@ -296,6 +300,88 @@ end
 ---@param ctx { args: table<string, any>, flags: table<string, any> }
 function M.run_all(ctx)
   start("run", { root = M.resolve_root(ctx.args.root), flags = M.child_flags(ctx.flags) })
+end
+
+---`:Testing ci [profile] [--step=a,b] [--keep-going] [--reuse]`: the pipeline in a child, live view, quickfix on red.
+---@param ctx { args: table<string, any>, flags: table<string, any> }
+function M.ci_run(ctx)
+  local root = M.resolve_root(ctx.flags.root, vim.api.nvim_buf_get_name(0))
+  local steps = ctx.flags.step and vim.split(ctx.flags.step, ",", { trimempty = true }) or nil
+  local started, err = require("testing.ci.editor").run({
+    root = root,
+    profile = ctx.args.profile,
+    steps = steps,
+    keep_going = ctx.flags["keep-going"],
+    reuse = ctx.flags.reuse,
+  })
+  if not started then
+    require("testing.notify").get().error("testing ci: " .. tostring(err))
+    return
+  end
+  require("testing.notify").get().info("testing ci: " .. root)
+end
+
+---`:Testing ci status`: the last document of the project as lines in a viewer.
+---@param root string
+function M.ci_status(root)
+  local editor = require("testing.ci.editor")
+  editor.refresh(root, function(entry)
+    local doc = entry.doc
+    if not doc then
+      require("testing.notify").get().warn("testing ci: no result recorded for " .. root)
+      return
+    end
+    local lines = {
+      ("ci %s: %s (%s%s)"):format(
+        tostring(doc.profile),
+        tostring(doc.verdict),
+        tostring(doc.time),
+        entry.tree and doc.tree ~= entry.tree and ", stale: the tree changed since" or ""
+      ),
+    }
+    for _, step in ipairs(doc.steps or {}) do
+      lines[#lines + 1] = ("  %-14s %-8s %6d ms  %s"):format(
+        step.name,
+        step.state,
+        step.ms or 0,
+        step.reason ~= vim.NIL and step.reason or ""
+      )
+      for _, f in ipairs(step.findings or {}) do
+        lines[#lines + 1] = ("      %s:%s: %s"):format(f.file, tostring(f.line), tostring(f.text))
+      end
+    end
+    local prefix = require("testing.config").get().notify_prefix
+    require("lib.nvim.output").create(prefix).dump(lines, "testing ci status")
+  end)
+end
+
+---`:Testing ci verify|hook ...`: the driver's `ci` subcommand in a child, its text in a viewer.
+---@param ctx { args: table<string, any>, flags: table<string, any> }
+---@param sub string[]
+---@param spec { bool: string[], value: string[] }
+---@param title string
+function M.ci_capture(ctx, sub, spec, title)
+  local root = M.resolve_root(ctx.flags.root, vim.api.nvim_buf_get_name(0))
+  local args = vim.list_extend({}, sub)
+  vim.list_extend(args, raw_args(ctx.flags, spec))
+  local started, err = require("testing.ci.editor").capture(root, args, function(res)
+    local text = vim.trim(res.stdout .. (res.stderr ~= "" and ("\n" .. res.stderr) or ""))
+    local lines = vim.split(text, "\n", { plain = true })
+    local notify = require("testing.notify").get()
+    local first = lines[1] ~= "" and lines[1] or ("testing ci " .. title)
+    if res.code == 0 then
+      notify.info(first)
+    else
+      notify.warn(first)
+    end
+    if #lines > 1 then
+      local prefix = require("testing.config").get().notify_prefix
+      require("lib.nvim.output").create(prefix).dump(lines, "testing ci " .. title)
+    end
+  end)
+  if not started then
+    require("testing.notify").get().error("testing ci: " .. tostring(err))
+  end
 end
 
 ---`:Testing migrate [dry-run|apply] [<root>]`: plan the migration of a repository (nothing is written
@@ -703,6 +789,94 @@ function M.routes()
       end,
     },
     {
+      path = { "ci" },
+      desc = "Run the pipeline of the ci section (live view, quickfix on red); no profile: ci.default",
+      args = { { name = "profile", type = M.TYPE_CI_PROFILE, optional = true } },
+      flags = {
+        {
+          name = "step",
+          type = M.TYPE_CI_STEPS,
+          desc = "Only these steps (a partial run, no proof)",
+        },
+        { name = "keep-going", bool = true, desc = "Run every step even after a red one" },
+        { name = "reuse", bool = true, desc = "Skip the suite when its stamp still verifies" },
+        {
+          name = "root",
+          type = "DIR",
+          desc = "The project root (default: found from the current buffer)",
+        },
+      },
+      run = function(ctx)
+        M.ci_run(ctx)
+      end,
+    },
+    {
+      path = { "ci", "status" },
+      desc = "Show the last pipeline result of the project (steps, states, findings)",
+      flags = { { name = "root", type = "DIR", desc = "The project root directory" } },
+      run = function(ctx)
+        M.ci_status(M.resolve_root(ctx.flags.root, vim.api.nvim_buf_get_name(0)))
+      end,
+    },
+    {
+      path = { "ci", "verify" },
+      desc = "Is this state already proven by a complete green run? (nothing runs)",
+      flags = {
+        {
+          name = "profile",
+          type = M.TYPE_CI_PROFILE,
+          desc = "The profile whose proof is asked for",
+        },
+        {
+          name = "allow-dirty",
+          bool = true,
+          desc = "Accept a working tree with uncommitted changes",
+        },
+        { name = "root", type = "DIR", desc = "The project root directory" },
+      },
+      run = function(ctx)
+        M.ci_capture(
+          ctx,
+          { "verify" },
+          { value = { "profile" }, bool = { "allow-dirty" } },
+          "verify"
+        )
+      end,
+    },
+    {
+      path = { "ci", "hook", "install" },
+      desc = "Install the pre-push hook (verify first, then the fast profile)",
+      flags = {
+        {
+          name = "run",
+          type = M.TYPE_CI_PROFILE,
+          desc = "The profile the hook runs (default: fast)",
+        },
+        {
+          name = "verify",
+          type = M.TYPE_CI_PROFILE,
+          desc = "The profile whose proof is asked first",
+        },
+        { name = "root", type = "DIR", desc = "The project root directory" },
+      },
+      run = function(ctx)
+        M.ci_capture(
+          ctx,
+          { "hook", "install" },
+          { value = { "run", "verify" }, bool = {} },
+          "hook install"
+        )
+      end,
+    },
+    {
+      path = { "ci", "hook", "remove" },
+      desc = "Remove the pre-push hook installed by `ci hook install`",
+      flags = { { name = "root", type = "DIR", desc = "The project root directory" } },
+      run = function(ctx)
+        M.ci_capture(ctx, { "hook", "remove" }, { value = {}, bool = {} }, "hook remove")
+      end,
+    },
+    {
       path = { "doctor" },
       desc = "Show the project's resolved configuration and the dependency report",
       args = { { name = "root", type = "DIR", optional = true } },
@@ -743,6 +917,41 @@ local function register_types(composer)
       return out
     end,
   })
+  composer.register_type(M.TYPE_CI_PROFILE, {
+    desc = "a profile of the ci section of .testing.lua",
+    validate = function(raw)
+      if raw == "" then
+        return false, nil, "expected a profile name"
+      end
+      return true, raw, nil
+    end,
+    complete = function(lead)
+      local list = require("testing.ci.editor").list(M.resolve_root())
+      return list and prefix(vim.tbl_keys(list.profiles), lead) or {}
+    end,
+  })
+  composer.register_type(M.TYPE_CI_STEPS, {
+    desc = "steps of the ci section, separated by commas",
+    validate = function(raw)
+      if raw == "" then
+        return false, nil, "expected step names"
+      end
+      return true, raw, nil
+    end,
+    complete = function(lead)
+      local list = require("testing.ci.editor").list(M.resolve_root())
+      if not list then
+        return {}
+      end
+      local head, tail = lead:match("^(.*,)([^,]*)$")
+      head, tail = head or "", tail or lead
+      local out = {}
+      for _, name in ipairs(prefix(list.steps, tail)) do
+        out[#out + 1] = head .. name
+      end
+      return out
+    end,
+  })
   composer.register_type(M.TYPE_SPEC, {
     validate = function(raw)
       if raw == "" then
@@ -778,7 +987,7 @@ function M.register()
     local composer = require("lib.nvim.bindings.usercmd.composer")
     register_types(composer)
     composer.verb("Testing", {
-      desc = "testing.nvim: run, file, last, list, init, migrate, conformance, surface, budget, cache, health, config, doctor",
+      desc = "testing.nvim: run, file, last, list, init, migrate, conformance, surface, budget, ci, cache, health, config, doctor",
       default = function()
         M.run_all({ args = {}, flags = {} })
       end,
