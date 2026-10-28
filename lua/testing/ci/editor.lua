@@ -421,7 +421,7 @@ function M.run_repos(o)
   local ok, started = pcall(M.system, argv, {
     cwd = o.cwd,
     text = true,
-    timeout = M.TIMEOUT_MS,
+    -- no timeout: the run covers several repositories, and killing this child would orphan its own children
     stdout = feed("out"),
     stderr = feed("err"),
   }, function(res)
@@ -429,6 +429,9 @@ function M.run_repos(o)
       flush()
       entry.running = false
       local code = res.code or -1
+      if (res.signal or 0) ~= 0 then
+        code = 3 -- killed by a signal: infrastructure, whatever code the runtime reports
+      end
       local notify = require("testing.notify").get()
       if code == 0 then
         notify.info("ci repos: all green or proven")

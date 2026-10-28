@@ -502,10 +502,10 @@ return function(H)
     messages[#messages + 1] = { msg = tostring(msg), level = level }
   end
   local passed_repos, err_repos = pcall(function()
-    local argv_seen
+    local argv_seen, opts_seen, on_exit_raw
     local finish
     editor.system = function(argv, opts, on_exit)
-      argv_seen = argv
+      argv_seen, opts_seen, on_exit_raw = argv, opts, on_exit
       opts.stdout(nil, "== repo | line\nci repos: GREEN 1/1")
       finish = function(code)
         on_exit({ code = code, stdout = "", stderr = "" })
@@ -546,6 +546,26 @@ return function(H)
       "run_repos: the output is in the view, the last line flushed"
     )
     eq(editor.state["*repos*"].running, false, "run_repos: not stuck in running")
+    eq(opts_seen.timeout, nil, "run_repos: no timeout for the whole multi-repository run")
+    -- killed by a signal: code 0 with a signal is a failure, not green
+    messages = {}
+    done = nil
+    editor.run_repos({
+      args = {},
+      cwd = root,
+      on_done = function(code)
+        done = code
+      end,
+    })
+    on_exit_raw({ code = 0, signal = 9, stdout = "", stderr = "" })
+    ok(
+      vim.wait(2000, function()
+        return done ~= nil
+      end),
+      "run_repos: a signal exit finishes"
+    )
+    eq(done, 3, "run_repos: a signal exit is infrastructure (3)")
+    has(said(), "ci repos: exit 3", "run_repos: ... and notified as a failure")
     messages = {}
     editor.run_repos({ args = {}, cwd = root })
     finish(0)

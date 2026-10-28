@@ -157,10 +157,61 @@ end
 ---@param dir string
 ---@return string
 local function norm(dir)
-  return (vim.fs.normalize(vim.fn.fnamemodify(dir, ":p")):gsub("/+$", ""))
+  -- normalize first: it expands `$VAR` and `~`, which `:p` would take for file names
+  return (vim.fs.normalize(vim.fn.fnamemodify(vim.fs.normalize(dir), ":p")):gsub("/+$", ""))
 end
 
----Does the `.testing.lua` of a directory have a `ci` section? Textual: the file is not executed here.
+---Split Lua source into words, strings and single punctuation characters; comments (line and block) are dropped and
+---strings are kept whole, so a `--` or a `ci =` inside a string is neither a comment nor a key.
+---@param text string
+---@return { [1]: "id"|"str"|"p", [2]: string }[]
+local function tokens(text)
+  local out, i, n = {}, 1, #text
+  while i <= n do
+    local c = text:sub(i, i)
+    if c:match("%s") then
+      i = i + 1
+    elseif text:sub(i, i + 1) == "--" then
+      local eq = text:match("^%-%-%[(=*)%[", i)
+      if eq then
+        local _, e = text:find("]" .. eq .. "]", i, true)
+        i = (e or n) + 1
+      else
+        i = (text:find("\n", i, true) or n) + 1
+      end
+    elseif c == '"' or c == "'" then
+      local j = i + 1
+      while j <= n do
+        local d = text:sub(j, j)
+        if d == "\\" then
+          j = j + 2
+        elseif d == c or d == "\n" then
+          break
+        else
+          j = j + 1
+        end
+      end
+      out[#out + 1] = { "str", text:sub(i + 1, j - 1) }
+      i = j + 1
+    elseif text:match("^%[=*%[", i) then
+      local eq = text:match("^%[(=*)%[", i)
+      local _, e = text:find("]" .. eq .. "]", i, true)
+      out[#out + 1] = { "str", "" }
+      i = (e or n) + 1
+    elseif c:match("[%a_]") then
+      local word = text:match("^[%w_]+", i)
+      out[#out + 1] = { "id", word }
+      i = i + #word
+    else
+      out[#out + 1] = { "p", c }
+      i = i + 1
+    end
+  end
+  return out
+end
+
+---Does the `.testing.lua` of a directory have a `ci` section, a key `ci` directly in its top-level table? Textual: the
+---file is not executed here (comments, strings and deeper tables do not count).
 ---@param dir string
 ---@return boolean
 function M.has_ci(dir)
@@ -170,9 +221,39 @@ function M.has_ci(dir)
   end
   local text = f:read("*a")
   f:close()
-  -- a `ci = ...` key (a comment mentioning ci does not count)
-  text = text:gsub("%-%-[^\n]*", "")
-  return text:find("[%s{,]ci%s*=") ~= nil
+  local toks = tokens(text)
+  local function is(k, kind, value)
+    local t = toks[k]
+    return t ~= nil and t[1] == kind and (value == nil or t[2] == value)
+  end
+  local function key_start(k)
+    return is(k, "p", "{") or is(k, "p", ",") or is(k, "p", ";")
+  end
+  local function assigns(k)
+    return is(k, "p", "=") and not is(k + 1, "p", "=")
+  end
+  local depth = 0
+  for k, t in ipairs(toks) do
+    if t[1] == "p" and t[2] == "{" then
+      depth = depth + 1
+    elseif t[1] == "p" and t[2] == "}" then
+      depth = depth - 1
+    elseif depth == 1 and t[2] == "ci" then
+      if t[1] == "id" and key_start(k - 1) and assigns(k + 1) then
+        return true
+      end
+      if
+        t[1] == "str"
+        and is(k - 1, "p", "[")
+        and key_start(k - 2)
+        and is(k + 1, "p", "]")
+        and assigns(k + 2)
+      then
+        return true
+      end
+    end
+  end
+  return false
 end
 
 ---The directories below a root that have a `ci` section.
@@ -264,25 +345,24 @@ function M.resolve(args, cache_file)
     end
     f:close()
   end
+  local matched = {}
   for _, root in ipairs(args.roots) do
     root = norm(root)
     if vim.fn.isdirectory(root) ~= 1 then
       return nil, ("--repos-root %s is not a directory"):format(root)
     end
-    local found = {}
     for _, dir in ipairs(M.detect(root, cache_file, args.refresh)) do
-      found[#found + 1] = dir
-    end
-    for _, dir in ipairs(found) do
       local name = vim.fs.basename(dir)
-      local wanted = #args.include == 0 or vim.tbl_contains(args.include, name)
-      if wanted then
+      if #args.include == 0 or vim.tbl_contains(args.include, name) then
         add(dir)
+        matched[name] = true
       end
     end
-    -- an included name that was not found is still asked for: it fails loudly instead of being skipped silently
-    for _, name in ipairs(args.include) do
-      add(root .. "/" .. name)
+  end
+  -- an included name that no root has is still asked for: it fails loudly instead of being skipped silently
+  for _, name in ipairs(args.include) do
+    if not matched[name] and #args.roots > 0 then
+      add(norm(args.roots[1]) .. "/" .. name)
     end
   end
   local out = {}
@@ -409,7 +489,8 @@ function M.main(argv, sv)
             partial[stream] = ""
           end
         end
-        cb(res.code or M.EXIT_INFRA)
+        -- a child killed by a signal (OOM kill, SIGTERM) reports code 0 with a signal: that is not a result
+        cb((res.signal or 0) ~= 0 and M.EXIT_INFRA or res.code or M.EXIT_INFRA)
       end)
     end)
     if not ok or not started then

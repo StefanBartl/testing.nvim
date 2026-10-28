@@ -128,6 +128,21 @@ return function(H)
     eq(repos.has_ci(root .. "/c"), false, "has_ci: a comment is not a key")
     eq(repos.has_ci(root .. "/d"), true, "has_ci: a ci key in a long table")
     eq(repos.has_ci(root .. "/missing"), false, "has_ci: no file")
+    local function ci_of(text)
+      write(root .. "/t/.testing.lua", text)
+      return repos.has_ci(root .. "/t")
+    end
+    eq(
+      ci_of("return { url = 'a--b', ci = {} }\n"),
+      true,
+      "has_ci: a -- inside a string before the key"
+    )
+    eq(ci_of("return { ['ci'] = {} }\n"), true, "has_ci: a bracketed key")
+    eq(ci_of("return {\n  plugin = 'p',\n  ci = {},\n}\n"), true, "has_ci: a key on its own line")
+    eq(ci_of("--[[ a block\n ci = {}\n]] return {}\n"), false, "has_ci: a multi-line block comment")
+    eq(ci_of("return { x = { ci = {} } }\n"), false, "has_ci: a nested key is not the section")
+    eq(ci_of("return { note = 'x, ci = 1' }\n"), false, "has_ci: ci = inside a string")
+    eq(ci_of("return { ci == 1 }\n"), false, "has_ci: a comparison is not a key")
 
     local cache = tmp .. "/cache.json"
     local function resolve(args)
@@ -160,6 +175,24 @@ return function(H)
       { root .. "/a", root .. "/nope" },
       "resolve: an included name that does not exist is still asked for"
     )
+    -- several roots: an included name found in one root is not asked for in the others
+    local root2 = tmp .. "/root2"
+    write(root2 .. "/z/.testing.lua", "return { ci = {} }\n")
+    found = resolve({ "--repos-root=" .. root, "--repos-root=" .. root2, "--repos-include=a,z" })
+    eq(
+      found,
+      { root .. "/a", root2 .. "/z" },
+      "resolve: include over several roots, no phantom repository"
+    )
+    found = resolve({ "--repos-root=" .. root, "--repos-root=" .. root2, "--repos-include=z,nope" })
+    eq(found, { root2 .. "/z", root .. "/nope" }, "resolve: a name in no root is asked for once")
+    -- $VAR is expanded before the path is made absolute
+    vim.env.TESTING_CI_REPOS_ROOT = root
+    found = resolve({ "--repos=$TESTING_CI_REPOS_ROOT/a" })
+    eq(found, { root .. "/a" }, "resolve: $VAR in --repos")
+    write(tmp .. "/envlist.txt", "$TESTING_CI_REPOS_ROOT/b\n")
+    found = resolve({ "--repos-file=" .. tmp .. "/envlist.txt" })
+    eq(found, { root .. "/b" }, "resolve: $VAR in a list file")
     write(tmp .. "/list.txt", "# my repos\n" .. root .. "/b\n\n" .. root .. "/a  # again\n")
     found = resolve({ "--repos-file=" .. tmp .. "/list.txt", "--repos=" .. root .. "/a" })
     eq(
@@ -231,7 +264,7 @@ return function(H)
     has(table.concat(seen, " "), "r:verify r:run", "fake: a repository that is not proven is run")
     has(res.out, "p | verify of p", "fake: output lines carry the repository's name")
     has(res.out, "r | partial", "fake: the last unfinished line is flushed")
-    has(res.out, "proven", "fake: the table says proven")
+    ok(res.out:find("p  *proven *skipped") ~= nil, "fake: the table says proven\n" .. res.out)
     has(res.out, "ci repos: RED 2/3 (1 proven, not run)", "fake: the verdict line")
     ok(res.lines[#res.lines] ~= ci.SENTINEL, "fake: no sentinel after a red run")
 
@@ -286,6 +319,32 @@ return function(H)
     end)
     eq(res.code, 3, "fake: a process that cannot start is exit 3")
     has(res.err, "cannot start a process for a", "fake: ... named")
+    -- a process that cannot start is infrastructure on the verify path, too
+    res = run({ "--repos=a" }, function()
+      error("no such program")
+    end)
+    eq(res.code, 3, "fake: a verify that cannot start is exit 3")
+
+    -- a child killed by a signal reports code 0 with a signal: infrastructure, never proven or green
+    res = run({ "--repos=a" }, function(_, _, on_exit)
+      vim.defer_fn(function()
+        on_exit({ code = 0, signal = 9, stdout = "", stderr = "" })
+      end, 10)
+      return {}
+    end)
+    eq(res.code, 3, "fake: a signal exit is exit 3, not proven")
+    ok(res.out:find("INFRA", 1, true) ~= nil, "fake: ... INFRA in the verdict")
+    ok(res.lines[#res.lines] ~= ci.SENTINEL, "fake: no sentinel after a signal exit")
+
+    -- --jobs>1 with mixed codes: every repository finishes, the worst decides
+    seen, active, peak = {}, 0, 0
+    res = run(
+      { "--repos=a,b,c,d", "--force", "--jobs=3" },
+      fake({ a = { run = 1 }, b = { run = 0 }, c = { run = 2 }, d = { run = 0 } })
+    )
+    eq(#seen, 4, "fake: --jobs=3 with mixed codes: all ran")
+    eq(res.code, 2, "fake: --jobs=3 with mixed codes: the worst decides")
+    has(res.out, "ci repos: ERROR 2/4", "fake: ... and the tally counts the green ones")
     res = run({ "--repos-root=" .. tmp .. "/absent" })
     eq(res.code, 2, "usage: a missing root is exit 2")
     eq(run({ "--repos" }).code, 2, "usage: --repos without a value is exit 2")
@@ -316,7 +375,6 @@ return function(H)
     )
     ok(res.out:find("red  *not proven *red") ~= nil, "real: the red one runs again")
 
-    table.insert(args, "--force")
     res = run({ "--repos=" .. green, "--state-dir=" .. state, "--profile=full", "--force" })
     eq(res.code, 0, "real: --force runs the proven repository: green")
     ok(
@@ -326,5 +384,6 @@ return function(H)
     eq(res.lines[#res.lines], ci.SENTINEL, "real: the sentinel after a green run")
   end
 
+  vim.env.TESTING_CI_REPOS_ROOT = nil
   vim.fn.delete(tmp, "rf")
 end
