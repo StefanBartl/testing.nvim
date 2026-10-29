@@ -90,8 +90,8 @@ function M.run_argv(o)
     args[#args + 1] = "--reuse"
   end
   if o.events and o.events ~= "" then
-    -- the suite step, when there is one, writes its events (file n of m) there, whatever its specs print
-    args[#args + 1] = "--suite-events=" .. o.events
+    -- the events of the run (steps; the suite's own file n of m next to them), whatever the steps print
+    args[#args + 1] = "--events=" .. o.events
   end
   return M.child_argv(o.root, args)
 end
@@ -199,6 +199,37 @@ M.MAX_LINE = 400
 ---@return fun() poll Read what was written since the last read, now.
 function M.tail_events(path, on_event)
   local reader = require("testing.run.events_reader").new({ on_event = on_event })
+  return M.tail_file(path, function(data)
+    reader:feed(data)
+  end)
+end
+
+---Read an NDJSON file of `testing ci --events` while the child writes it: every complete line is decoded and handed
+---to `on_event` (a line that is not JSON is skipped). Same timing and return values as `tail_events`.
+---@param path string
+---@param on_event fun(ev: table)
+---@return fun() stop
+---@return fun() poll
+function M.tail_run_events(path, on_event)
+  local partial = ""
+  return M.tail_file(path, function(data)
+    local lines = vim.split(partial .. data, "\n", { plain = true })
+    partial = table.remove(lines)
+    for _, line in ipairs(lines) do
+      local ok, ev = pcall(vim.json.decode, line)
+      if ok and type(ev) == "table" and type(ev.event) == "string" then
+        on_event(ev)
+      end
+    end
+  end)
+end
+
+---Hand the bytes written to `path` since the last read to `on_data`, every 200 ms while it is written.
+---@param path string
+---@param on_data fun(data: string)
+---@return fun() stop Stops the timer and reads the rest.
+---@return fun() poll Read what was written since the last read, now.
+function M.tail_file(path, on_data)
   local offset = 0
   local function poll()
     local f = io.open(path, "rb")
@@ -210,16 +241,22 @@ function M.tail_events(path, on_event)
     f:close()
     if data and data ~= "" then
       offset = offset + #data
-      reader:feed(data)
+      on_data(data)
     end
   end
   local timer = vim.uv.new_timer()
+  local stopped = false
   timer:start(200, 200, vim.schedule_wrap(poll))
   return function()
+    if stopped then
+      return
+    end
+    stopped = true
     timer:stop()
     timer:close()
     poll()
-  end, poll
+  end,
+    poll
 end
 
 ---@param file string
@@ -858,9 +895,9 @@ function M.run(o)
   for _, name in ipairs(plan or {}) do
     planned[name] = true
   end
-  -- A suite step writes its events to a file: the run shows "suite 12/187" and the file being run from it, and what
-  -- the specs print stays out of the buffer (it is shown when the run is not green). `--suite-events` does nothing
-  -- for a run without a suite step, so no plan is needed.
+  -- The run writes its events (`testing ci --events`): the step, n of m, and for the suite the file of its own events
+  -- ("suite 12/187", the file being run). What the specs print stays out of the buffer (it is shown when the run is
+  -- not green). No plan is needed: the events say how many steps there are.
   local events = vim.fn.tempname() .. ".testing-ci-events.ndjson"
   local argv = M.run_argv({
     root = o.root,
@@ -886,15 +923,23 @@ function M.run(o)
     cases = 0,
     failed = 0,
   }
-  local poll_events = function() end
+  -- the run's events and, once its step_start names it, the suite's; `poll_events` reads both now
+  local poll_run, poll_suite = function() end, function() end
+  local stop_suite = function() end
+  local function poll_events()
+    poll_run()
+    poll_suite()
+  end
+  -- the text is the fallback (a child that writes no events); once an event is in, the events decide
+  local from_events = false
   local feed, flush = M.feeder(view, function(line)
     local step = M.step_of(line)
-    if step and not counted[step] and (not planned or planned[step]) then
-      counted[step] = true
-      seen = seen + 1
-      progress:update({ text = step, current = seen, total = plan and #plan or nil })
-    end
-    if step then
+    if step and not from_events then
+      if not counted[step] and (not planned or planned[step]) then
+        counted[step] = true
+        seen = seen + 1
+        progress:update({ text = step, current = seen, total = plan and #plan or nil })
+      end
       live.step, live.t0 = step, vim.uv.hrtime()
     end
     -- the suite's verdict line is followed by what the events counted (read them now: the last file may be unread);
@@ -912,8 +957,7 @@ function M.run(o)
       end
     end
   end, keep)
-  local stop_events
-  stop_events, poll_events = M.tail_events(events, function(ev)
+  local function on_suite_event(ev)
     if ev.event == "run_start" then
       live.files_total = ev.files_selected or ev.files_total
     elseif ev.event == "file_start" then
@@ -927,6 +971,23 @@ function M.run(o)
           or ("suite %d"):format(live.files_done),
       })
     end
+  end
+  local stop_events
+  stop_events, poll_run = M.tail_run_events(events, function(ev)
+    if ev.event == "step_start" and type(ev.step) == "string" then
+      from_events = true
+      live.step, live.t0 = ev.step, vim.uv.hrtime()
+      progress:update({ text = ev.step, current = ev.index, total = ev.total })
+      if type(ev.suite_events) == "string" then
+        local suite_file = ev.suite_events
+        local stop_tail
+        stop_tail, poll_suite = M.tail_events(suite_file, on_suite_event)
+        stop_suite = function()
+          stop_tail()
+          pcall(os.remove, suite_file)
+        end
+      end
+    end
   end)
   local stop_status = M.live_status(view, live)
   local function finish(res)
@@ -934,6 +995,7 @@ function M.run(o)
       flush()
       stop_status()
       stop_events()
+      stop_suite()
       pcall(os.remove, events)
       entry.running = false
       local doc = read_json(json)

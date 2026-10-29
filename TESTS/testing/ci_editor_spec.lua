@@ -348,8 +348,8 @@ return function(H)
 
       local argv = editor.run_argv({ root = root, json = "j.json", events = "e.ndjson" })
       ok(
-        vim.tbl_contains(argv, "--suite-events=e.ndjson"),
-        "run_argv: the suite's events go to the file"
+        vim.tbl_contains(argv, "--events=e.ndjson"),
+        "run_argv: the events of the run go to the file"
       )
       ok(
         not vim.tbl_contains(argv, "--"),
@@ -357,7 +357,7 @@ return function(H)
       )
       local plain = editor.run_argv({ root = root, json = "j.json" })
       for _, x in ipairs(plain) do
-        ok(not x:find("suite-events", 1, true), "run_argv: no events file without one asked for")
+        ok(not x:find("events=", 1, true), "run_argv: no events file without one asked for")
       end
       -- --root stays before a `--` of the caller's: what follows it belongs to the suite
       local with_dashes = editor.child_argv(root, { "ci", "--", "--filter", "x" })
@@ -478,17 +478,46 @@ return function(H)
     do
       local qroot = vim.fn.tempname() .. "-quiet"
       vim.fn.mkdir(qroot, "p")
+      -- no plan: the events of the run say which step of how many is running
       local real_plan = editor.step_plan
       editor.step_plan = function()
-        return { "stylua", "suite" }
+        return nil
       end
       local qargv
       editor.system = function(argv, opts, on_exit)
         qargv = argv
-        local events
-        for i, a in ipairs(argv) do
-          events = a:match("^%-%-suite%-events=(.*)$") or events
+        local run_events
+        for _, a in ipairs(argv) do
+          run_events = a:match("^%-%-events=(.*)$") or run_events
         end
+        local events = run_events .. ".suite.ndjson"
+        local rf = assert(io.open(run_events, "wb"))
+        rf:write(
+          vim.json.encode({ v = 1, event = "run_start", ts = 1, steps = { "stylua", "suite" } })
+            .. "\n"
+        )
+        rf:write(vim.json.encode({
+          v = 1,
+          event = "step_start",
+          ts = 1,
+          step = "stylua",
+          index = 1,
+          total = 2,
+        }) .. "\n")
+        rf:write(
+          vim.json.encode({ v = 1, event = "step_end", ts = 1, step = "stylua", state = "green" })
+            .. "\n"
+        )
+        rf:write(vim.json.encode({
+          v = 1,
+          event = "step_start",
+          ts = 1,
+          step = "suite",
+          index = 2,
+          total = 2,
+          suite_events = events,
+        }) .. "\n")
+        rf:close()
         local ef = assert(io.open(events, "wb"))
         ef:write(
           '{"v":1,"event":"run_start","ts":1,"run":1,"files_total":2,"files_selected":2,"files":["a","b"]}\n'
@@ -520,7 +549,7 @@ return function(H)
       eq(started_q, true, "quiet run: starts")
       ok(
         vim.iter(qargv):any(function(x)
-          return x:find("--suite-events=", 1, true) == 1
+          return x:find("--events=", 1, true) == 1
         end),
         "quiet run: the child is asked for events (" .. table.concat(qargv, " ") .. ")"
       )
@@ -561,6 +590,11 @@ return function(H)
         seen_text = seen_text or (u.text == "suite 1/2")
       end
       ok(seen_text, "quiet run: the progress says `suite 1/2`")
+      local step_two = false
+      for _, u in ipairs(handles[h_before + 1] and handles[h_before + 1].updates or {}) do
+        step_two = step_two or (u.text == "suite" and u.current == 2 and u.total == 2)
+      end
+      ok(step_two, "quiet run: without a plan the events say step 2 of 2")
       -- the later cases count the handles from the first one
       table.remove(handles, h_before + 1)
     end

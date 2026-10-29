@@ -209,13 +209,12 @@ show up (uncommitted changes do not make a result stale; `ci verify` says `dirty
 `testing ci list` either: the first <Tab> after `.testing.lua` changed starts it, the next one has the names.
 
 **Progress.** A run shows a progress indicator (`lib.nvim.progress`, in whatever style it resolves to; nothing for a
-run under 150 ms): the step that just started and how many steps went, out of the profile's steps once `testing ci
-list` has been asked for them (or the steps of `--step=`). It ends with `green`, `partial` or `failed`. Not part of
-this version: the terminal.nvim view.
+run under 150 ms): the step that just started, step n of m. The editor starts the run with `--events=<file>` and reads
+the [events of the run](#events-of-a-run) while it goes, so the count needs no plan. It ends with `green`, `partial`
+or `failed`. Not part of this version: the terminal.nvim view.
 
-**A quiet suite, and a line that says what is going on.** The editor starts the run with `--suite-events=<file>`: the
-suite step (when there is one; the option does nothing otherwise, and it does not make a run partial) writes its
-events there ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), and the editor reads the file while the suite goes.
+**A quiet suite, and a line that says what is going on.** The `step_start` of the suite step names the file of the
+suite's own events ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)); the editor reads it while the suite goes.
 The progress indicator says `suite 12/187` (spec files done of selected), and the **last line of the buffer** is a
 status line that changes every second, so a step that is quiet for minutes does not look dead:
 `   ... suite: 12 of 187 spec files done, now TESTS/x_spec.lua (1:30)`, or `   ... luacheck is running (0:04)`. It is
