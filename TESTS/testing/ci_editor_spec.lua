@@ -308,6 +308,183 @@ return function(H)
     eq(#vim.api.nvim_list_wins(), wins_before + 1, "show_buffer: no second split")
     vim.api.nvim_list_uis = real_uis
     vim.api.nvim_win_close(view_win, true)
+
+    -- a quiet suite: what the specs print stays out of the buffer, the events give the progress
+    do
+      local keep, raw = editor.quiet_step("suite")
+      local shown = {}
+      for _, line in ipairs({
+        "== stylua: stylua --check .",
+        "-- stylua: green (0.1 s)",
+        "== suite",
+        "io.write in two parts",
+        "checkhealth: 100% checking testing",
+        "-- suite: red (3 s)",
+        "== luacheck",
+      }) do
+        if keep(line) then
+          shown[#shown + 1] = line
+        end
+      end
+      eq(shown, {
+        "== stylua: stylua --check .",
+        "-- stylua: green (0.1 s)",
+        "== suite",
+        "-- suite: red (3 s)",
+        "== luacheck",
+      }, "quiet_step: the lines between the header and the next header are kept aside")
+      eq(
+        raw(),
+        { "io.write in two parts", "checkhealth: 100% checking testing" },
+        "quiet_step: the lines kept aside"
+      )
+      local keep2, raw2 = editor.quiet_step("suite")
+      keep2("== suite")
+      for i = 1, editor.RAW_LINES + 10 do
+        keep2("noise " .. i)
+      end
+      eq(#raw2(), editor.RAW_LINES, "quiet_step: only the last lines are kept")
+      eq(raw2()[#raw2()], "noise " .. (editor.RAW_LINES + 10), "quiet_step: the newest ones")
+
+      local argv = editor.run_argv({ root = root, json = "j.json", events = "e.ndjson" })
+      eq(
+        { argv[#argv - 2], argv[#argv - 1], argv[#argv] },
+        { "--", "--events", "e.ndjson" },
+        "run_argv: after `--`"
+      )
+      local root_at, dashes_at
+      for i, x in ipairs(argv) do
+        root_at = x:find("^%-%-root=") and i or root_at
+        dashes_at = x == "--" and i or dashes_at
+      end
+      ok(root_at and dashes_at and root_at < dashes_at, "run_argv: --root comes before `--`")
+      local plain = editor.run_argv({ root = root, json = "j.json" })
+      ok(not vim.tbl_contains(plain, "--events"), "run_argv: no events without a suite")
+
+      -- the feeder: a long line is cut, `keep` hides, `on_line` still sees everything
+      local lines_seen, on_line_seen = {}, {}
+      local feed, flush = editor.feeder({
+        append = function(lines)
+          vim.list_extend(lines_seen, lines)
+        end,
+      }, function(line)
+        on_line_seen[#on_line_seen + 1] = line
+      end, function(line)
+        return line ~= "hide"
+      end)
+      feed("out")(nil, "hide\n" .. ("x"):rep(editor.MAX_LINE + 20) .. "\nshown")
+      vim.wait(500, function()
+        return #on_line_seen >= 2
+      end)
+      flush()
+      vim.wait(500, function()
+        return #on_line_seen >= 3
+      end)
+      eq(#on_line_seen, 3, "feeder: on_line sees every line, also the hidden one")
+      eq(#lines_seen, 2, "feeder: the hidden line is not appended")
+      ok(#lines_seen[1] < editor.MAX_LINE + 60, "feeder: a long line is cut")
+      has(lines_seen[1], "more characters", "feeder: ... and says so")
+      eq(lines_seen[2], "shown", "feeder: the rest is shown as before")
+
+      -- tail_events: the bytes written so far go through the reader, a half line waits for its end
+      local path = vim.fn.tempname() .. ".ndjson"
+      local got = {}
+      local stop = editor.tail_events(path, function(ev)
+        got[#got + 1] = ev.event
+      end)
+      local f = assert(io.open(path, "wb"))
+      f:write(
+        '{"v":1,"event":"run_start","ts":1,"run":1,"files_total":2,"files_selected":2,"files":["a","b"]}\n'
+      )
+      f:write('{"v":1,"event":"file_end","ts":1,"run":1,"file":"a","cases":1,"failed":0')
+      f:flush()
+      ok(
+        vim.wait(2000, function()
+          return #got >= 1
+        end),
+        "tail_events: the first event arrives while the file is open"
+      )
+      f:write(',"duration_ms":3}\n')
+      f:close()
+      stop()
+      eq(got, { "run_start", "file_end" }, "tail_events: a line split in two writes is one event")
+      os.remove(path)
+    end
+
+    -- a run with a suite step: the child gets an events file, its noise stays out, the progress counts files
+    do
+      local qroot = vim.fn.tempname() .. "-quiet"
+      vim.fn.mkdir(qroot, "p")
+      local real_plan = editor.step_plan
+      editor.step_plan = function()
+        return { "stylua", "suite" }
+      end
+      local qargv
+      editor.system = function(argv, opts, on_exit)
+        qargv = argv
+        local events
+        for i, a in ipairs(argv) do
+          if a == "--events" then
+            events = argv[i + 1]
+          end
+        end
+        local ef = assert(io.open(events, "wb"))
+        ef:write(
+          '{"v":1,"event":"run_start","ts":1,"run":1,"files_total":2,"files_selected":2,"files":["a","b"]}\n'
+        )
+        ef:write(
+          '{"v":1,"event":"file_end","ts":1,"run":1,"file":"a","cases":1,"failed":0,"duration_ms":3}\n'
+        )
+        ef:write('{"v":1,"event":"run_done","ts":2,"run":1,"exit_code":1,"verdict":"red"}\n')
+        ef:close()
+        opts.stdout(
+          nil,
+          "== stylua: stylua --check .\n-- stylua: green (0.1 s)\n== suite\nspec noise\n"
+        )
+        vim.defer_fn(function()
+          on_exit({ code = 1, stdout = "", stderr = "" })
+        end, 600)
+        return {}
+      end
+      local h_before = #handles
+      local finished_q = false
+      local started_q = editor.run({
+        root = qroot,
+        profile = "full",
+        on_done = function()
+          finished_q = true
+        end,
+      })
+      editor.step_plan = real_plan
+      eq(started_q, true, "quiet run: starts")
+      ok(
+        vim.tbl_contains(qargv, "--events"),
+        "quiet run: the child is asked for events (" .. table.concat(qargv, " ") .. ")"
+      )
+      ok(
+        vim.wait(3000, function()
+          return finished_q
+        end),
+        "quiet run: ends"
+      )
+      local qbuf = vim.fn.bufnr(editor.view_name(qroot))
+      local qtext = table.concat(vim.api.nvim_buf_get_lines(qbuf, 0, -1, false), "\n")
+      local header_at = qtext:find("-- the last 1 line(s) the suite printed:", 1, true)
+      local noise_at = qtext:find("spec noise", 1, true)
+      ok(
+        header_at and noise_at and noise_at > header_at,
+        "quiet run: the specs' own output is kept aside and shown last, because the run is red"
+      )
+      has(qtext, "== suite", "quiet run: the suite header is")
+      has(qtext, "suite: 1 file(s)", "quiet run: the events say how far the suite got")
+      local seen_text = false
+      for _, u in ipairs(handles[h_before + 1] and handles[h_before + 1].updates or {}) do
+        seen_text = seen_text or (u.text == "suite 1/2")
+      end
+      ok(seen_text, "quiet run: the progress says `suite 1/2`")
+      -- the later cases count the handles from the first one
+      table.remove(handles, h_before + 1)
+    end
     ok(
       vim.wait(2000, function()
         local b = vim.fn.bufnr(editor.view_name(root))

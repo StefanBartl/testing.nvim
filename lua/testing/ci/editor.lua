@@ -54,8 +54,21 @@ function M.child_argv(root, args)
     "-l",
     require("testing.bindings.child").driver(),
   }
-  vim.list_extend(argv, args)
+  -- `--root` goes before a `--`: what follows it belongs to the suite
+  local split = #args + 1
+  for i, a in ipairs(args) do
+    if a == "--" then
+      split = i
+      break
+    end
+  end
+  for i = 1, split - 1 do
+    argv[#argv + 1] = args[i]
+  end
   argv[#argv + 1] = "--root=" .. root
+  for i = split, #args do
+    argv[#argv + 1] = args[i]
+  end
   return argv
 end
 
@@ -76,7 +89,80 @@ function M.run_argv(o)
   if o.reuse then
     args[#args + 1] = "--reuse"
   end
+  if o.events and o.events ~= "" then
+    -- the suite step writes its events (file n of m) there, whatever its specs print
+    vim.list_extend(args, { "--", "--events", o.events })
+  end
   return M.child_argv(o.root, args)
+end
+
+---Which lines of the output of a run belong in the live buffer. What a suite prints between its header `== <name>`
+---and the next header is the output of the specs themselves (a spec may print anything, one line without end of
+---line, a whole table): it is kept aside, and the run shows the suite through its events instead.
+---@param name string The step whose output is quiet (`suite`).
+---@return fun(line: string): boolean keep
+---@return fun(): string[] raw The lines kept aside (the last `M.RAW_LINES`).
+function M.quiet_step(name)
+  local inside, raw = false, {}
+  local function keep(line)
+    local step = M.step_of(line)
+    if step then
+      inside = step == name
+      return true
+    end
+    if inside and line:match("^%-%- " .. vim.pesc(name) .. ":") then
+      inside = false
+      return true
+    end
+    if inside then
+      raw[#raw + 1] = line
+      if #raw > M.RAW_LINES then
+        table.remove(raw, 1)
+      end
+      return false
+    end
+    return true
+  end
+  return keep, function()
+    return raw
+  end
+end
+
+---How many lines of a quiet step are kept to show when the run is not green.
+M.RAW_LINES = 40
+
+---The longest line the live buffer shows (a progress meter that never prints a newline is one endless line).
+M.MAX_LINE = 400
+
+---Read an NDJSON events file while a child writes it (`testing run --events <file>`): every 200 ms the bytes written
+---since the last read go through `testing.run.events_reader`. The returned function stops the timer and reads the
+---rest.
+---@param path string
+---@param on_event fun(ev: table)
+---@return fun() stop
+function M.tail_events(path, on_event)
+  local reader = require("testing.run.events_reader").new({ on_event = on_event })
+  local offset = 0
+  local function poll()
+    local f = io.open(path, "rb")
+    if not f then
+      return
+    end
+    f:seek("set", offset)
+    local data = f:read("*a")
+    f:close()
+    if data and data ~= "" then
+      offset = offset + #data
+      reader:feed(data)
+    end
+  end
+  local timer = vim.uv.new_timer()
+  timer:start(200, 200, vim.schedule_wrap(poll))
+  return function()
+    timer:stop()
+    timer:close()
+    poll()
+  end
 end
 
 ---@param file string
@@ -376,16 +462,37 @@ end
 ---mid-line is not glued to a chunk of stderr), a line shown as a terminal shows it (the text after the last carriage
 ---return). `feed(stream)` is the pipe callback, `flush()` writes what is left when the process has ended; `on_line`
 ---sees every line as it is shown.
+---`keep(line)` (optional) decides which lines the buffer shows; `on_line` still sees all of them.
 ---@param view { append: fun(lines: string[]) }
 ---@param on_line? fun(line: string)
+---@param keep? fun(line: string): boolean
 ---@return fun(stream: "out"|"err"): fun(_: any, data: string|nil) feed
 ---@return fun() flush
-function M.feeder(view, on_line)
+function M.feeder(view, on_line, keep)
   local partial = { out = "", err = "" }
   ---@param line string
   ---@return string
   local function shown(line)
-    return (line:gsub("\r+$", ""):match("[^\r]*$"))
+    local text = line:gsub("\r+$", ""):match("[^\r]*$")
+    if #text > M.MAX_LINE then
+      text = text:sub(1, M.MAX_LINE) .. " ... (" .. (#text - M.MAX_LINE) .. " more characters)"
+    end
+    return text
+  end
+  ---@param lines string[]
+  local function show(lines)
+    local out = {}
+    for _, line in ipairs(lines) do
+      if not keep or keep(line) then
+        out[#out + 1] = line
+      end
+    end
+    if #out > 0 then
+      view.append(out)
+    end
+    for _, line in ipairs(on_line and lines or {}) do
+      on_line(line)
+    end
   end
   local function feed(stream)
     return function(_, data)
@@ -399,10 +506,7 @@ function M.feeder(view, on_line)
           lines[i] = shown(line)
         end
         if #lines > 0 then
-          view.append(lines)
-          for _, line in ipairs(on_line and lines or {}) do
-            on_line(line)
-          end
+          show(lines)
         end
       end)
     end
@@ -412,10 +516,7 @@ function M.feeder(view, on_line)
       if partial[stream] ~= "" then
         local line = shown(partial[stream])
         partial[stream] = ""
-        view.append({ line })
-        if on_line then
-          on_line(line)
-        end
+        show({ line })
       end
     end
   end
@@ -671,6 +772,16 @@ function M.run(o)
     return false, "a pipeline is already running for " .. o.root .. " (showing its output)"
   end
   local json = vim.fn.tempname() .. ".testing-ci.json"
+  local plan = M.step_plan(o.root, o.profile, o.steps)
+  local planned = plan and {} or nil
+  for _, name in ipairs(plan or {}) do
+    planned[name] = true
+  end
+  -- A suite step gets an events file: the run shows "suite 12/187" from it, and what the specs print stays out of
+  -- the buffer (it is shown when the run is not green). Only when the plan says there is a step `suite`: an option
+  -- after `--` for a run without a suite is an error.
+  local quiet = planned and planned.suite
+  local events = quiet and (vim.fn.tempname() .. ".testing-ci-events.ndjson") or nil
   local argv = M.run_argv({
     root = o.root,
     json = json,
@@ -678,16 +789,16 @@ function M.run(o)
     steps = o.steps,
     keep_going = o.keep_going,
     reuse = o.reuse,
+    events = events,
   })
   local view = M.open_view(o.root)
-  local plan = M.step_plan(o.root, o.profile, o.steps)
-  local planned = plan and {} or nil
-  for _, name in ipairs(plan or {}) do
-    planned[name] = true
-  end
   local progress = M.progress({ title = "testing ci" })
   -- a step counts once, and only a planned one when the plan is known: a step's own output can start with `== `
   local counted, seen = {}, 0
+  local keep, raw
+  if quiet then
+    keep, raw = M.quiet_step("suite")
+  end
   local feed, flush = M.feeder(view, function(line)
     local step = M.step_of(line)
     if step and not counted[step] and (not planned or planned[step]) then
@@ -695,14 +806,45 @@ function M.run(o)
       seen = seen + 1
       progress:update({ text = step, current = seen, total = plan and #plan or nil })
     end
-  end)
+  end, keep)
+  local stop_events
+  if events then
+    local files_total, files_done = nil, 0
+    stop_events = M.tail_events(events, function(ev)
+      if ev.event == "run_start" then
+        files_total = ev.files_selected or ev.files_total
+      elseif ev.event == "file_end" then
+        files_done = files_done + 1
+        progress:update({
+          text = files_total and ("suite %d/%d"):format(files_done, files_total)
+            or ("suite %d"):format(files_done),
+        })
+      elseif ev.event == "run_done" then
+        view.append({
+          ("   suite: %d file(s)%s"):format(
+            files_done,
+            ev.verdict and (", " .. ev.verdict) or ", stopped"
+          ),
+        })
+      end
+    end)
+  end
   local function finish(res)
     vim.schedule(function()
       flush()
+      if stop_events then
+        stop_events()
+        pcall(os.remove, events)
+      end
       entry.running = false
       local doc = read_json(json)
       pcall(os.remove, json)
       local verdict = M.verdict(doc, res.code or -1, o.root, res.stderr)
+      if raw and verdict.level ~= "info" and #raw() > 0 then
+        local lines = { ("-- the last %d line(s) the suite printed:"):format(#raw()) }
+        vim.list_extend(lines, raw())
+        view.append(lines)
+      end
       progress:finish(
         verdict.level == "info" and "green" or verdict.level == "warn" and "partial" or "failed"
       )
@@ -727,6 +869,9 @@ function M.run(o)
   }, finish)
   if not ok or not started then
     entry.running = false
+    if stop_events then
+      stop_events()
+    end
     progress:cancel()
     return false, tostring(started)
   end
