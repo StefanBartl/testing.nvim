@@ -544,6 +544,51 @@ return function(H)
     eq(timeout.depth(), outer_depth, "release_above: depth restored")
   end
 
+  -- the leaked guard is released BEFORE the guard layer is taken down: an overdue deadline must not cut that short
+  do
+    local guards_mod = require("testing.run.guards")
+    local real_install = guards_mod.install
+    local uninstalled = false
+    guards_mod.install = function()
+      return {
+        active = false,
+        uninstall = function()
+          -- enough Lua for the count hook to look at the deadlines more than once
+          local x = 0
+          for i = 1, 200000 do
+            x = x + i
+          end
+          uninstalled = x > 0
+        end,
+      }
+    end
+    local late_root = new_root("late")
+    write(late_root .. "/TESTS/a_spec.lua", 'return function(H)\n  H.eq(1, 1, "a")\nend\n')
+    local disc_late = discover.discover(late_root, { scan_lua_dir = false })
+    local failed_late = pcall(inproc.run, {
+      root = late_root,
+      files = discover.order(disc_late),
+      guard_cfg = {},
+      soft = {
+        enter = function()
+          -- already over its deadline: the next look of the hook raises
+          timeout.start({ label = "overdue_spec.lua", file_ms = 0 })
+          error("the runner broke before the file", 0)
+        end,
+        leave = function()
+          return { findings = {} }
+        end,
+      },
+    })
+    guards_mod.install = real_install
+    eq(failed_late, false, "release order: the run's own error is raised")
+    ok(
+      uninstalled,
+      "release order: the guard layer was taken down completely, not cut short by the overdue deadline"
+    )
+    eq(timeout.depth(), outer_depth, "release order: no guard left")
+  end
+
   -- a spec that swallows the timeout error is a timeout nevertheless
   write(
     T .. "a_hang_spec.lua",

@@ -525,6 +525,37 @@ local function last_option(argv, name)
   return value, present
 end
 
+---Move the trace folders of a run (one per run id) from `from` to `to`: the suite step's state directory is a scratch
+---directory that is removed afterwards, the traces of a child that timed out or crashed are what is left to look at.
+---A folder that cannot be moved is copied file by file; what still fails is named in `errors`.
+---@param from string
+---@param to string
+---@param errors string[]
+local function move_traces(from, to, errors)
+  local uv = vim.uv
+  local dir = uv.fs_scandir(from)
+  if not dir then
+    return
+  end
+  vim.fn.mkdir(to, "p")
+  while true do
+    local name, kind = uv.fs_scandir_next(dir)
+    if not name then
+      break
+    end
+    local src, dst = from .. "/" .. name, to .. "/" .. name
+    if kind == "directory" and not uv.fs_rename(src, dst) then
+      -- another volume, or a folder of that name already there: copy what is inside
+      vim.fn.mkdir(dst, "p")
+      for file, fkind in vim.fs.dir(src) do
+        if fkind == "file" and not uv.fs_copyfile(src .. "/" .. file, dst .. "/" .. file) then
+          keep_error(errors, ("testing ci: a trace could not be kept: %s/%s"):format(src, file))
+        end
+      end
+    end
+  end
+end
+
 ---@param planned Testing.Ci.Planned
 ---@param root string
 ---@param suite_args string[]
@@ -594,6 +625,10 @@ local function run_inprocess(planned, root, suite_args, sv, o)
   -- editor, CI): the same environment `scripts/test.sh` sets up, so a spec never writes into the user's real
   -- `stdpath("state")`. The step's own `env` wins.
   local env, scratch = planned.env, nil ---@type table<string, string>, string|nil
+  -- the trace artifacts of a child that timed out or crashed are kept (docs/CHILD.md): asked for before the scratch
+  -- directory is the state directory, moved there after the step
+  local isolated = require("testing.run.isolated")
+  local real_traces, scratch_traces = isolated.trace_base(), nil
   if is_suite then
     scratch = vim.fn.tempname() .. "-ci-scratch"
     env = vim.tbl_extend("keep", planned.env, {
@@ -614,6 +649,9 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     argv,
     vim.tbl_extend("force", sv, { out = sink(sv.out), err = sink(sv.err) })
   )
+  if scratch then
+    scratch_traces = isolated.trace_base()
+  end
   for k, v in pairs(saved) do
     if v == false then
       vim.uv.os_unsetenv(k)
@@ -622,6 +660,9 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     end
   end
   if scratch then
+    if scratch_traces and scratch_traces ~= real_traces then
+      move_traces(scratch_traces, real_traces, errors)
+    end
     vim.fn.delete(scratch, "rf")
   end
   for _, line in ipairs(last) do

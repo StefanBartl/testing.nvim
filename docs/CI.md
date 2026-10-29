@@ -101,7 +101,9 @@ the suite is green-partial"), it is not red. Options after `--` that run no suit
 runner), the `suite` step runs with `XDG_STATE_HOME` and `XDG_CACHE_HOME` pointing at a scratch directory that is
 removed afterwards (the step's own `env` wins), so a spec never writes into the real `stdpath("state")` or
 `stdpath("cache")`. The document and the stamp are placed below the real state directory before that
-(`--state-dir`, default `stdpath("state")`).
+(`--state-dir`, default `stdpath("state")`). The trace folders of a child that timed out or crashed (`testing-traces/<run>`,
+[CHILD.md](CHILD.md)) are moved from the scratch directory to the real `stdpath("state")/testing-traces` before it
+is removed.
 
 A repository whose specs need more than that (a throwaway `NVIM_APPNAME`, a long `TEMP`) runs `testing ci` through its
 `scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same

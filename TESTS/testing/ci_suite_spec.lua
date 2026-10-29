@@ -294,16 +294,57 @@ return function(H)
         "suite isolation: the outer state directory is restored"
       )
       -- the stamp of a stamping step is written below the real state directory, not the scratch one
+      -- b_trace_spec stands in for a child that timed out: it leaves a trace folder where the runner puts them (the
+      -- state directory of the suite step, the scratch one)
+      local TRACE = table.concat({
+        "return function(H)",
+        "  local dir = require('testing.run.isolated').trace_base() .. '/fake-run'",
+        "  vim.fn.mkdir(dir, 'p')",
+        "  local f = assert(io.open(dir .. '/x.trace.json', 'wb'))",
+        "  f:write('{}')",
+        "  f:close()",
+        "  H.ok(true, 'a trace was left')",
+        "end",
+        "",
+      }, "\n")
       local stamped = project(
         "suite-iso-stamp",
         "{ profiles = { full = { 'suite' } } }",
-        { ["TESTS/a_spec.lua"] = PASS }
+        { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_trace_spec.lua"] = TRACE }
       )
-      local stamp_res = run(stamped)
-      eq(stamp_res.code, 0, "suite isolation: a stamping run is green (" .. stamp_res.err .. ")")
+      -- no state directory handed in (no --state-dir, none in the services): the default is stdpath("state") of THIS
+      -- editor, which the suite step points at its scratch directory while it runs; the stamp must not go there
+      local saved_state = vim.uv.os_getenv("XDG_STATE_HOME")
+      vim.uv.os_setenv("XDG_STATE_HOME", tmp .. "/outer-state")
+      local errs = {}
+      local code = cli.main({ "ci", "--root=" .. stamped }, {
+        out = function() end,
+        err = function(x)
+          errs[#errs + 1] = x
+        end,
+        cache_dir = cache_dir,
+        color = false,
+        affected = { provider = false },
+      })
+      package.loaded["proj.mod"] = nil
+      local stamp_path = require("testing.stamp").path(stamped)
+      local stamp_there = vim.uv.fs_stat(stamp_path) ~= nil
+      local trace_path = require("testing.run.isolated").trace_base() .. "/fake-run/x.trace.json"
+      local trace_kept = vim.uv.fs_stat(trace_path) ~= nil
+      if saved_state then
+        vim.uv.os_setenv("XDG_STATE_HOME", saved_state)
+      else
+        vim.uv.os_unsetenv("XDG_STATE_HOME")
+      end
+      eq(code, 0, "suite isolation: a stamping run is green (" .. table.concat(errs, " | ") .. ")")
       ok(
-        vim.uv.fs_stat(require("testing.stamp").path(stamped, { state_dir = state_dir })) ~= nil,
-        "suite isolation: the stamp is written below the real state directory"
+        stamp_there,
+        "suite isolation: the stamp is written below the real (default) state directory: "
+          .. stamp_path
+      )
+      ok(
+        trace_kept,
+        "suite isolation: a trace of the suite outlives the scratch directory: " .. trace_path
       )
     end
 

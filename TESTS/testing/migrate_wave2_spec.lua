@@ -395,14 +395,16 @@ jobs:
       gate_dir .. "/TESTS/minimal_init.lua",
       "-c",
       "qa!",
-    }, { text = true, timeout = 30000, env = { NVIM_APPNAME = "wave2-gate-test" } })
+    }, {
+      text = true,
+      timeout = 30000,
+      -- a TESTING_NVIM_DIR inherited from the runner (an isolated child has one) would find testing.nvim: point it
+      -- nowhere, so the first dependency of the gate is the missing one
+      env = { NVIM_APPNAME = "wave2-gate-test", TESTING_NVIM_DIR = tmp .. "/no-such-testing.nvim" },
+    })
     :wait()
   eq(res.code, 1, "the gate exits 1 when a dependency is missing")
-  -- which one is named depends on what the environment finds (an isolated child of the runner has TESTING_NVIM_DIR)
-  ok(
-    (res.stderr or ""):find("dependency '[%w%._%-]+' not found") ~= nil,
-    "and names the dependency (" .. tostring(res.stderr):sub(1, 200) .. ")"
-  )
+  has(res.stderr, "dependency 'testing.nvim' not found", "and names the dependency")
 
   -- applied twice, nothing is left to do (the gate is recognised)
   write(repo .. "/TESTS/minimal_init.lua", minit.after)

@@ -563,9 +563,11 @@ function G:check(snap, ctx)
     table.sort(changes, function(a, b)
       return a[1] < b[1]
     end)
-    -- A spec that started no process and whose writes the wrappers did not see cannot have written the file: it was
-    -- saved from outside while the spec ran (an editor, a formatter, a checkout). Only known when the process guard
-    -- records what a spec starts.
+    -- A spec that started no process and whose writes the wrappers did not see most probably did not write the file:
+    -- it was saved from outside while the spec ran (an editor, a formatter, a checkout). Probably, not certainly: the
+    -- wrappers do not see Vimscript and Ex writes (`:write`, `:mksession`, `writefile()` called from Vimscript, `:!`
+    -- without a process the guard records) nor a reference the spec took before the guard was installed. Only known
+    -- when the process guard records what a spec starts.
     local pn = h.cfg and h.cfg.guards and h.cfg.guards.process_net
     local spawned_known = pn ~= nil and pn.mode ~= "off"
     local spawned = spawned_known and #h.case_ledger:entries("spawned") > 0
@@ -579,7 +581,8 @@ function G:check(snap, ctx)
           local full = root .. "/" .. c[1]
           h:log("fs_outside_tmp", ("%s %s"):format(c[2], full))
           if from_outside then
-            -- not the spec's doing: a warning, never red; the run cannot be proof of this tree (the stamp sees it too)
+            -- most probably not the spec's doing: a warning (an error under `strict`, like every warning); the run is no
+            -- proof of this tree either way (the stamp sees the change too)
             h:finding(
               "fs",
               "fs.changed_during_run",

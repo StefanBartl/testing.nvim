@@ -690,11 +690,12 @@ function M.run(opts)
   local holder = {}
   local depth = timeout.depth()
   local ok, report = pcall(run_files, opts, holder)
+  -- a guard that outlives the run would raise its (persistent) deadline in code that has nothing to do with the spec,
+  -- first of all in the uninstall of the guard layer below: release it before anything else runs
+  local leaked = timeout.release_above(depth)
   if holder.gsess then
     pcall(holder.gsess.uninstall, holder.gsess) -- idempotent: the normal path did it already
   end
-  -- a guard that outlives the run would raise its (persistent) deadline in code that has nothing to do with the spec
-  local leaked = timeout.release_above(depth)
   if not ok then
     error(report, 0)
   end
