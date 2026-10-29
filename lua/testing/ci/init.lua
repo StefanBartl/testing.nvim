@@ -51,6 +51,7 @@ M.USAGE = table.concat({
   "  --junit=<file>    write a JUnit report there (one testsuite per step)",
   "  --state-dir=<dir> where the document (ci.json) and the suite's stamp go (default: stdpath('state'));",
   "                    a wrapper that isolates the suite's state passes the real one here",
+  "  --suite-events=<file>  the suite step writes its events (NDJSON, docs/OUTPUT-FORMATS.md) there, for a UI",
   "  --root=<dir>      the project root (default: the current directory)",
   "  -- <options>      passed on to the suite step (testing run options, e.g. -- --jobs 4)",
 }, "\n")
@@ -63,13 +64,21 @@ M.USAGE = table.concat({
 ---@field json? string
 ---@field junit? string
 ---@field state_dir? string
+---@field ["suite-events"]? string
 ---@field agent? boolean nil: decided by the environment.
 ---@field root string
 ---@field suite_args string[]
 ---@field help boolean
 
-local VALUED =
-  { profile = true, step = true, json = true, junit = true, ["state-dir"] = true, root = true }
+local VALUED = {
+  profile = true,
+  step = true,
+  json = true,
+  junit = true,
+  ["state-dir"] = true,
+  root = true,
+  ["suite-events"] = true,
+}
 
 ---@param argv string[] The arguments after `ci`.
 ---@return Testing.Ci.Args|nil args
@@ -550,6 +559,13 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     ir_path = vim.fn.fnamemodify(ir_path, ":p")
     -- a file left from an earlier run is not this run's result
     ir_before = mtime_ns(ir_path)
+  end
+  -- the suite's events are no suite option of the caller's: a run with them is as complete as one without
+  if is_suite and o.events then
+    local _, has_events = last_option(rest, "events")
+    if not has_events then
+      vim.list_extend(ours, { "--events", o.events })
+    end
   end
   if command == "stamp" and o.stamp_out then
     local _, has_out = last_option(rest, "out")
@@ -1078,7 +1094,7 @@ function M.main(argv, sv)
           root,
           args.suite_args,
           step_sv,
-          { selects = suite_selects, stamp_out = stamp_out }
+          { selects = suite_selects, stamp_out = stamp_out, events = args["suite-events"] }
         )
         if r.partial and r.state == "green" and not suite_selects then
           partial_why[#partial_why + 1] = "suite green-partial"

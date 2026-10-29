@@ -9,7 +9,7 @@ For how the pieces fit together (shim, editor, hook, several repositories, hoste
 ```
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse]
                                                               [--agent|--no-agent] [--json=<file>] [--junit=<file>]
-                                                              [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]
+                                                              [--state-dir=<dir>] [--suite-events=<file>] [--root=<dir>] [-- <suite options>]
 ```
 
 Everything runs on this machine. `testing ci` is meant to do locally what a hosted CI runner does (a pipeline of
@@ -210,12 +210,17 @@ run under 150 ms): the step that just started and how many steps went, out of th
 list` has been asked for them (or the steps of `--step=`). It ends with `green`, `partial` or `failed`. Not part of
 this version: the terminal.nvim view.
 
-**A quiet suite.** When the plan has a step `suite`, the editor starts the run with `-- --events <file>` and reads that
-file while the suite goes: the progress indicator says `suite 12/187` (spec files done of selected), and the buffer shows
-the header `== suite`, one line `suite: <n> file(s), <verdict>` and the verdict line, but not what the specs print
-themselves (a spec may print anything: a table, a line without an end of line, a progress meter). Those lines are kept
-aside; when the run is not green, the last 40 of them follow under `-- the last n line(s) the suite printed:`. A line
-longer than 400 characters is cut and says how much was left out. The terminal (`testing ci`) shows everything as before.
+**A quiet suite, and a line that says what is going on.** The editor starts the run with `--suite-events=<file>`: the
+suite step (when there is one; the option does nothing otherwise, and it does not make a run partial) writes its
+events there ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), and the editor reads the file while the suite goes.
+The progress indicator says `suite 12/187` (spec files done of selected), and the **last line of the buffer** is a
+status line that changes every second, so a step that is quiet for minutes does not look dead:
+`   ... suite: 12 of 187 spec files done, now TESTS/x_spec.lua (1:30)`, or `   ... luacheck is running (0:04)`. It is
+removed when the run ends. The buffer shows the header `== suite`, one line `suite: <n> file(s), <verdict>` and the
+verdict line, but not what the specs print themselves (a spec may print anything: a table, a line without an end of
+line, a progress meter). Those lines are kept aside; when the run is not green, the last 40 of them follow under
+`-- the last n line(s) the suite printed:`. A line longer than 400 characters is cut and says how much was left out.
+The terminal (`testing ci`) shows everything as before.
 
 ## Several repositories
 

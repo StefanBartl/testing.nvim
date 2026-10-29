@@ -248,6 +248,26 @@ return function(H)
     eq(res.code, 0, "suite: green (" .. res.err .. ")")
     eq(res.last, ci.SENTINEL, "suite: the sentinel")
 
+    -- --suite-events: the suite writes its events there (a UI shows the run from them), and the run stays complete
+    do
+      local evfile = tmp .. "/suite-events.ndjson"
+      local ev_root = project("suite-events", CFG, { ["TESTS/a_spec.lua"] = PASS })
+      local ev_res = run(ev_root, "--suite-events=" .. evfile)
+      eq(ev_res.code, 0, "suite-events: green (" .. ev_res.err .. ")")
+      eq(ev_res.last, ci.SENTINEL, "suite-events: still a complete run with the sentinel")
+      eq(doc_of(ev_root).partial, false, "suite-events: not partial")
+      local body = read(evfile) or ""
+      has(body, '"event":"run_start"', "suite-events: the plan of the run")
+      has(body, '"event":"file_end"', "suite-events: a file ended")
+      has(body, '"event":"run_done"', "suite-events: the run is done")
+      local none = project(
+        "no-suite",
+        "{ profiles = { full = { 'lint' } }, steps = { lint = { run = { 'x' } } } }"
+      )
+      local none_res = run(none, "--suite-events=" .. tmp .. "/never.ndjson", "--step=nope")
+      ok(none_res.code ~= 0, "suite-events: an unknown step is still an error")
+    end
+
     -- the suite runs in a throwaway state and cache directory, and the stamp still lands in the real one
     do
       local seen = tmp .. "/iso-seen.txt"

@@ -90,10 +90,61 @@ function M.run_argv(o)
     args[#args + 1] = "--reuse"
   end
   if o.events and o.events ~= "" then
-    -- the suite step writes its events (file n of m) there, whatever its specs print
-    vim.list_extend(args, { "--", "--events", o.events })
+    -- the suite step, when there is one, writes its events (file n of m) there, whatever its specs print
+    args[#args + 1] = "--suite-events=" .. o.events
   end
   return M.child_argv(o.root, args)
+end
+
+---The text of the live status line: the step that runs, how long, and for the suite which spec file of how many.
+---@param live { step?: string, elapsed: integer, files_total?: integer, files_done: integer, current?: string }
+---@return string
+function M.live_text(live)
+  local secs = live.elapsed
+  local clock = ("%d:%02d"):format(math.floor(secs / 60), secs % 60)
+  if not live.step then
+    return ("   ... starting (%s)"):format(clock)
+  end
+  if live.step == "suite" and live.files_total then
+    local file = live.current and (", now " .. live.current) or ""
+    return ("   ... suite: %d of %d spec files done%s (%s)"):format(
+      live.files_done,
+      live.files_total,
+      file,
+      clock
+    )
+  end
+  return ("   ... %s is running (%s)"):format(live.step, clock)
+end
+
+---Keep the status line of a view up to date once a second; the returned function removes it.
+---@param view { status: fun(text: string|nil) }
+---@param live { step?: string, t0?: integer, files_total?: integer, files_done: integer, current?: string }
+---@return fun() stop
+function M.live_status(view, live)
+  local started = vim.uv.hrtime()
+  local timer = vim.uv.new_timer()
+  local function tick()
+    local t0 = live.t0 or started
+    view.status(M.live_text({
+      step = live.step,
+      elapsed = math.floor((vim.uv.hrtime() - t0) / 1e9),
+      files_total = live.files_total,
+      files_done = live.files_done,
+      current = live.current,
+    }))
+  end
+  timer:start(1000, 1000, vim.schedule_wrap(tick))
+  local stopped = false
+  return function()
+    if stopped then
+      return
+    end
+    stopped = true
+    timer:stop()
+    timer:close()
+    view.status(nil)
+  end
 end
 
 ---Which lines of the output of a run belong in the live buffer. What a suite prints between its header `== <name>`
@@ -426,6 +477,7 @@ function M.open_view(root)
   vim.bo[buf].modifiable = false
   M.show_buffer(buf)
   local header_n = 0
+  local status_on = false
   ---@return boolean
   local function pristine()
     return vim.api.nvim_buf_line_count(buf) == 1
@@ -442,12 +494,33 @@ function M.open_view(root)
       header_n = #lines
       vim.bo[buf].modifiable = false
     end,
+    ---The last line of the buffer says what is going on right now (nil removes it); `append` writes above it.
+    status = function(text)
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      vim.bo[buf].modifiable = true
+      if status_on then
+        local n = vim.api.nvim_buf_line_count(buf)
+        vim.api.nvim_buf_set_lines(buf, n - 1, n, false, text and { text } or {})
+      elseif text then
+        vim.api.nvim_buf_set_lines(buf, pristine() and 0 or -1, -1, false, { text })
+      end
+      status_on = text ~= nil
+      vim.bo[buf].modifiable = false
+    end,
     append = function(lines)
       if not vim.api.nvim_buf_is_valid(buf) then
         return
       end
       vim.bo[buf].modifiable = true
-      vim.api.nvim_buf_set_lines(buf, pristine() and 0 or -1, -1, false, lines)
+      if status_on then
+        -- the status line stays last: the new lines go above it
+        local n = vim.api.nvim_buf_line_count(buf)
+        vim.api.nvim_buf_set_lines(buf, n - 1, n - 1, false, lines)
+      else
+        vim.api.nvim_buf_set_lines(buf, pristine() and 0 or -1, -1, false, lines)
+      end
       vim.bo[buf].modifiable = false
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(win) == buf then
@@ -777,11 +850,10 @@ function M.run(o)
   for _, name in ipairs(plan or {}) do
     planned[name] = true
   end
-  -- A suite step gets an events file: the run shows "suite 12/187" from it, and what the specs print stays out of
-  -- the buffer (it is shown when the run is not green). Only when the plan says there is a step `suite`: an option
-  -- after `--` for a run without a suite is an error.
-  local quiet = planned and planned.suite
-  local events = quiet and (vim.fn.tempname() .. ".testing-ci-events.ndjson") or nil
+  -- A suite step writes its events to a file: the run shows "suite 12/187" and the file being run from it, and what
+  -- the specs print stays out of the buffer (it is shown when the run is not green). `--suite-events` does nothing
+  -- for a run without a suite step, so no plan is needed.
+  local events = vim.fn.tempname() .. ".testing-ci-events.ndjson"
   local argv = M.run_argv({
     root = o.root,
     json = json,
@@ -795,10 +867,9 @@ function M.run(o)
   local progress = M.progress({ title = "testing ci" })
   -- a step counts once, and only a planned one when the plan is known: a step's own output can start with `== `
   local counted, seen = {}, 0
-  local keep, raw
-  if quiet then
-    keep, raw = M.quiet_step("suite")
-  end
+  local keep, raw = M.quiet_step("suite")
+  -- what is going on right now, as the last line of the buffer: a step that is quiet for minutes must not look dead
+  local live = { step = nil, t0 = nil, files_total = nil, files_done = 0, current = nil }
   local feed, flush = M.feeder(view, function(line)
     local step = M.step_of(line)
     if step and not counted[step] and (not planned or planned[step]) then
@@ -806,36 +877,37 @@ function M.run(o)
       seen = seen + 1
       progress:update({ text = step, current = seen, total = plan and #plan or nil })
     end
+    if step then
+      live.step, live.t0 = step, vim.uv.hrtime()
+    end
   end, keep)
-  local stop_events
-  if events then
-    local files_total, files_done = nil, 0
-    stop_events = M.tail_events(events, function(ev)
-      if ev.event == "run_start" then
-        files_total = ev.files_selected or ev.files_total
-      elseif ev.event == "file_end" then
-        files_done = files_done + 1
-        progress:update({
-          text = files_total and ("suite %d/%d"):format(files_done, files_total)
-            or ("suite %d"):format(files_done),
-        })
-      elseif ev.event == "run_done" then
-        view.append({
-          ("   suite: %d file(s)%s"):format(
-            files_done,
-            ev.verdict and (", " .. ev.verdict) or ", stopped"
-          ),
-        })
-      end
-    end)
-  end
+  local stop_events = M.tail_events(events, function(ev)
+    if ev.event == "run_start" then
+      live.files_total = ev.files_selected or ev.files_total
+    elseif ev.event == "file_start" then
+      live.current = ev.file
+    elseif ev.event == "file_end" then
+      live.files_done = live.files_done + 1
+      progress:update({
+        text = live.files_total and ("suite %d/%d"):format(live.files_done, live.files_total)
+          or ("suite %d"):format(live.files_done),
+      })
+    elseif ev.event == "run_done" then
+      view.append({
+        ("   suite: %d file(s)%s"):format(
+          live.files_done,
+          ev.verdict and (", " .. ev.verdict) or ", stopped"
+        ),
+      })
+    end
+  end)
+  local stop_status = M.live_status(view, live)
   local function finish(res)
     vim.schedule(function()
       flush()
-      if stop_events then
-        stop_events()
-        pcall(os.remove, events)
-      end
+      stop_status()
+      stop_events()
+      pcall(os.remove, events)
       entry.running = false
       local doc = read_json(json)
       pcall(os.remove, json)
@@ -869,9 +941,8 @@ function M.run(o)
   }, finish)
   if not ok or not started then
     entry.running = false
-    if stop_events then
-      stop_events()
-    end
+    stop_status()
+    stop_events()
     progress:cancel()
     return false, tostring(started)
   end

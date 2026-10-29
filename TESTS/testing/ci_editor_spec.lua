@@ -347,19 +347,82 @@ return function(H)
       eq(raw2()[#raw2()], "noise " .. (editor.RAW_LINES + 10), "quiet_step: the newest ones")
 
       local argv = editor.run_argv({ root = root, json = "j.json", events = "e.ndjson" })
-      eq(
-        { argv[#argv - 2], argv[#argv - 1], argv[#argv] },
-        { "--", "--events", "e.ndjson" },
-        "run_argv: after `--`"
+      ok(
+        vim.tbl_contains(argv, "--suite-events=e.ndjson"),
+        "run_argv: the suite's events go to the file"
       )
+      ok(
+        not vim.tbl_contains(argv, "--"),
+        "run_argv: no suite option after `--` (it would make the run partial)"
+      )
+      local plain = editor.run_argv({ root = root, json = "j.json" })
+      for _, x in ipairs(plain) do
+        ok(not x:find("suite-events", 1, true), "run_argv: no events file without one asked for")
+      end
+      -- --root stays before a `--` of the caller's: what follows it belongs to the suite
+      local with_dashes = editor.child_argv(root, { "ci", "--", "--filter", "x" })
       local root_at, dashes_at
-      for i, x in ipairs(argv) do
+      for i, x in ipairs(with_dashes) do
         root_at = x:find("^%-%-root=") and i or root_at
         dashes_at = x == "--" and i or dashes_at
       end
-      ok(root_at and dashes_at and root_at < dashes_at, "run_argv: --root comes before `--`")
-      local plain = editor.run_argv({ root = root, json = "j.json" })
-      ok(not vim.tbl_contains(plain, "--events"), "run_argv: no events without a suite")
+      ok(root_at and dashes_at and root_at < dashes_at, "child_argv: --root comes before `--`")
+
+      -- the text of the status line: what runs, for how long, and how far the suite is
+      eq(
+        editor.live_text({ elapsed = 5, files_done = 0 }),
+        "   ... starting (0:05)",
+        "live_text: before the first step"
+      )
+      eq(
+        editor.live_text({ step = "luacheck", elapsed = 75, files_done = 0 }),
+        "   ... luacheck is running (1:15)",
+        "live_text: a step"
+      )
+      eq(
+        editor.live_text({
+          step = "suite",
+          elapsed = 90,
+          files_total = 187,
+          files_done = 12,
+          current = "TESTS/a_spec.lua",
+        }),
+        "   ... suite: 12 of 187 spec files done, now TESTS/a_spec.lua (1:30)",
+        "live_text: the suite with its events"
+      )
+      eq(
+        editor.live_text({ step = "suite", elapsed = 3, files_done = 0 }),
+        "   ... suite is running (0:03)",
+        "live_text: the suite before its first event"
+      )
+
+      -- the status line is the last line of the buffer: `append` writes above it, nil removes it
+      local sbuf = editor.open_view(root .. "/status-view")
+      sbuf.append({ "one" })
+      sbuf.status("   ... working")
+      sbuf.append({ "two" })
+      sbuf.status("   ... still working")
+      eq(
+        vim.api.nvim_buf_get_lines(sbuf.buf, 0, -1, false),
+        { "one", "two", "   ... still working" },
+        "status: last line, new lines above it, replaced in place"
+      )
+      sbuf.status(nil)
+      eq(vim.api.nvim_buf_get_lines(sbuf.buf, 0, -1, false), { "one", "two" }, "status: removed")
+      sbuf.status("   ... first")
+      local empty = editor.open_view(root .. "/status-empty")
+      empty.status("   ... only")
+      eq(
+        vim.api.nvim_buf_get_lines(empty.buf, 0, -1, false),
+        { "   ... only" },
+        "status: in an empty buffer"
+      )
+      empty.append({ "line" })
+      eq(
+        vim.api.nvim_buf_get_lines(empty.buf, 0, -1, false),
+        { "line", "   ... only" },
+        "status: a first line goes above it"
+      )
 
       -- the feeder: a long line is cut, `keep` hides, `on_line` still sees everything
       local lines_seen, on_line_seen = {}, {}
@@ -424,9 +487,7 @@ return function(H)
         qargv = argv
         local events
         for i, a in ipairs(argv) do
-          if a == "--events" then
-            events = argv[i + 1]
-          end
+          events = a:match("^%-%-suite%-events=(.*)$") or events
         end
         local ef = assert(io.open(events, "wb"))
         ef:write(
@@ -458,7 +519,9 @@ return function(H)
       editor.step_plan = real_plan
       eq(started_q, true, "quiet run: starts")
       ok(
-        vim.tbl_contains(qargv, "--events"),
+        vim.iter(qargv):any(function(x)
+          return x:find("--suite-events=", 1, true) == 1
+        end),
         "quiet run: the child is asked for events (" .. table.concat(qargv, " ") .. ")"
       )
       ok(
