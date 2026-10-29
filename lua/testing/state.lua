@@ -43,6 +43,9 @@ M.MAX_ID_BYTES = 500
 M.MAX_TEXT = 2000
 ---@type integer
 M.MAX_DESCRIBE = 20
+---Failing assertions kept per case (`fails`).
+---@type integer
+M.MAX_FAILS = 20
 
 local STATUS = {
   pass = true,
@@ -59,6 +62,10 @@ local BAD = { fail = true, error = true, timeout = true, crash = true, xpass = t
 
 local uv = vim.uv or vim.loop
 
+---@class Testing.State.Fail
+---@field line? integer  Source line of the assertion call.
+---@field msg? string
+
 ---@class Testing.State.Case
 ---@field id string
 ---@field file string
@@ -71,6 +78,7 @@ local uv = vim.uv or vim.loop
 ---@field message? string  First failing assertion (or the error, or the skip reason), first line.
 ---@field expected? string
 ---@field actual? string
+---@field fails? Testing.State.Fail[]  Every failing assertion with its source line (at most `MAX_FAILS`), for a case that is a whole file.
 
 ---@class Testing.State.File
 ---@field mtime_ns string  Decimal string, nanoseconds since the epoch.
@@ -275,6 +283,22 @@ local function validate_case(raw)
   if not inside(norm_file(raw.file)) then
     return nil, "file outside the project"
   end
+  local fails
+  if type(raw.fails) == "table" then
+    for _, f in ipairs(raw.fails) do
+      if #(fails or {}) >= M.MAX_FAILS then
+        break
+      end
+      if type(f) == "table" then
+        local fl = f.line
+        if type(fl) ~= "number" or fl ~= math.floor(fl) or fl < 1 or fl > 1e7 then
+          fl = nil
+        end
+        fails = fails or {}
+        fails[#fails + 1] = { line = fl, msg = clean(first_line(f.msg), M.MAX_TEXT) }
+      end
+    end
+  end
   return {
     id = raw.id,
     file = norm_file(raw.file),
@@ -287,6 +311,7 @@ local function validate_case(raw)
     message = clean(first_line(raw.message), M.MAX_TEXT),
     expected = clean(raw.expected, M.MAX_TEXT, true),
     actual = clean(raw.actual, M.MAX_TEXT, true),
+    fails = fails,
   }
 end
 
@@ -643,11 +668,17 @@ end
 ---@return Testing.State.Case
 local function from_ir(c)
   local message, expected, actual
+  local fails
   for _, a in ipairs(c.assertions or {}) do
     if a.ok == false then
-      message = first_line(a.msg)
-      expected, actual = a.expected, a.actual
-      break
+      if not message then
+        message = first_line(a.msg)
+        expected, actual = a.expected, a.actual
+      end
+      fails = fails or {}
+      if #fails < M.MAX_FAILS then
+        fails[#fails + 1] = { line = a.line, msg = clean(first_line(a.msg), M.MAX_TEXT) }
+      end
     end
   end
   if not message and c.error then
@@ -675,6 +706,7 @@ local function from_ir(c)
     message = clean(message, M.MAX_TEXT),
     expected = clean(expected, M.MAX_TEXT, true),
     actual = clean(actual, M.MAX_TEXT, true),
+    fails = fails,
   }
 end
 
@@ -758,6 +790,7 @@ local function to_json(st)
       message = c.message,
       expected = c.expected,
       actual = c.actual,
+      fails = c.fails,
     }
   end
   return {

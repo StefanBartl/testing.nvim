@@ -135,13 +135,15 @@ places. `testing doctor` prints the resolution of everything.
 require("testing").setup({
   notify_prefix = "[testing]",
   keymaps = {},
+  hover = { max_width = 80, max_height = 20, max_diff_lines = 12 },
 })
 ```
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `notify_prefix` | non-empty string | `"[testing]"` | Prefix of every message the plugin shows. |
-| `keymaps` | `table<string, string\|string[]\|false>` or `false` | `{}` | Moves or drops named keymap actions; `false` binds no key at all. See [BINDINGS.md](BINDINGS.md). |
+| `keymaps` | `table<string, string\|string[]\|false>` or `false` | `{}` | Moves or drops named keymap actions; `false` binds no key at all. See [BINDINGS.md](BINDINGS.md). The one action, `hover`, has no default key. |
+| `hover` | `{ max_width?, max_height?, max_diff_lines? }` | `{ 80, 20, 12 }` | Size of the hover over a test (`:Testing hover`, hover.nvim): longest line in display columns, most lines, lines of a failure diff. Positive integers. |
 
 A key with the wrong type, and any unknown key, is dropped and reported with a warning; the
 default stays in place.

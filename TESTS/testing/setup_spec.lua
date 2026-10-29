@@ -34,9 +34,21 @@ return function(H)
   testing.setup({ notify_prefix = 42 })
   eq(testing.get_config().notify_prefix, "[testing]", "an invalid option falls back to the default")
 
-  -- nothing is bound by default: the plugin declares no keymap action yet
-  eq(next(require("testing.bindings.keymaps").ACTIONS), nil, "no keymap action is declared")
-  eq(require("testing.bindings.keymaps").register(config.get()), false, "no keymap is bound")
+  -- nothing is bound by default: the one action (`hover`) declares no default key
+  local actions = require("testing.bindings.keymaps").ACTIONS
+  eq(vim.tbl_keys(actions), { "hover" }, "the only keymap action is hover")
+  eq(actions.hover.default, nil, "hover has no default key")
+  local function mapped(lhs)
+    return vim.fn.maparg(lhs, "n", false, true).desc
+  end
+  require("testing.bindings.keymaps").register(config.get())
+  eq(mapped("<leader>th"), nil, "no hover key is bound without an opt-in")
+  testing.setup({ keymaps = { hover = "<leader>th" } })
+  ok(
+    mapped("<leader>th") ~= nil and mapped("<leader>th") ~= "",
+    "keymaps = { hover = lhs } binds the key"
+  )
+  pcall(vim.keymap.del, "n", "<leader>th")
 
   config.reset()
   -- `setup()` registered :Testing in this editor: leave it as found

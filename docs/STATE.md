@@ -16,7 +16,8 @@ a failing write is a note (`testing: note: result not stored: ...`) and the run 
 ## What it holds
 
 Per case: `id`, `file`, `line`, `status`, `duration_ms`, `flaky`, `describe` (the titles, outermost first),
-`name`, and for a red or skipped case `message` (first line of the first failing assertion, the error, or
+`name`, `fails` (every failing assertion as `{ line, msg }`, at most 20; the hover lists them for a file that is one
+case), and for a red or skipped case `message` (first line of the first failing assertion, the error, or
 the skip reason), `expected` and `actual`. Per spec file: `{ mtime_ns, size, run, ts }` from when its result
 was recorded. The Result-IR carries `describe` and `name` as additive optional fields of a case
 ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md)); a reader that does not find them falls back to the id.

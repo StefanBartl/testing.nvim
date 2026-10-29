@@ -11,6 +11,16 @@
 ---| table<string, string|string[]|false>
 ---| false
 
+---@class Testing.HoverConfig
+---@field max_width integer Longest line of the hover, in display columns.
+---@field max_height integer Most lines of the hover.
+---@field max_diff_lines integer Lines of a failure diff in the hover.
+
+---@class Testing.HoverConfigOptions
+---@field max_width? integer
+---@field max_height? integer
+---@field max_diff_lines? integer
+
 ---@class Testing.CiRepos
 ---@field roots string[] Directories whose sub-directories with a `ci` section are run by `:Testing ci repos` (env variables are expanded).
 ---@field include string[] Of the found ones only these directory names (empty: all).
@@ -26,6 +36,7 @@
 --- The effective configuration: `DEFAULTS` with the user's valid options merged on top.
 ---@field notify_prefix string Prefix of every message shown through lib.nvim.notify. Non-empty.
 ---@field keymaps Testing.KeymapsConfig Named keymap actions to rebind or drop; empty by default.
+---@field hover Testing.HoverConfig The hover over a test (`testing.hover`).
 ---@field ci Testing.CiConfig `:Testing ci` from the editor.
 ---@field project Testing.ProjectConfig Defaults of a project's `.testing.lua`; not settable through `setup()`.
 
@@ -50,6 +61,7 @@
 ---@field threshold number 0..1 gate threshold of the overall ratio, 0 = report only.
 ---@field kinds string[] Kinds counted in the ratio.
 ---@field ignore string[] Lua patterns of entry ids that are not counted.
+---@field tags boolean `true`: `binding:`/`command:` tags and `-- @covers` headers of passing cases count as exercised.
 ---@field setup_chunk? string Lua code the surface is read after.
 
 ---@class Testing.ProjectConfig.Cache
@@ -157,6 +169,7 @@
 --- What the user passes to `setup()`: every key of `Testing.Config`, each optional.
 ---@field notify_prefix? string
 ---@field keymaps? Testing.KeymapsConfig
+---@field hover? Testing.HoverConfigOptions
 ---@field ci? Testing.CiConfigOptions
 
 return {}

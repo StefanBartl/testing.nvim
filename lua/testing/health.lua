@@ -557,14 +557,22 @@ function M.check()
     health.error("testing.hover does not load: " .. tostring(hover), {
       "This is a defect of testing.nvim",
     })
-  elseif hover.registered() then
-    health.ok("hover.nvim shows the last result of a test (`:Hover show` over a test file)")
-  elseif pcall(require, "hover.registry") then
-    health.info(
-      "hover.nvim is installed but testing.nvim is not registered: call require('testing').setup()"
-    )
   else
-    health.info("hover.nvim is not installed; `:Testing hover` shows the same text in a float")
+    local status = hover.status()
+    if status.state == "registered" then
+      health.ok(
+        "hover.nvim shows the last result of a test (`:Hover show` over a test or a spec path)"
+      )
+    elseif status.state == "not registered" then
+      health.info(
+        "hover.nvim is installed but testing.nvim is not registered: call require('testing').setup()"
+      )
+    else
+      health.info("hover.nvim is not installed; `:Testing hover` shows the same text in a float")
+    end
+    if status.keymap then
+      health.info(("`:Testing hover` is also bound to %s"):format(status.keymap))
+    end
   end
 
   health.start("testing.nvim: configuration")

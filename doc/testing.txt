@@ -83,8 +83,15 @@ keymaps ~
     Type: table<string, string|string[]|false>|false. Default: `{}`.
     Overrides for the plugin's named keymap actions: action name -> new left-hand
     side, a list of them, or `false` to drop that action. `false` instead of a
-    table binds no key at all. The plugin declares no action yet, so nothing is
-    bound by default.
+    table binds no key at all. The one action, `hover`, has no default key:
+    `keymaps = { hover = "<leader>th" }` binds it, so nothing is bound by default.
+
+                                                                *testing-hover*
+hover ~
+    Type: { max_width?, max_height?, max_diff_lines? } (positive integers).
+    Default: `{ max_width = 80, max_height = 20, max_diff_lines = 12 }`.
+    Size of the hover over a test (`:Testing hover`, hover.nvim `:Hover show`):
+    longest line in display columns, most lines, lines of a failure diff.
 
 ==============================================================================
 5. Commands                                                      *testing-commands*
@@ -101,7 +108,9 @@ keymaps ~
 :Testing file [{spec}]    Run the spec of the current buffer.
 :Testing last             Repeat the last run.
 :Testing hover            Last result of the test under the cursor (float); also hover.nvim
-                         `:Hover show` over a test file.
+                         `:Hover show` over a test file, a describe
+                         block or a spec path in any buffer. With the `hover`
+                         keymap action (no default key) on a key of your own.
 :Testing terminal         Repeat the last run in a terminal.nvim terminal.
 :Testing list [{root}]    List what would run.
 :Testing init [{root}] [--force] [--plugin={name}]
@@ -132,9 +141,9 @@ docs/BINDINGS.md.
 ==============================================================================
 6. Keymaps and autocommands                                      *testing-bindings*
 
-The plugin binds no key and registers no autocommand by default. Every keymap it
-gets later is a named action that can be moved or dropped through the `keymaps`
-option.
+The plugin binds no key and registers no autocommand by default. Its one keymap
+action, `hover` (`:Testing hover`), has no default key; `keymaps = { hover = "<lhs>" }`
+binds it. Every action can be moved or dropped through the `keymaps` option.
 
 ==============================================================================
 7. Health check                                                    *testing-health*

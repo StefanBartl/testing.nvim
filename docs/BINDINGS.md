@@ -4,15 +4,18 @@ Every keymap, user command and autocommand testing.nvim registers.
 
 ## Keymaps
 
-None. The plugin binds no key by default.
+None bound by default. One named action exists, without a default key, so a user opts in:
 
-Keymaps will be declared as named actions and bound through
-`lib.nvim.bindings.keymap.register`. Each action can then be moved or dropped:
+| Action | Default | Does |
+| --- | --- | --- |
+| `hover` | none | Same as `:Testing hover`: the last result of the test under the cursor, in a float. |
+
+Actions are bound through `lib.nvim.bindings.keymap.register`; each can be moved or dropped:
 
 ```lua
 require("testing").setup({
   keymaps = {
-    -- <action> = "<lhs>" | { "<lhs>", ... } | false
+    hover = "<leader>th", -- <action> = "<lhs>" | { "<lhs>", ... } | false
   },
 })
 ```
@@ -27,7 +30,7 @@ require("testing").setup({
 | `:Testing run [<root>]` | `--file=<text>` (repeatable), `--filter=<text>` (repeatable), `--reporter=<name>`, `--rtp=<dir>` (repeatable), `--config=<file>`, `--cached`, `--no-cache`, `--changed`, `--since=<rev>`, `--shard=<i>/<n>` | Run the spec files of the project in a headless child Neovim. `<root>` defaults to the nearest ancestor of the working directory that holds `.testing.lua`, `TESTS` or `.git`. `--cached` skips spec files whose inputs did not change since a green run (their cases are reported as cached, [CACHE.md](CACHE.md)); `--changed` / `--since=<rev>` run only the specs the working tree / that revision can reach; a run with either is a partial run (no sentinel). |
 | `:Testing file [<spec>]` | `--rtp=<dir>` | Run the spec file of the current buffer (or of `<spec>`). A file that is not a `*_spec.lua` is refused: running the spec that belongs to a source file is not implemented yet. |
 | `:Testing last` | none | Repeat the last `run`/`file` of this session. |
-| `:Testing hover` | none | The last result of the test under the cursor (status, duration, age, and for a red case the first failing assertion with a small diff), or of the whole spec file when the line is no test. An outdated result (the file changed or is gone) is worded in the past tense and titled `(outdated)`, never shown as a current green. The same text is registered with [hover.nvim](https://github.com/WKDSteve/hover.nvim) as an `on_request` position (`:Hover show`), softly: without hover.nvim only the command exists. Reads `testing.state` (`docs/STATE.md`), runs nothing. |
+| `:Testing hover` | none | The last result of what is under the cursor, in a float (the `hover` keymap action does the same). On an `it` line: status, duration, age and for a red case the first failing assertion with a small diff; on a `describe` line: the cases below it; on any other line of a spec: the file summary (cases green/red, slowest, last run); a file that is one case (dialect A) shows its result and every failing assertion as `file:line`. A spec path written in another buffer (a note, a task, a report) answers with the file summary. Never a stale green: an outdated result (file changed or gone) is worded in the past tense and titled `(outdated)`; a case or file without a result says `not run yet`. Cases are matched to the text by describe path and name, so a file that grew above them still finds them. The same text is registered with [hover.nvim](https://github.com/WKDSteve/hover.nvim) softly (no `require` at load time): a position (`:Hover show`, `on_request`, never the automatic trigger) and a `file` preview for spec paths. Without hover.nvim only the command and the key exist. Size from `hover = { max_width, max_height, max_diff_lines }` ([CONFIG.md](CONFIG.md)). Titles, messages and values are cleaned of control characters and cut. Reads `testing.state` (`docs/STATE.md`), runs nothing. |
 | `:Testing terminal` | none | Repeat the last `run`/`file` (else run the project) as the job of a [terminal.nvim](https://github.com/WKDSteve/terminal.nvim) terminal named `testing`: the reporter's own output to scroll and copy, nothing parsed, no quickfix list. Needs terminal.nvim. |
 | `:Testing list [<root>]` | as `run`, without `--cached` and `--reporter` | List the spec files that would run; run nothing. The list opens in a viewer. Nothing runs, so there is no result cache to skip files with and no output to format: the two flags are not offered (a wrong flag is a usage error, not a silent no-op). `--no-cache` stays for `--changed` / `--since`: it analyses every file again instead of reading the stored index. |
 | `:Testing init [<root>]` | `--force`, `--plugin=<name>`, `--hooks` | Generate `.testing.lua`, `TESTS/minimal_init.lua`, `TESTS/<plugin>/load_spec.lua`, `scripts/test.sh`, `.github/workflows/ci.yml`, `stylua.toml`, `.luacheckrc` and `.gitattributes` in `<root>` (default: the working directory). An existing file is never overwritten, it is reported as kept; `--force` replaces it. With `--hooks` it writes the hook recipes instead (`scripts/hooks/{_testing.sh,pre-push,pre-commit,claude-stop}`, never over an existing file, `--force` does not apply) and prints the three commands that are left to you (`git add`, `git update-index --chmod=+x` for `pre-push` and `pre-commit` so that a clone on Linux, macOS or WSL runs them, `git config core.hooksPath`): [HOOKS.md](HOOKS.md). |
