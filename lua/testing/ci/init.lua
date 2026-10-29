@@ -51,6 +51,7 @@ M.USAGE = table.concat({
   "  --junit=<file>    write a JUnit report there (one testsuite per step)",
   "  --state-dir=<dir> where the document (ci.json) and the suite's stamp go (default: stdpath('state'));",
   "                    a wrapper that isolates the suite's state passes the real one here",
+  "  --events=<file>   the events of the run (NDJSON: run_start, step_start, step_end, run_done) for a UI",
   "  --suite-events=<file>  the suite step writes its events (NDJSON, docs/OUTPUT-FORMATS.md) there, for a UI",
   "  --root=<dir>      the project root (default: the current directory)",
   "  -- <options>      passed on to the suite step (testing run options, e.g. -- --jobs 4)",
@@ -78,6 +79,7 @@ local VALUED = {
   ["state-dir"] = true,
   root = true,
   ["suite-events"] = true,
+  events = true,
 }
 
 ---@param argv string[] The arguments after `ci`.
@@ -975,6 +977,10 @@ function M.main(argv, sv)
       time = os.date("!%Y-%m-%dT%H:%M:%SZ"),
       steps = {},
     }
+    local early_events = require("testing.ci.events").open(args.events, err)
+    early_events.emit("run_start", { profile = profile_name or vim.NIL, steps = {} })
+    early_events.emit("run_done", { verdict = doc.verdict, exit = code, problems = problems })
+    early_events.close()
     -- the old script recorded a missing tool as red: so does the transitional file, where git ignores it
     local legacy_ignored = false
     if code == M.EXIT_INFRA then
@@ -1115,6 +1121,17 @@ function M.main(argv, sv)
   -- asked for now, before the suite step points the state directory at a scratch directory: the stamp must outlive it
   local stamp_out = require("testing.stamp").path(root, { state_dir = state_dir })
 
+  -- the events of the run; the suite's own (file n of m) go next to them unless --suite-events names a file
+  local events = require("testing.ci.events").open(args.events, err)
+  local suite_events = args["suite-events"]
+    or (args.events and args.events ~= "" and (args.events .. ".suite.ndjson"))
+    or nil
+  local step_names = {}
+  for _, p in ipairs(planned) do
+    step_names[#step_names + 1] = p.step.name
+  end
+  events.emit("run_start", { profile = profile, root = vim.fs.basename(root), steps = step_names })
+
   local started = os.time()
   local results, first_red = {}, nil
   local stop, ran = false, 0
@@ -1142,6 +1159,12 @@ function M.main(argv, sv)
             or ""
         )
       )
+      events.emit("step_start", {
+        step = step.name,
+        index = #results + 1,
+        total = #planned,
+        suite_events = step.inprocess == "run" and suite_events or nil,
+      })
       local t0 = vim.uv.hrtime()
       local reused = args.reuse
         and step.inprocess == "run"
@@ -1169,7 +1192,7 @@ function M.main(argv, sv)
           root,
           args.suite_args,
           step_sv,
-          { selects = suite_selects, stamp_out = stamp_out, events = args["suite-events"] }
+          { selects = suite_selects, stamp_out = stamp_out, events = suite_events }
         )
         if r.partial and r.state == "green" and not suite_selects then
           partial_why[#partial_why + 1] = "suite green-partial"
@@ -1202,6 +1225,16 @@ function M.main(argv, sv)
       r.tool_version = line and vim.trim(line:match("[^\r\n]+") or "") or nil
     end
     results[#results + 1] = r
+    events.emit("step_end", {
+      step = step.name,
+      index = #results,
+      total = #planned,
+      state = r.state,
+      ms = r.ms,
+      exit = r.exit,
+      reason = r.reason,
+      findings_total = r.findings_total or 0,
+    })
   end
   if ran == 0 then
     partial_why[#partial_why + 1] = "no step ran on " .. this_os()
@@ -1289,6 +1322,14 @@ function M.main(argv, sv)
     write_doc(doc, root, nil, state_dir, false)
   end
 
+  events.emit("run_done", {
+    verdict = doc.verdict,
+    exit = exit,
+    partial_why = doc.partial_why,
+    deciding = doc.deciding,
+    first_red = doc.first_red,
+  })
+  events.close()
   for _, line in ipairs(agent and report.agent(doc) or report.term(doc, M.SENTINEL)) do
     out(line)
   end

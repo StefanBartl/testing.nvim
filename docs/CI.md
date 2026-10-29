@@ -9,7 +9,7 @@ For how the pieces fit together (shim, editor, hook, several repositories, hoste
 ```
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci [--profile=<name>] [--step=<a,b>] [--keep-going] [--reuse]
                                                               [--agent|--no-agent] [--json=<file>] [--junit=<file>]
-                                                              [--state-dir=<dir>] [--suite-events=<file>] [--root=<dir>] [-- <suite options>]
+                                                              [--state-dir=<dir>] [--events=<file>] [--suite-events=<file>] [--root=<dir>] [-- <suite options>]
 ```
 
 Everything runs on this machine. `testing ci` is meant to do locally what a hosted CI runner does (a pipeline of
@@ -269,6 +269,24 @@ alongside; when the child ends, the table is rewritten from its document (verify
 verdict names the repositories that are not green, and their findings fill the quickfix list, each entry with the
 repository's name in front (a repository without findings gets a text-only entry with its state and exit code). The
 list opens only on red.
+
+## Events of a run
+
+`testing ci --events=<file>` writes what the run is doing while it goes, one JSON object per line (NDJSON, flushed after
+every line, keys sorted), for a UI that shows a run without reading its terminal text (the editor, a test explorer, a
+desktop app). The file is written anew by every run. Like the suite's stream it is never part of the verdict: a file
+that cannot be opened or written is one note on stderr, and the run goes on.
+
+Every line has `v` (`1`), `event` and `ts` (unix seconds).
+
+| `event` | Fields |
+| --- | --- |
+| `run_start` | `profile`, `root` (directory name, never a path), `steps` (the planned steps in order; empty for a run that stops before its first step) |
+| `step_start` | `step`, `index`, `total`; the suite step also `suite_events`: the file of the suite's own events (file n of m, [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), `<file>.suite.ndjson` unless `--suite-events` names one |
+| `step_end` | `step`, `index`, `total`, `state` (`green`, `red`, `skipped`, `error`, `infra`), `ms`, `exit` (a process step), `reason`, `findings_total`. A step that never started (skipped for this system, after a red step without `--keep-going`) has a `step_end` and no `step_start` |
+| `run_done` | `verdict`, `exit`, `partial_why`, `deciding`, `first_red`; a run that stopped before its first step: `verdict`, `exit`, `problems` |
+
+The findings themselves are in the document `testing-ci/1` (`--json`), which is complete when `run_done` is there.
 
 ## Reports and findings
 

@@ -268,6 +268,30 @@ return function(H)
       ok(none_res.code ~= 0, "suite-events: an unknown step is still an error")
     end
 
+    -- --events: the suite step's step_start names the file of the suite's own events (next to the run's events)
+    do
+      local evpath = tmp .. "/run-events.ndjson"
+      local evr = project("suite-run-events", CFG, { ["TESTS/a_spec.lua"] = PASS })
+      eq(run(evr, "--events=" .. evpath).code, 0, "run events: green")
+      local start
+      for line in (read(evpath) or ""):gmatch("[^\n]+") do
+        local e = vim.json.decode(line)
+        if e.event == "step_start" and e.step == "suite" then
+          start = e
+        end
+      end
+      eq(
+        start and start.suite_events,
+        evpath .. ".suite.ndjson",
+        "run events: the suite's events file is named"
+      )
+      has(
+        read(evpath .. ".suite.ndjson") or "",
+        '"event":"run_done"',
+        "run events: ... and written"
+      )
+    end
+
     -- the suite runs in a throwaway state and cache directory, and the stamp still lands in the real one
     do
       local seen = tmp .. "/iso-seen.txt"

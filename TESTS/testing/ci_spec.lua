@@ -357,6 +357,66 @@ return function(H)
     lacks(res.out, "first|", "missing: nothing ran, not even the steps before")
   end
 
+  -- --events: the run as NDJSON for a UI (run_start, step_start/step_end per step, run_done); a step that never
+  -- started (an earlier one failed) has only its step_end
+  do
+    local function events_of(path)
+      local list = {}
+      for line in (read(path) or ""):gmatch("[^\n]+") do
+        list[#list + 1] = vim.json.decode(line)
+      end
+      return list
+    end
+    local section = ("{ profiles = { full = { 'a', 'b' } }, steps = { a = { run = %s }, b = { run = %s } } }"):format(
+      nv(echo, "A"),
+      nv(echo, "B")
+    )
+    local root = project("events", section, { [echo] = ECHO })
+    local path = tmp .. "/events.ndjson"
+    eq(run(root, "--events=" .. path).code, 0, "events: green")
+    local evs = events_of(path)
+    local kinds = {}
+    for _, e in ipairs(evs) do
+      kinds[#kinds + 1] = e.event .. (e.step and (":" .. e.step) or "")
+    end
+    eq(
+      kinds,
+      { "run_start", "step_start:a", "step_end:a", "step_start:b", "step_end:b", "run_done" },
+      "events: the order"
+    )
+    eq(evs[1].steps, { "a", "b" }, "events: run_start names the planned steps")
+    eq(evs[1].v, 1, "events: versioned")
+    eq(evs[3].state, "green", "events: step_end has the state")
+    eq(evs[2].index, 1, "events: step_start has the index")
+    eq(evs[2].total, 2, "events: ... and the total")
+    eq(evs[6].verdict, "green", "events: run_done has the verdict")
+    eq(evs[6].exit, 0, "events: ... and the exit code")
+
+    local red_section = ("{ profiles = { full = { 'a', 'b' } }, steps = { a = { run = { %q, '-l', 'x.lua' } }, b = { run = %s } } }"):format(
+      nvim,
+      nv(echo, "B")
+    )
+    local red_root =
+      project("events-red", red_section, { [echo] = ECHO, ["x.lua"] = "os.exit(1)\n" })
+    eq(run(red_root, "--events=" .. path).code, 1, "events: red")
+    local rk = {}
+    for _, e in ipairs(events_of(path)) do
+      rk[#rk + 1] = e.event
+        .. (e.step and (":" .. e.step) or "")
+        .. (e.state and ("=" .. e.state) or "")
+    end
+    eq(
+      rk,
+      { "run_start", "step_start:a", "step_end:a=red", "step_end:b=skipped", "run_done" },
+      "events: a step that never started has only its step_end, and the file is rewritten for a new run"
+    )
+    local bad = project("events-bad", "{ profiles = { full = { 'nope' } } }")
+    eq(run(bad, "--events=" .. path).code, 2, "events: a configuration error")
+    local be = events_of(path)
+    eq(#be, 2, "events: a run that stops before its first step has run_start and run_done")
+    eq(be[2].verdict, "error", "events: ... with the verdict")
+  end
+
   -- skip_exit: a step that exits with its own "skipped" code is no proof (partial, no sentinel), never red; another
   -- code stays red; a bad value is a configuration error
   do
