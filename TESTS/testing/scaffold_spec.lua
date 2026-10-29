@@ -233,9 +233,16 @@ return function(H)
   local sh = texts["scripts/test.sh"]
   has(sh, "#!/usr/bin/env bash", "test.sh has a shebang")
   has(sh, "set -euo pipefail", "test.sh stops at the first error")
-  has(sh, "exit 1", "test.sh fails with exit code 1")
+  has(sh, "FAIL_CODE=1", "test.sh fails with exit code 1 (3 for the ci verb)")
   has(sh, '"$DRIVER" conformance .', "test.sh has the conformance subcommand")
   has(sh, '"$DRIVER" surface .', "test.sh has the surface subcommand")
+  has(sh, '"$DRIVER" ci ${ci_args[@]+', "test.sh has the ci subcommand")
+  has(
+    sh,
+    "ci_args=(verify --state-dir",
+    "test.sh: ci verify reads the proof from the real state directory"
+  )
+  has(sh, "FAIL_CODE=3", "test.sh: a missing runner is exit 3 for ci")
   has(sh, "nvim is not on PATH", "test.sh names a missing nvim")
   for _, place in ipairs({
     "1. \\$$envname",
@@ -531,6 +538,18 @@ return function(H)
     "the generated setup runs green: " .. tostring(green.stdout) .. tostring(green.stderr)
   )
   has(green.stdout, "load_spec.lua", "and it ran the generated spec")
+
+  -- `scripts/test.sh ci`: the generated project needs no ci section, its pipeline is derived; without the runner the
+  -- ci verb is exit 3 (infrastructure), the plain run stays exit 1
+  local ci_list = run({ bash, "scripts/test.sh", "ci", "list" }, run_proj, deps_env)
+  eq(ci_list.code, 0, "test.sh ci list: exit 0: " .. tostring(ci_list.stderr))
+  has(
+    ci_list.stdout,
+    "derived: stylua",
+    "test.sh ci list: the derived pipeline of the generated project"
+  )
+  local ci_missing = run({ bash, "scripts/test.sh", "ci", "list" }, run_proj, env_path)
+  eq(ci_missing.code, 3, "test.sh ci without the runner: exit 3")
 
   -- the generated spec can fail: break the module and the verdict changes
   vim.fn.writefile({ 'error("module is broken")' }, run_proj .. "/lua/runme/init.lua")

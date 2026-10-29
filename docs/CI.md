@@ -143,7 +143,8 @@ is removed (a folder of the same name there is filled file by file). A suite ste
 `XDG_STATE_HOME` keeps its traces where it put them.
 
 A repository whose specs need more than that (a throwaway `NVIM_APPNAME`, a long `TEMP`) runs `testing ci` through its
-`scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same
+`scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`; the `scripts/test.sh` that `testing init` writes has
+the verb too, with `ci verify`, `ci list` and `ci hook` passed through), so the in-process suite gets the same
 environment as a plain run. Such a wrapper asks for the real `stdpath("state")` before it isolates and passes it
 as `--state-dir=<dir>`: the document and the suite's stamp go there (they would be lost with the scratch
 directory), while the suite's own history stays isolated. A shared cache (`TESTING_CACHE_HOME`) reaches the suite
