@@ -99,13 +99,33 @@ return function(H)
       "derive: ... and the default pattern does not take that file for a spec"
     )
 
-    -- the spelling of the spec folder does not change the pipeline: `tests/` is found on every system
+    -- the spelling of the spec folder does not change the pipeline: `tests/` is found on every system.
+    -- Limit of this case: it can only go red without the fix on a case-SENSITIVE file system (Linux), where
+    -- `TESTS/` and `tests/` are two folders. On Windows and macOS they are one folder, so finding the spec there
+    -- proves nothing about the spelling. What is checked on every system below: discovery lists the spec, and
+    -- exactly once when its case-folding is forced on (the `case_insensitive` seam of `discover`).
     local lower = project("lowercase", { ["tests/x_spec.lua"] = "return 1\n" })
     eq(
       derive.section(lower, {}).profiles.full,
       { "suite" },
       "derive: specs in a lowercase tests/ give the suite on every system"
     )
+    for _, folded in ipairs({ true, false }) do
+      local found = require("testing.discover").discover(lower, { case_insensitive = folded })
+      local count = 0
+      for _, f in ipairs(found.files) do
+        if f.rel:lower() == "tests/x_spec.lua" then
+          count = count + 1
+        end
+      end
+      ok(
+        count >= 1 and (not folded or count == 1),
+        ("derive: discovery lists a lowercase tests/ spec (case_insensitive=%s, %d times)"):format(
+          tostring(folded),
+          count
+        )
+      )
+    end
 
     local not_lua = tmp .. "/not-lua"
     write(not_lua .. "/stylua.toml", "")
@@ -235,5 +255,28 @@ return function(H)
     eq(res.code, 3, "missing tool: exit 3")
     has(res.err, "The step is derived (stylua.toml)", "missing tool: the step is called derived")
     has(res.err, 'skip = { "stylua" }', "missing tool: ... and how to leave it out")
+  end
+
+  -- the example `.testing.lua` of docs/WORKFLOW-CI.md, read from the page itself, in a project with stylua.toml and
+  -- .luacheckrc: `skip = { "luacheck" }` really leaves luacheck out, the own step joins, stylua stays derived
+  do
+    local here = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))
+    local f = assert(io.open(here .. "/../../docs/WORKFLOW-CI.md", "rb"))
+    local page = f:read("*a")
+    f:close()
+    local example = page:match("```lua\n(%-%- %.testing%.lua\n.-)```")
+    ok(example ~= nil, "doc example: the page has a `.testing.lua` example")
+    if example then
+      local root = project("doc-example", FULL)
+      write(root .. "/.testing.lua", example)
+      local res = run(root, "list")
+      eq(res.code, 0, "doc example: lists (" .. res.err .. ")")
+      has(res.out, "derived: stylua (stylua.toml)", "doc example: stylua is still derived")
+      ok(
+        not res.out:find("luacheck", 1, true),
+        "doc example: luacheck is not listed (" .. res.out .. ")"
+      )
+      has(res.out, "docs", "doc example: the repository's own step is listed")
+    end
   end
 end

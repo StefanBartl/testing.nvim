@@ -477,6 +477,33 @@ return function(H)
         ok(in_own, "suite own state: the trace stays in the step's own state directory")
         ok(not in_outer, "suite own state: ... and is not moved into the outer one")
       end
+
+      -- traces that cannot be kept (the real trace folder cannot be created: a regular file is in the way) do not
+      -- take the run down: `move_traces` throws, the pcall turns it into a line in `errors`, the verdict stays green
+      do
+        local blocker = tmp .. "/trace-blocker"
+        write(blocker, "not a directory")
+        local blocked = project(
+          "suite-iso-blocked",
+          "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false } } }",
+          { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_trace_spec.lua"] = TRACE }
+        )
+        local outer_state_before = vim.uv.os_getenv("XDG_STATE_HOME")
+        vim.uv.os_setenv("XDG_STATE_HOME", blocker)
+        local blocked_res = run(blocked)
+        if outer_state_before then
+          vim.uv.os_setenv("XDG_STATE_HOME", outer_state_before)
+        else
+          vim.uv.os_unsetenv("XDG_STATE_HOME")
+        end
+        eq(blocked_res.code, 0, "unkept traces: the run stays green (" .. blocked_res.err .. ")")
+        local step_errors = doc_of(blocked).steps[1].errors
+        has(
+          table.concat(step_errors or {}, "\n"),
+          "the traces could not be kept",
+          "unkept traces: ... and the step says so"
+        )
+      end
     end
 
     local red =
