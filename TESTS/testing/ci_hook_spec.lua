@@ -218,7 +218,9 @@ return function(H)
   end
 
   -- the hook run for real: a proven state passes without a run, an unproven one runs the profile, red blocks
-  if vim.fn.executable("bash") == 1 then
+  -- Git Bash on Windows: the first `bash` on the PATH can be the WSL launcher, which knows no Windows path
+  local bash = require("lib.nvim.cross.bash").find()
+  if bash then
     local env = {
       XDG_STATE_HOME = tmp .. "/xdg-state",
       XDG_DATA_HOME = tmp .. "/xdg-data",
@@ -236,7 +238,7 @@ return function(H)
     eq(run("install", "--root=" .. root).code, 0, "real: installed")
     local hook_path = root .. "/.git/hooks/pre-push"
 
-    local res = sh(root, { "bash", hook_path })
+    local res = sh(root, { bash, hook_path })
     eq(res.code, 0, "real: an unproven state runs the profile, green: exit 0 (" .. res.out .. ")")
     has(res.out, "not proven, running testing ci --profile=fast", "real: ran the profile")
 
@@ -246,7 +248,7 @@ return function(H)
       { nvim, "--headless", "-u", "NONE", "-i", "NONE", "-l", driver, "ci", "--root=" .. root }
     )
     eq(res.code, 0, "real: the full run is green (" .. res.out .. ")")
-    res = sh(root, { "bash", hook_path })
+    res = sh(root, { bash, hook_path })
     eq(res.code, 0, "real: a proven state passes (" .. res.out .. ")")
     lacks(res.out, "not proven", "real: ... without a run")
 
@@ -254,7 +256,7 @@ return function(H)
     write(root .. "/lua/proj/echo.lua", FAILS)
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "break")
-    res = sh(root, { "bash", hook_path })
+    res = sh(root, { bash, hook_path })
     eq(res.code, 1, "real: a red profile blocks the push (" .. res.out .. ")")
     has(res.out, "push blocked", "real: ... and says so")
   end

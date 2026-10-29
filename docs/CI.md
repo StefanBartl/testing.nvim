@@ -97,7 +97,13 @@ run partial (`partial_why = "suite green-partial"`); a stamping step then writes
 the suite is green-partial"), it is not red. Options after `--` that run no suite (`--cache-clear`, `--help`,
 `--list`, ...) are refused with exit `2`.
 
-A repository whose specs need an isolated state and cache directory runs `testing ci` through its
+**The suite never touches your real state.** Whoever starts `testing ci` (a terminal, the hook, the editor, a
+runner), the `suite` step runs with `XDG_STATE_HOME` and `XDG_CACHE_HOME` pointing at a scratch directory that is
+removed afterwards (the step's own `env` wins), so a spec never writes into the real `stdpath("state")` or
+`stdpath("cache")`. The document and the stamp are placed below the real state directory before that
+(`--state-dir`, default `stdpath("state")`).
+
+A repository whose specs need more than that (a throwaway `NVIM_APPNAME`, a long `TEMP`) runs `testing ci` through its
 `scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same
 environment as a plain run. Such a wrapper asks for the real `stdpath("state")` before it isolates and passes it
 as `--state-dir=<dir>`: the document and the suite's stamp go there (they would be lost with the scratch

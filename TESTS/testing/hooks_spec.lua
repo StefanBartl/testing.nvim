@@ -150,7 +150,9 @@ return function(H)
   has(scripts["pre-commit"], "update-index --chmod=+x", "the pre-commit template names it")
 
   -- ---------------------------------------------------------------- they do what the recipe says (needs bash)
-  if vim.fn.executable("bash") ~= 1 then
+  -- Git Bash on Windows: the first `bash` on the PATH can be the WSL launcher, which knows no Windows path
+  local bash = require("lib.nvim.cross.bash").find()
+  if not bash then
     vim.fn.delete(tmp, "rf")
     return
   end
@@ -162,7 +164,7 @@ return function(H)
   )
   for _, name in ipairs({ "_testing.sh", "pre-push", "pre-commit", "claude-stop" }) do
     local syntax = vim
-      .system({ "bash", "-n", root .. "/scripts/hooks/" .. name }, { text = true })
+      .system({ bash, "-n", root .. "/scripts/hooks/" .. name }, { text = true })
       :wait(10000)
     eq(syntax.code, 0, name .. " is valid bash: " .. tostring(syntax.stderr))
   end
@@ -200,7 +202,7 @@ return function(H)
   ---@param stdin? string
   local function hook(name, stdin)
     local res = vim
-      .system({ "bash", root .. "/scripts/hooks/" .. name }, {
+      .system({ bash, root .. "/scripts/hooks/" .. name }, {
         cwd = root,
         text = true,
         stdin = stdin or "",

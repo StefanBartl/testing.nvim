@@ -5,7 +5,8 @@ return function(H)
   local ok = H.ok
   local eq = H.eq
 
-  local bash = vim.fn.exepath("bash")
+  -- Git Bash on Windows: the first `bash` on the PATH can be the WSL launcher, which knows no Windows path
+  local bash = require("lib.nvim.cross.bash").find() or ""
   if bash == "" or vim.fn.executable("nvim") == 0 then
     ok(true, "bash or nvim is not available: nothing to measure here")
     return

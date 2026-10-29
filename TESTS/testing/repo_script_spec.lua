@@ -10,7 +10,8 @@ return function(H)
   local this = vim.fs.normalize(debug.getinfo(1, "S").source:sub(2))
   local repo = vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(this)))
 
-  local bash = vim.fn.exepath("bash")
+  -- Git Bash on Windows: the first `bash` on the PATH can be the WSL launcher, which knows no Windows path
+  local bash = require("lib.nvim.cross.bash").find() or ""
   local script = repo .. "/scripts/test.sh"
   ok(vim.uv.fs_stat(script) ~= nil, "the script exists: " .. script)
   if bash == "" or vim.fn.executable("nvim") == 0 then

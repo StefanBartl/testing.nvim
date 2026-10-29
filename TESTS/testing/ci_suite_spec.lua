@@ -248,6 +248,45 @@ return function(H)
     eq(res.code, 0, "suite: green (" .. res.err .. ")")
     eq(res.last, ci.SENTINEL, "suite: the sentinel")
 
+    -- the suite runs in a throwaway state and cache directory, and the stamp still lands in the real one
+    do
+      local seen = tmp .. "/iso-seen.txt"
+      local SPEC = ("return function(H)\n  local f = assert(io.open(%q, 'wb'))\n  f:write(vim.fn.stdpath('state'), '\\n', vim.fn.stdpath('cache'))\n  f:close()\n  H.ok(true, 'seen')\nend\n"):format(
+        seen
+      )
+      local iso = project("suite-iso", CFG, { ["TESTS/a_spec.lua"] = SPEC })
+      local outer_state, outer_cache = vim.fn.stdpath("state"), vim.fn.stdpath("cache")
+      local iso_res = run(iso)
+      eq(iso_res.code, 0, "suite isolation: green (" .. iso_res.err .. iso_res.out .. ")")
+      local lines = vim.split(read(seen) or "", "\n", { plain = true })
+      ok(
+        lines[1] and lines[1] ~= outer_state,
+        "suite isolation: the spec saw another state directory"
+      )
+      ok(lines[2] and lines[2] ~= outer_cache, "suite isolation: ... and another cache directory")
+      ok(
+        vim.fn.isdirectory(vim.fs.dirname(lines[1] or "")) == 0,
+        "suite isolation: the scratch directory is removed afterwards"
+      )
+      eq(
+        vim.fn.stdpath("state"),
+        outer_state,
+        "suite isolation: the outer state directory is restored"
+      )
+      -- the stamp of a stamping step is written below the real state directory, not the scratch one
+      local stamped = project(
+        "suite-iso-stamp",
+        "{ profiles = { full = { 'suite' } } }",
+        { ["TESTS/a_spec.lua"] = PASS }
+      )
+      local stamp_res = run(stamped)
+      eq(stamp_res.code, 0, "suite isolation: a stamping run is green (" .. stamp_res.err .. ")")
+      ok(
+        vim.uv.fs_stat(require("testing.stamp").path(stamped, { state_dir = state_dir })) ~= nil,
+        "suite isolation: the stamp is written below the real state directory"
+      )
+    end
+
     local red =
       project("suite-red", CFG, { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_spec.lua"] = FAIL })
     res = run(red)

@@ -574,11 +574,22 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     end
   end
   -- the step's own environment, for the duration of the step: every outer value is saved before any is set
+  -- The suite runs in a throwaway state and cache directory, whoever started `testing ci` (a terminal, the hook, the
+  -- editor, CI): the same environment `scripts/test.sh` sets up, so a spec never writes into the user's real
+  -- `stdpath("state")`. The step's own `env` wins.
+  local env, scratch = planned.env, nil ---@type table<string, string>, string|nil
+  if is_suite then
+    scratch = vim.fn.tempname() .. "-ci-scratch"
+    env = vim.tbl_extend("keep", planned.env, {
+      XDG_STATE_HOME = scratch .. "/state",
+      XDG_CACHE_HOME = scratch .. "/cache",
+    })
+  end
   local saved = {}
-  for k in pairs(planned.env) do
+  for k in pairs(env) do
     saved[k] = vim.uv.os_getenv(k) or false
   end
-  for k, v in pairs(planned.env) do
+  for k, v in pairs(env) do
     vim.uv.os_setenv(k, v)
   end
   -- every service of the outer run (state and cache directory, colour, the specs' fakes), only the sinks are ours
@@ -593,6 +604,9 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     else
       vim.uv.os_setenv(k, v)
     end
+  end
+  if scratch then
+    vim.fn.delete(scratch, "rf")
   end
   for _, line in ipairs(last) do
     keep_error(errors, line)
@@ -1007,9 +1021,8 @@ function M.main(argv, sv)
   local function quiet() end
   local say = agent and quiet or out
   local step_sv = agent and vim.tbl_extend("force", sv, { out = quiet, err = quiet }) or sv
-  local stamp_out = args.state_dir
-      and require("testing.stamp").path(root, { state_dir = state_dir })
-    or nil
+  -- asked for now, before the suite step points the state directory at a scratch directory: the stamp must outlive it
+  local stamp_out = require("testing.stamp").path(root, { state_dir = state_dir })
 
   local started = os.time()
   local results, first_red = {}, nil
