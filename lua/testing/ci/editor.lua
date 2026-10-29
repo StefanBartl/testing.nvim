@@ -1066,25 +1066,44 @@ function M.capture(root, args, cb)
   return true
 end
 
----@type table<string, { stamp: integer, list: table|nil, failed_at: integer|nil }>
+---@type table<string, { stamp: string, list: table|nil, failed_at: integer|nil }>
 local list_cache = {}
 ---@type table<string, true>
 local loading = {}
 
----Seconds before a failed `testing ci list` is tried again (until `.testing.lua` changes).
+---Seconds before a failed `testing ci list` is tried again (until what it reads changes).
 M.LIST_RETRY = 30
 
----Profiles and steps of the project (`testing ci list`, cached until `.testing.lua` changes). Never waits: a miss
+-- what `testing ci list` reads: the configuration, the files a derived pipeline comes from, the spec folders
+local LIST_INPUTS =
+  { ".testing.lua", "stylua.toml", ".stylua.toml", ".luacheckrc", "TESTS", "tests", "lua" }
+
+---A stamp of everything the list depends on (the mtimes of `LIST_INPUTS`); nil when there is no project (neither a
+---`.testing.lua` nor a `lua/` folder, the shape a derived pipeline needs).
+---@param root string
+---@return string|nil
+local function list_stamp(root)
+  if not vim.uv.fs_stat(root .. "/.testing.lua") and vim.fn.isdirectory(root .. "/lua") ~= 1 then
+    return nil
+  end
+  local parts = {}
+  for _, rel in ipairs(LIST_INPUTS) do
+    local st = vim.uv.fs_stat(root .. "/" .. rel)
+    parts[#parts + 1] = st and tostring(st.mtime.sec * 1000000000 + st.mtime.nsec) or "-"
+  end
+  return table.concat(parts, ":")
+end
+
+---Profiles and steps of the project (`testing ci list`, cached until what it reads changes). Never waits: a miss
 ---starts the child in the background and returns what is known (the earlier list, or nil), so the next <Tab> has it.
 ---@param root string
 ---@return { default: string, profiles: table<string, string[]>, steps: string[] }|nil
 function M.list(root)
-  local cfg = vim.uv.fs_stat(root .. "/.testing.lua")
-  if not cfg then
+  local stamp = list_stamp(root)
+  if not stamp then
     return nil
   end
   local k = key(root)
-  local stamp = cfg.mtime.sec * 1000000000 + cfg.mtime.nsec
   local cached = list_cache[k]
   if cached and cached.stamp == stamp then
     if cached.list or os.time() - (cached.failed_at or 0) < M.LIST_RETRY then
@@ -1125,7 +1144,7 @@ function M.step_of(line)
 end
 
 ---The steps a run will report, without starting anything: the distinct steps asked for, or those of the profile as
----`testing ci list` gave them while `.testing.lua` is unchanged since; nil when not known.
+---`testing ci list` gave them while what it reads is unchanged since; nil when not known.
 ---@param root string
 ---@param profile? string
 ---@param steps? string[]
@@ -1141,9 +1160,8 @@ function M.step_plan(root, profile, steps)
     end
     return out
   end
-  local cfg = vim.uv.fs_stat(root .. "/.testing.lua")
   local cached = list_cache[key(root)]
-  if not cfg or not cached or cached.stamp ~= cfg.mtime.sec * 1000000000 + cfg.mtime.nsec then
+  if not cached or cached.stamp ~= list_stamp(root) then
     return nil
   end
   local list = cached.list

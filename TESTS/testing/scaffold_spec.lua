@@ -551,6 +551,36 @@ return function(H)
   local ci_missing = run({ bash, "scripts/test.sh", "ci", "list" }, run_proj, env_path)
   eq(ci_missing.code, 3, "test.sh ci without the runner: exit 3")
 
+  -- an nvim that fails when asked for stdpath("state") is infrastructure too: exit 3 and the message, not a silent 1
+  local broken_dir = vim.fn.tempname() .. "-broken-nvim"
+  vim.fn.mkdir(broken_dir, "p")
+  vim.fn.writefile({ "#!/usr/bin/env bash", "exit 1" }, broken_dir .. "/nvim")
+  vim.uv.fs_chmod(broken_dir .. "/nvim", tonumber("755", 8))
+  local broken_env =
+    vim.tbl_extend("force", deps_env, { PATH = broken_dir .. path_sep .. deps_env.PATH })
+  local ci_broken = run({ bash, "scripts/test.sh", "ci", "list" }, run_proj, broken_env)
+  eq(ci_broken.code, 3, "test.sh ci with an nvim that fails: exit 3 (" .. ci_broken.stderr .. ")")
+  has(
+    ci_broken.stderr,
+    "cannot ask nvim for stdpath",
+    "test.sh ci with an nvim that fails: says why"
+  )
+  vim.fn.delete(broken_dir, "rf")
+
+  -- the pipeline's document lands in the developer's real state directory (not the throwaway one, which is removed)
+  local real_state = vim.fn.tempname() .. "-real-state"
+  local ci_run = run(
+    { bash, "scripts/test.sh", "ci", "--step=suite" },
+    run_proj,
+    vim.tbl_extend("force", deps_env, { XDG_STATE_HOME = real_state })
+  )
+  eq(ci_run.code, 0, "test.sh ci --step=suite: green: " .. ci_run.stdout .. ci_run.stderr)
+  ok(
+    #vim.fn.globpath(real_state, "**/ci.json", true, true) > 0,
+    "test.sh ci: the document is below the real state directory"
+  )
+  vim.fn.delete(real_state, "rf")
+
   -- the generated spec can fail: break the module and the verdict changes
   vim.fn.writefile({ 'error("module is broken")' }, run_proj .. "/lua/runme/init.lua")
   local red = run({ bash, "scripts/test.sh" }, run_proj, deps_env)

@@ -82,8 +82,8 @@ the repository has:
 | Step | When | Why |
 | --- | --- | --- |
 | `stylua` | `stylua.toml` or `.stylua.toml` | the project formats with stylua |
-| `luacheck` | `.luacheckrc` | the project lints with luacheck (its own `files`/`exclude_files` decide what is read) |
-| `suite` | a spec file below a spec root (`roots` of `.testing.lua`, default `TESTS`) | the project has specs |
+| `luacheck` | `.luacheckrc` | the project lints with luacheck (its own `include_files`/`exclude_files` decide what is read) |
+| `suite` | discovery finds a spec file (`roots` and `spec_pattern` of `.testing.lua`, default `TESTS`; the same as `testing run` sees) | the project has specs |
 | `conformance` | `conformance.gate = true` | the project made the conformance suite a gate |
 
 Profiles: `fast` (stylua and luacheck, the check before a push) and `full` (all of them), `full` is the default.
@@ -320,7 +320,7 @@ Every line has `v` (`1`), `event` and `ts` (unix seconds).
 | `event` | Fields |
 | --- | --- |
 | `run_start` | `profile`, `root` (directory name, never a path), `steps` (the planned steps in order; empty for a run that stops before its first step) |
-| `step_start` | `step`, `index`, `total`; the suite step also `suite_events`: the file of the suite's own events (file n of m, [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), `<file>.suite.ndjson` unless `--suite-events` names one |
+| `step_start` | `step`, `index`, `total`; the suite step also `suite_events`: the file of the suite's own events (file n of m, [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), `<file>.suite.ndjson` unless `--suite-events` names one; absent for a suite reused from its stamp and when the suite's own `args` or the options after `--` bring an `--events` (nothing is written next to the run's file) |
 | `step_end` | `step`, `index`, `total`, `state` (`green`, `red`, `skipped`, `error`, `infra`), `ms`, `exit` (a process step), `reason`, `findings_total`. A step that never started (skipped for this system, after a red step without `--keep-going`) has a `step_end` and no `step_start` |
 | `run_done` | `verdict`, `exit`, `partial_why`, `deciding`, `first_red`; a run that stopped before its first step: `verdict`, `exit`, `problems` |
 

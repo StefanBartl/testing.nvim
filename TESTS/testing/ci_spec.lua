@@ -426,6 +426,7 @@ return function(H)
     )
     local nr = events_of(path)
     eq(#nr, 2, "events: no directory: run_start and run_done")
+    eq(nr[1].root, "no-such-root", "events: no directory: run_start names the root")
     eq(
       nr[2].verdict,
       "error",
@@ -596,6 +597,20 @@ return function(H)
     local legacy = vim.json.decode(read(ignored .. "/.ci-last.json"))
     eq(legacy.state, "green", "legacy: the old format's state")
     eq(legacy.dirty, false, "legacy: the tree is still clean")
+
+    -- a run in which no step ran (every step is for another system) tested nothing: no green for the old readers
+    local elsewhere = require("testing.platform").is_windows() and "linux" or "windows"
+    local other = project(
+      "legacy-nothing-ran",
+      ("{ profiles = { full = { 'a' } }, steps = { a = { run = { 'x' }, when = { os = { '%s' } } } } }"):format(
+        elsewhere
+      ),
+      { [".gitignore"] = ".ci-last.json\n" }
+    )
+    local old_green = '{"state":"green","note":"an old green"}\n'
+    write(other .. "/.ci-last.json", old_green)
+    eq(run(other).code, 0, "legacy: nothing ran: exit 0")
+    eq(read(other .. "/.ci-last.json"), old_green, "legacy: nothing ran: no new green is written")
   end
 
   -- configuration errors: no section, a bad section

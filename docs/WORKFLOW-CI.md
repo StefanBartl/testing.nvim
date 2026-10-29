@@ -26,7 +26,7 @@ what differs is written down:
 return {
   deps = { "lib.nvim" },
   ci = {
-    skip = { "conformance" },                                -- leave a derived step out
+    skip = { "luacheck" },                                   -- leave a derived step out
     steps = {
       docs = { run = { "scripts/gen_docs.sh", "--check" } }, -- a step of the repository: argv, never a shell line
     },

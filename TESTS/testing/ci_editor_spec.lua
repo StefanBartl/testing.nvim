@@ -890,6 +890,19 @@ return function(H)
     vim.uv.fs_utime(proot .. "/.testing.lua", st.atime.sec, st.mtime.sec + 5)
     eq(editor.step_plan(proot), nil, "plan: a changed .testing.lua makes the cached list stale")
 
+    -- a derived pipeline (no .testing.lua) depends on its files: a new .luacheckrc makes the cached list stale
+    local droot = tmp .. "/planned-derived"
+    vim.fn.mkdir(droot .. "/lua", "p")
+    editor.list(droot)
+    ok(
+      vim.wait(2000, function()
+        return editor.step_plan(droot) ~= nil
+      end),
+      "plan: a project without .testing.lua has a list too"
+    )
+    vim.fn.writefile({ "" }, droot .. "/.luacheckrc")
+    eq(editor.step_plan(droot), nil, "plan: a new .luacheckrc makes the cached list stale")
+
     -- the statusline asks again after a while, and never starts more than the refresh
     local calls = 0
     editor.system = function(argv, opts, cb)

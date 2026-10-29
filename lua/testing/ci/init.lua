@@ -880,9 +880,14 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
   local why = type(doc.partial_why) == "string" and doc.partial_why or ""
   local narrowed = why:find("--step", 1, true) or why:find("suite options", 1, true)
   if legacy_ignored and not narrowed and not doc.head_moved and not doc.tree_changed then
-    if #doc.steps > 0 then
+    -- a step that really ran green: a run in which every step skipped (another system, a skip_exit) tested nothing
+    local tested = false
+    for _, st in ipairs(doc.steps) do
+      tested = tested or st.state == "green"
+    end
+    local green = doc.verdict == "green" or doc.verdict == "green-partial"
+    if #doc.steps > 0 and (tested or not green) then
       -- a red result is always written (a stale green must not stay); a green one says when it was partial
-      local green = doc.verdict == "green" or doc.verdict == "green-partial"
       legacy = {
         state = green and "green" or "red",
         note = green and (doc.partial and ("partial: " .. why) or "")
@@ -958,7 +963,10 @@ function M.main(argv, sv)
     err("testing ci: " .. not_dir)
     -- a UI that reads a fixed events file must not find the last run's green there
     local bad_root_events = require("testing.ci.events").open(args.events, err)
-    bad_root_events.emit("run_start", { profile = args.profile or vim.NIL, steps = {} })
+    bad_root_events.emit(
+      "run_start",
+      { profile = args.profile or vim.NIL, root = vim.fs.basename(root), steps = {} }
+    )
     bad_root_events.emit(
       "run_done",
       { verdict = "error", exit = M.EXIT_USAGE, problems = { not_dir } }
@@ -1189,8 +1197,9 @@ function M.main(argv, sv)
           )
           == "verified"
       -- the suite's own events file is named only when this run writes it: not for a suite reused from its stamp,
-      -- not when the options after -- bring an --events of their own
-      local _, own_events = last_option(args.suite_args, "events")
+      -- not when the step's own args or the options after -- bring an --events of their own (as run_inprocess reads them)
+      local _, own_events =
+        last_option(vim.list_extend(vim.deepcopy(p.argv or {}), args.suite_args), "events")
       events.emit("step_start", {
         step = step.name,
         index = #results + 1,

@@ -297,6 +297,38 @@ return function(H)
         '"event":"run_done"',
         "run events: ... and written"
       )
+      -- a suite whose own args bring an --events writes there: step_start names no file that nobody writes
+      do
+        local own_ev = tmp .. "/own-suite-events.ndjson"
+        local own_root = project(
+          "suite-run-events-own",
+          (
+            "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false,"
+            .. " args = { '--events', %q } } } }"
+          ):format(own_ev),
+          { ["TESTS/a_spec.lua"] = PASS }
+        )
+        eq(run(own_root, "--events=" .. evpath).code, 0, "run events: a suite with its own events")
+        local own_start
+        for line in (read(evpath) or ""):gmatch("[^\n]+") do
+          local e = vim.json.decode(line)
+          if e.event == "step_start" and e.step == "suite" then
+            own_start = e
+          end
+        end
+        ok(own_start ~= nil, "run events: ... has its step_start")
+        eq(own_start and own_start.suite_events, nil, "run events: ... which names no events file")
+        has(
+          read(own_ev) or "",
+          '"event":"run_done"',
+          "run events: ... the suite wrote its own file"
+        )
+        eq(
+          vim.uv.fs_stat(evpath .. ".suite.ndjson"),
+          nil,
+          "run events: ... and none next to the run's"
+        )
+      end
       -- a suite reused from its stamp writes no events of its own: its step_start names no file
       local reuse_root = project(
         "suite-run-events-reuse",
@@ -414,6 +446,37 @@ return function(H)
         "suite isolation: a trace of the suite outlives the scratch directory: " .. trace_path
       )
       ok(old_kept, "suite isolation: ... copied into a run folder that was already there")
+
+      -- a step whose own env names XDG_STATE_HOME keeps its traces in that state directory: they are no scratch's
+      do
+        local own_state = tmp .. "/own-state"
+        local own = project(
+          "suite-iso-own-state",
+          (
+            "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false,"
+            .. " env = { XDG_STATE_HOME = %q } } } }"
+          ):format(own_state),
+          { ["TESTS/a_spec.lua"] = PASS, ["TESTS/b_trace_spec.lua"] = TRACE }
+        )
+        local function trace_in(state_home)
+          vim.uv.os_setenv("XDG_STATE_HOME", state_home)
+          local path = require("testing.run.isolated").trace_base() .. "/fake-run/x.trace.json"
+          vim.uv.os_setenv("XDG_STATE_HOME", tmp .. "/outer-state-own")
+          return path
+        end
+        vim.uv.os_setenv("XDG_STATE_HOME", tmp .. "/outer-state-own")
+        local own_res = run(own)
+        local in_own = vim.uv.fs_stat(trace_in(own_state)) ~= nil
+        local in_outer = vim.uv.fs_stat(trace_in(tmp .. "/outer-state-own")) ~= nil
+        if saved_state then
+          vim.uv.os_setenv("XDG_STATE_HOME", saved_state)
+        else
+          vim.uv.os_unsetenv("XDG_STATE_HOME")
+        end
+        eq(own_res.code, 0, "suite own state: green (" .. own_res.err .. ")")
+        ok(in_own, "suite own state: the trace stays in the step's own state directory")
+        ok(not in_outer, "suite own state: ... and is not moved into the outer one")
+      end
     end
 
     local red =

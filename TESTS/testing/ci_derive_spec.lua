@@ -86,6 +86,27 @@ return function(H)
     local custom = derive.section(roots, { roots = { "spec" } })
     eq(custom.profiles.full, { "suite" }, "derive: ... unless `roots` names their folder")
 
+    -- a spec_pattern is matched against the project-relative path, as `testing run` does
+    local anchored = project("anchored", { ["TESTS/units.lua"] = "return 1\n" })
+    eq(
+      derive.section(anchored, { spec_pattern = { "^TESTS/[%w_]+%.lua$" } }).profiles.full,
+      { "suite" },
+      "derive: a path-anchored spec_pattern finds its specs"
+    )
+    eq(
+      derive.section(anchored, {}),
+      nil,
+      "derive: ... and the default pattern does not take that file for a spec"
+    )
+
+    -- the spelling of the spec folder does not change the pipeline: `tests/` is found on every system
+    local lower = project("lowercase", { ["tests/x_spec.lua"] = "return 1\n" })
+    eq(
+      derive.section(lower, {}).profiles.full,
+      { "suite" },
+      "derive: specs in a lowercase tests/ give the suite on every system"
+    )
+
     local not_lua = tmp .. "/not-lua"
     write(not_lua .. "/stylua.toml", "")
     local none, reason = derive.section(not_lua, {})
