@@ -291,6 +291,35 @@ function M.view_name(root)
   return ("testing-ci://%s-%s"):format(vim.fs.basename(root), vim.fn.sha256(key(root)):sub(1, 6))
 end
 
+---Show a view buffer: when a window already shows it, go there; otherwise open a split below and enter it (the output
+---of a run is what the user asked for, so the cursor goes with it). Nothing in a headless editor.
+---@param buf integer
+function M.show_buffer(buf)
+  if #vim.api.nvim_list_uis() == 0 then
+    return
+  end
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == buf then
+      vim.api.nvim_set_current_win(win)
+      return
+    end
+  end
+  vim.cmd("botright 12split")
+  vim.api.nvim_win_set_buf(0, buf)
+end
+
+---Show the live buffer of a project that is already there (a run in progress or the last one), without clearing it.
+---@param root string
+---@return boolean shown false when the project has no buffer yet
+function M.show_view(root)
+  local buf = vim.fn.bufnr(M.view_name(root))
+  if buf == -1 then
+    return false
+  end
+  M.show_buffer(buf)
+  return true
+end
+
 ---The live buffer of a project: one per root, cleared at the start of a run, shown in a split when it is not visible.
 ---`header(lines)` replaces a block at the top of the buffer (the table of a multi-repository run), `append` adds below.
 ---@param root string
@@ -309,16 +338,7 @@ function M.open_view(root)
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
   vim.bo[buf].modifiable = false
-  local shown = false
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    shown = shown or vim.api.nvim_win_get_buf(win) == buf
-  end
-  if not shown and #vim.api.nvim_list_uis() > 0 then
-    local prev = vim.api.nvim_get_current_win()
-    vim.cmd("botright 12split")
-    vim.api.nvim_win_set_buf(0, buf)
-    vim.api.nvim_set_current_win(prev)
-  end
+  M.show_buffer(buf)
   local header_n = 0
   ---@return boolean
   local function pristine()
@@ -560,7 +580,8 @@ function M.run_repos(o)
   local entry = M.state["*repos*"] or {}
   M.state["*repos*"] = entry
   if entry.running then
-    return false, "a multi-repository run is already going"
+    M.show_view("/repos")
+    return false, "a multi-repository run is already going (showing its output)"
   end
   local view = M.open_view("/repos")
   -- rows by the child's index: two repositories with the same directory name stay two rows
@@ -646,7 +667,8 @@ function M.run(o)
   local entry = M.state[k] or {}
   M.state[k] = entry
   if entry.running then
-    return false, "a pipeline is already running for " .. o.root
+    M.show_view(o.root)
+    return false, "a pipeline is already running for " .. o.root .. " (showing its output)"
   end
   local json = vim.fn.tempname() .. ".testing-ci.json"
   local argv = M.run_argv({

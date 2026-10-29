@@ -183,7 +183,7 @@ A pre-push hook that is not ours is never overwritten or removed (exit `1`). The
 
 The same pipeline, from Neovim, without ever blocking it. `:Testing ci` starts `testing ci --no-agent` in a headless
 child (a step that hangs cannot take the session down), streams its output into the buffer `testing-ci://<repo>` (a
-split opens when it is not visible; one `== <step>` section per step) and, when the child ends, reads back the document
+split opens, with the cursor in it, when it is not visible; a second `:Testing ci` while one runs shows that run instead of starting another; one `== <step>` section per step) and, when the child ends, reads back the document
 `testing-ci/1` it wrote: the verdict is notified, and a red run fills the quickfix list with the findings of the red
 steps (a red step without findings gets a text-only entry with its reason). The list opens only on red. One pipeline
 runs per project at a time. `<profile>` and `--step=` complete from the project: the names come from `testing ci list

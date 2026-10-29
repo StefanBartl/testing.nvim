@@ -273,9 +273,41 @@ return function(H)
     })
     eq(started, true, "run: starts")
     eq(seen.opts.cwd, root, "run: in the project root")
+    local shown_root
+    local real_show = editor.show_view
+    editor.show_view = function(r)
+      shown_root = r
+      return real_show(r)
+    end
     local again, why = editor.run({ root = root })
+    editor.show_view = real_show
     eq(again, false, "run: a second run in the same project is refused")
     has(why, "already running", "run: ... and says why")
+    eq(shown_root, root, "run: ... and shows the output of the run that is going")
+    eq(editor.show_view(root), true, "show_view: the buffer of a project that ran")
+    eq(editor.show_view(root .. "/never-ran"), false, "show_view: a project without a buffer")
+    -- with a UI attached the cursor goes to the output, and a second call goes back to the same window
+    local real_uis = vim.api.nvim_list_uis
+    vim.api.nvim_list_uis = function()
+      return { {} }
+    end
+    local show_buf = vim.fn.bufnr(editor.view_name(root))
+    local first_win = vim.api.nvim_get_current_win()
+    local wins_before = #vim.api.nvim_list_wins()
+    editor.show_buffer(show_buf)
+    local view_win = vim.api.nvim_get_current_win()
+    eq(vim.api.nvim_win_get_buf(view_win), show_buf, "show_buffer: the cursor is in the split")
+    eq(#vim.api.nvim_list_wins(), wins_before + 1, "show_buffer: one split opened")
+    vim.api.nvim_set_current_win(first_win)
+    editor.show_buffer(show_buf)
+    eq(
+      vim.api.nvim_get_current_win(),
+      view_win,
+      "show_buffer: a visible buffer is entered, not split again"
+    )
+    eq(#vim.api.nvim_list_wins(), wins_before + 1, "show_buffer: no second split")
+    vim.api.nvim_list_uis = real_uis
+    vim.api.nvim_win_close(view_win, true)
     ok(
       vim.wait(2000, function()
         local b = vim.fn.bufnr(editor.view_name(root))
