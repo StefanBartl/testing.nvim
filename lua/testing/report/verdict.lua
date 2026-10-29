@@ -33,7 +33,9 @@ M.MAX_CHANGED = 12
 ---@field files_total integer Spec files the discovery found.
 ---@field files_selected integer Spec files that were selected for this run.
 ---@field files_cached integer Selected files whose result came from the cache.
----@field files_unrun? integer Selected files a `--maxfail` stop left unrun.
+---@field files_unrun? integer Selected files a `--maxfail` stop or the `--time-budget` left unrun.
+---@field files_unrun_budget? integer Of `files_unrun`, the ones the `--time-budget` ran out before.
+---@field files_deliberate? integer Selected files `--skip-uncacheable` left out on purpose (they have no cache key).
 ---@field cases_total integer
 ---@field cases_skipped integer
 ---@field selection? string What narrowed the files (`--changed`, `--since <rev>`, `--shard 1/2`, a path), for the reason text.
@@ -45,7 +47,7 @@ M.MAX_CHANGED = 12
 ---@class Testing.Verdict
 ---@field kind Testing.Verdict.Kind
 ---@field exit_code integer
----@field files { total: integer, selected: integer, cached: integer, ran: integer, skipped: integer, unrun: integer }
+---@field files { total: integer, selected: integer, cached: integer, ran: integer, skipped: integer, unrun: integer, budget?: integer, deliberate?: integer }
 ---@field cases { total: integer, skipped: integer, flaky: integer }
 ---@field reasons? string[] Why a run is not `green` (partial; a refused stamp adds its own reason).
 ---@field last_green? { ts: integer, sha?: string }
@@ -69,6 +71,8 @@ end
 function M.build(f)
   local total, selected = int(f.files_total), int(f.files_selected)
   local cached, unrun = int(f.files_cached), int(f.files_unrun)
+  local budget = math.min(int(f.files_unrun_budget), unrun)
+  local deliberate = int(f.files_deliberate)
   if selected > total then
     total = selected
   end
@@ -80,9 +84,11 @@ function M.build(f)
       total = total,
       selected = selected,
       cached = cached,
-      ran = math.max(0, selected - cached - unrun),
+      ran = math.max(0, selected - cached - unrun - deliberate),
       skipped = skipped,
       unrun = unrun,
+      budget = budget > 0 and budget or nil,
+      deliberate = deliberate > 0 and deliberate or nil,
     },
     cases = {
       total = int(f.cases_total),
@@ -103,8 +109,16 @@ function M.build(f)
       f.selection and (" (" .. f.selection .. ")") or ""
     )
   end
-  if unrun > 0 then
-    reasons[#reasons + 1] = ("%d spec file(s) not run (stopped)"):format(unrun)
+  if unrun - budget > 0 then
+    reasons[#reasons + 1] = ("%d spec file(s) not run (stopped)"):format(unrun - budget)
+  end
+  if budget > 0 then
+    reasons[#reasons + 1] = ("%d spec file(s) not run (budget)"):format(budget)
+  end
+  if deliberate > 0 then
+    reasons[#reasons + 1] = ("%d spec file(s) skipped on purpose (--skip-uncacheable)"):format(
+      deliberate
+    )
   end
   if f.case_selection then
     reasons[#reasons + 1] = "a case selection (--filter, --tags, --exclude-tags, --lf) applied"
@@ -200,11 +214,16 @@ end
 ---@param v Testing.Verdict
 ---@return string
 function M.counts(v)
-  return ("%d from cache, %d ran, %d skipped on purpose"):format(
+  local text = ("%d from cache, %d ran, %d skipped on purpose"):format(
     int(v.files and v.files.cached),
     int(v.files and v.files.ran),
-    int(v.files and v.files.skipped)
+    int(v.files and v.files.skipped) + int(v.files and v.files.deliberate)
   )
+  local budget = int(v.files and v.files.budget)
+  if budget > 0 then
+    text = text .. (", %d not run (budget)"):format(budget)
+  end
+  return text
 end
 
 ---UTC time as `2026-10-07 12:00:03Z` (UTC: the line is the same on every machine).

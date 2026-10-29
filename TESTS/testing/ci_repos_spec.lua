@@ -187,7 +187,7 @@ return function(H)
     found = resolve({ "--repos-root=" .. root, "--repos-root=" .. root2, "--repos-include=z,nope" })
     eq(found, { root2 .. "/z", root .. "/nope" }, "resolve: a name in no root is asked for once")
     -- $VAR is expanded before the path is made absolute
-    vim.env.TESTING_CI_REPOS_ROOT = root
+    vim.uv.os_setenv("TESTING_CI_REPOS_ROOT", root)
     found = resolve({ "--repos=$TESTING_CI_REPOS_ROOT/a" })
     eq(found, { root .. "/a" }, "resolve: $VAR in --repos")
     write(tmp .. "/envlist.txt", "$TESTING_CI_REPOS_ROOT/b\n")
@@ -384,6 +384,6 @@ return function(H)
     eq(res.lines[#res.lines], ci.SENTINEL, "real: the sentinel after a green run")
   end
 
-  vim.env.TESTING_CI_REPOS_ROOT = nil
+  vim.uv.os_unsetenv("TESTING_CI_REPOS_ROOT")
   vim.fn.delete(tmp, "rf")
 end

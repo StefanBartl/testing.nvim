@@ -530,6 +530,7 @@ end
 ---@field selector_spec? { filter?: string[], tags?: string[], exclude_tags?: string[] } What the children rebuild their selector from.
 ---@field lf? table<string, table<string, true>>
 ---@field maxfail? integer
+---@field out_of_budget? fun(): boolean `--time-budget`: asked before a file starts, never while one runs.
 ---@field seed? integer
 ---@field timeouts? Testing.Child.Timeouts
 ---@field findings? Testing.Discover.Finding[]
@@ -640,6 +641,8 @@ function M.run(opts)
   local state = { stopped = false, fatal = nil }
   local bad_total = 0
   local files_run, files_unrun, files_unselected = 0, 0, 0
+  -- `--time-budget`: asked before a file's first child starts, never while one runs; a file that began finishes
+  local files_unrun_budget, budget_files, budget_out = 0, {}, false
   local failed_files = {}
 
   -- without a guard layer nothing measures effects, and the cases say so
@@ -1279,6 +1282,16 @@ function M.run(opts)
 
   ---@param slot Testing.Isolated.Slot
   local function run_slot(slot)
+    local rel = slot.entry.rel
+    if not slot.not_first and not budget_out and opts.out_of_budget and opts.out_of_budget() then
+      budget_out = true
+    end
+    if budget_files[rel] or (budget_out and not slot.not_first and not state.stopped) then
+      -- the file never began: it stays unrun (its other case slots too), nothing of it is committed
+      budget_files[rel] = true
+      slot.state = "done"
+      return
+    end
     if opts.on_file_start and not slot.not_first and not state.stopped then
       pcall(opts.on_file_start, slot.entry.rel)
     end
@@ -1474,6 +1487,11 @@ function M.run(opts)
         if not slot.not_first then
           files_unrun = files_unrun + 1
         end
+      elseif budget_files[slot.entry.rel] then
+        if not slot.not_first then
+          files_unrun = files_unrun + 1
+          files_unrun_budget = files_unrun_budget + 1
+        end
       else
         if slot.kind == "inproc" and slot.state ~= "done" then
           run_inproc(slot)
@@ -1569,6 +1587,7 @@ function M.run(opts)
     total = #res.cases,
     files_run = files_run,
     files_unrun = files_unrun,
+    files_unrun_budget = files_unrun_budget,
     files_unselected = files_unselected,
     skipped = skipped,
     stopped = state.stopped,

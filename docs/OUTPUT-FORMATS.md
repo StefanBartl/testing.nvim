@@ -34,6 +34,7 @@ process: `--watch` makes 1, 2, ...). The first run of a process truncates the fi
 | `case` | `file`, `id`, `status` (the Result-IR statuses), `duration_ms`, `cached` (`true`: not executed, from the result cache; cached cases are announced after the run's cache step) |
 | `file_end` | `file`, `cases`, `failed`, `duration_ms`: after the last `case` of the file |
 | `run_done` | always after a `run_start` (an empty one when the run ended before it began); `exit_code`, `verdict` (`green`, `green-partial`, `red`; absent when the run ended before one existed), `summary` (a counter per status; absent likewise), `aborted` (`true` when the editor was quit during the run) |
+| `phase_done` | `testing fast` only, once, when the likely files (phase 1) are done and before the rest is finished: `phase` (`1`), `verdict` (`green`, `green-partial` or `red` **of phase 1 alone**: an interim finding, not the verdict of the run), `specs` (files in phase 1), `from_cache`, `ran`, `failed` (files with a red case). A reader takes the verdict of the run from `run_done`, never from here. Not sent when there is no phase 1. |
 | `watch_change` | `--watch` only, between two runs and only when a run follows (a change that runs nothing is not announced): `files` (at most 20, project-relative), `count`; carries the number of the run it leads to |
 
 The order: `file_start` of a file comes before its cases and `file_end` after them; the `case` lines of one file are

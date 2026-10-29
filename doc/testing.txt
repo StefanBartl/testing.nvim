@@ -166,7 +166,7 @@ finding lib.nvim while the editor works), an info is something not checked.
 8. Command-line runner                                                *testing-cli*
 
 >sh
-    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|stamp|verify] [{root}] [options]
+    nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|fast|list|doctor|budget|conformance|surface|explain|stamp|verify] [{root}] [options]
     nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [{path}] [options]
 <
 Run it from {root}: specs that look at "this repository" read the working
@@ -196,6 +196,12 @@ Selection ~
   --order priority   Run first what failed last time, what the changes touch
                      and reach (nearest first), what has not run for long.
                      Orders only, never filters; excludes --shuffle.
+  --time-budget {t}  Stop starting spec files after {t} (90s, 2m, 1h). A running
+                     file is never cut short. The rest is "not run (budget)":
+                     verdict green-partial (exit 0, never the sentinel), or red.
+  --skip-uncacheable With the cache: leave out files that have no cache key, on
+                     purpose: green-partial, never the sentinel. Refused (exit
+                     2) when CI is set.
   --order slowest-first
                      With --jobs 2 or more and child editors: the longest
                      files (remembered duration) start first. Results stay in

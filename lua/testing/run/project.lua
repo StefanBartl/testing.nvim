@@ -44,6 +44,7 @@ M.EXIT_INFRA = 3
 
 ---@class Testing.Run.Services
 ---@field out fun(s: string) stdout line sink
+---@field budget_clock? fun(): number Seconds on a monotonic clock, for `--time-budget` (a seam for specs; default: `vim.uv.hrtime`).
 ---@field events_out? fun(line: string): boolean|nil Writer of `--events -` (the real stdout); `out` is then the stderr writer
 ---@field err fun(s: string) stderr line sink
 ---@field inproc? table `testing.run.inproc` (seam for specs)
@@ -389,6 +390,7 @@ end
 ---@field selection string|nil What narrowed the files (affected flag).
 ---@field case_selection boolean A case filter, tag selection or `--lf` applied.
 ---@field flaky_cases? integer Cases `--allow-flaky` counted as green after a retry.
+---@field deliberate? integer Files `--skip-uncacheable` left out on purpose.
 ---@field err fun(s: string)
 
 ---The three-valued verdict of the run (`testing.report.verdict`), with the last green run and what changed
@@ -417,6 +419,8 @@ local function run_verdict(o)
     files_selected = o.selected,
     files_cached = report.files_cached or 0,
     files_unrun = report.files_unrun or 0,
+    files_unrun_budget = report.files_unrun_budget or 0,
+    files_deliberate = o.deliberate or 0,
     cases_total = #o.report.result.cases,
     cases_skipped = report.skipped or 0,
     selection = #pieces > 0 and table.concat(pieces, ", ") or nil,
@@ -769,6 +773,12 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     return M.EXIT_OK
   end
 
+  if args.skip_uncacheable and require("testing.run.fast").in_ci(sv.env and sv.env.CI) then
+    -- a run that leaves files out must never stand in for the full run that CI is for (`docs/CACHE.md`)
+    err("testing: --skip-uncacheable is refused when CI is set: CI runs every file")
+    return M.EXIT_USAGE
+  end
+
   -- What each selected file looked like BEFORE it ran: the stored result belongs to that version of the file. A stat
   -- taken afterwards would call a result current that ran against the text from before a save made during the run.
   local stat_before = {}
@@ -878,7 +888,84 @@ function M.execute_run(plan, sv, run_opts, err, ev)
   for _, note in ipairs(prep.notes or {}) do
     err("testing: note: " .. safe_output_line(note))
   end
+  -- `--skip-uncacheable`: the files without a cache key are left out on purpose; the verdict says so (never `green`)
+  local deliberate, dropped = 0, {}
+  if args.skip_uncacheable then
+    if prep.mode == "off" then
+      err("testing: note: --skip-uncacheable: no cache is in use, nothing is left out")
+    else
+      local kept = {}
+      for _, f in ipairs(prep.run_files) do
+        if prep.uncacheable[f.rel] then
+          deliberate = deliberate + 1
+          dropped[f.rel] = true
+        else
+          kept[#kept + 1] = f
+        end
+      end
+      prep.run_files = kept
+    end
+  end
   common.files = prep.run_files
+  -- `--time-budget`: the clock runs from here; asked before a file starts, never while one runs
+  if args.time_budget then
+    local clock = sv.budget_clock or function()
+      return vim.uv.hrtime() / 1e9
+    end
+    local budget_t0 = clock()
+    common.out_of_budget = function()
+      return clock() - budget_t0 >= args.time_budget
+    end
+  end
+  -- `testing fast`: one interim finding when the likely specs (phase 1) are done; the verdict of the run replaces it
+  if args.fast and order_info then
+    local fast_mod = require("testing.run.fast")
+    local in_order = {}
+    for _, f in ipairs(files) do
+      if not dropped[f.rel] then
+        in_order[#in_order + 1] = f.rel
+      end
+    end
+    local early_primary = reporter_plan(args, reporter_name)
+    local phase = fast_mod.tracker({
+      phase1 = fast_mod.phase1(in_order, order_info),
+      hits = prep.hits,
+      emit = function(s)
+        local line = safe(fast_mod.line(s))
+        -- the agent reporter's first stdout line is its verdict, a JSON or JUnit document owns stdout: the
+        -- interim finding goes to stderr there, and to the event stream everywhere
+        if early_primary == "term" then
+          out(line)
+        else
+          err(line)
+        end
+        if ev then
+          ev:emit("phase_done", {
+            phase = 1,
+            verdict = s.kind,
+            specs = s.specs,
+            from_cache = s.cached,
+            ran = s.ran,
+            failed = s.failed,
+          })
+        end
+      end,
+    })
+    local prev_start, prev_case = common.on_file_start, common.on_case
+    common.on_file_start = function(rel)
+      phase:file_start(rel)
+      if prev_start then
+        prev_start(rel)
+      end
+    end
+    common.on_case = function(case)
+      phase:case(case)
+      if prev_case then
+        prev_case(case)
+      end
+    end
+    phase:begin()
+  end
   local ok, report
   if #prep.run_files == 0 then
     ok, report = true, cached_mod.empty_report(plan, seed)
@@ -923,6 +1010,8 @@ function M.execute_run(plan, sv, run_opts, err, ev)
       -- not part of the table above: a nil field does not exist there, so `common.maxfail` would stay. A rerun
       -- that stops at the threshold may never reach the case it is there for (it is then "missing", not flaky)
       again.maxfail = nil
+      -- a rerun is not budgeted either: it exists to settle the red cases of the run
+      again.out_of_budget = nil
       local runner = inproc
       if options_mod.any_isolated(run_opts, list) then
         runner = sv.isolated or require("testing.run.isolated")
@@ -1020,6 +1109,7 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     selection = selection_label,
     case_selection = selector.active or lf_by_file ~= nil,
     flaky_cases = (retry_info and retry_info.allow_flaky) and #retry_info.flaky or 0,
+    deliberate = deliberate,
     err = err,
   })
   res.run.verdict = verdict
@@ -1192,7 +1282,8 @@ function M.execute_run(plan, sv, run_opts, err, ev)
       end
     end
   end
-  if report.stopped and report.files_unrun > 0 and not quiet then
+  local unrun_budget = report.files_unrun_budget or 0
+  if report.stopped and report.files_unrun - unrun_budget > 0 and not quiet then
     -- the failures the stop counted: what is red now plus what a retry made green (`--allow-flaky`)
     local stopped_at = report.failed
       + ((retry_info and retry_info.allow_flaky) and #retry_info.flaky or 0)
@@ -1200,7 +1291,15 @@ function M.execute_run(plan, sv, run_opts, err, ev)
       ("\nstopped after %d failure(s) (--maxfail %d): %d file(s) not run"):format(
         stopped_at,
         args.maxfail or stopped_at,
-        report.files_unrun
+        report.files_unrun - unrun_budget
+      )
+    )
+  end
+  if unrun_budget > 0 and not quiet then
+    out(
+      ("\nbudget: %d file(s) not run (--time-budget %s ran out)"):format(
+        unrun_budget,
+        args.time_budget_text or "?"
       )
     )
   end

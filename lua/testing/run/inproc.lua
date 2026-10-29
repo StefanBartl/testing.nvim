@@ -135,6 +135,7 @@ end
 ---@field selector? Testing.Select.Selector Case selection (`--filter`, `--tags`, ...); default: everything.
 ---@field lf? table<string, table<string, true>> `--lf`: remembered failed ids by file (`select.group_failed`); a file listed here runs only those cases (or all, see `select.lf_ids`).
 ---@field maxfail? integer Stop after this many bad cases (`-x` = 1).
+---@field out_of_budget? fun(): boolean `--time-budget`: asked before a file starts, never while one runs; true = the files not started yet stay unrun.
 ---@field seed? integer Seed of a shuffled run, stored in the IR header.
 ---@field timeouts? { case_ms?: integer, file_ms?: integer } Milliseconds; nil = no limit.
 ---@field findings? Testing.Discover.Finding[] Discovery findings: attached to the case of their file; under `strict` a synthetic failing case.
@@ -158,7 +159,8 @@ end
 ---@field failed_files integer Files with at least one red case.
 ---@field total integer Cases in the IR.
 ---@field files_run integer Files that were run.
----@field files_unrun integer Files not reached because `--maxfail` stopped the run.
+---@field files_unrun integer Files not reached because `--maxfail` stopped the run or the `--time-budget` ran out.
+---@field files_unrun_budget integer Of `files_unrun`, the ones the `--time-budget` left.
 ---@field files_unselected integer Files whose cases the selection removed entirely.
 ---@field skipped integer Cases with status `skip`.
 ---@field stopped boolean `--maxfail` stopped the run.
@@ -334,6 +336,7 @@ local function run_files(opts, holder)
   local bad_total = 0
   local stopped = false
   local files_run, files_unrun, files_unselected = 0, 0, 0
+  local files_unrun_budget, over_budget = 0, false
   local failed_files = {}
 
   -- the guard layer (optional): installed for the whole run, asked once per file
@@ -393,8 +396,14 @@ local function run_files(opts, holder)
 
   for _, entry in ipairs(entries) do
     local rel = entry.rel
+    if not stopped and not over_budget and opts.out_of_budget and opts.out_of_budget() then
+      over_budget = true
+    end
     if stopped then
       files_unrun = files_unrun + 1
+    elseif over_budget then
+      files_unrun = files_unrun + 1
+      files_unrun_budget = files_unrun_budget + 1
     else
       local file_id = select_mod.file_case_id(rel)
       local is_busted = entry.dialect == "busted" and not entry.missing
@@ -652,6 +661,7 @@ local function run_files(opts, holder)
     total = #res.cases,
     files_run = files_run,
     files_unrun = files_unrun,
+    files_unrun_budget = files_unrun_budget,
     files_unselected = files_unselected,
     skipped = skipped,
     stopped = stopped,

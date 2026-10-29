@@ -17,6 +17,9 @@
 #   TESTING_CACHE_HOME=~/.cache/tn scripts/test.sh --cached
 #   scripts/test.sh --changed          only the specs the working tree can reach (a partial run)
 #
+#   scripts/test.sh fast [options]     `testing fast`: --cached --order priority, the likely specs first with an
+#                                      interim finding after them; the verdict of the whole run comes last
+#                                      (docs/CLI.md); `--time-budget 2m` stops starting files after that long
 #   scripts/test.sh conformance        the conformance suite K1..K15 (docs/CONFORMANCE.md) in the same isolated
 #                                      environment; extra options go to `testing conformance .`; exit 1 when the
 #                                      repo is gated (`conformance.gate = true`, or `--gate`) and a check failed
@@ -87,6 +90,11 @@ export XDG_CACHE_HOME="$scratch/cache"
 if [ "${1:-}" = "conformance" ]; then
   shift
   nvim -n -i NONE --headless -u NONE -l scripts/testing.lua conformance . "$@"
+  exit $?
+fi
+if [ "${1:-}" = "fast" ]; then
+  shift
+  nvim -n -i NONE --headless -u NONE -l scripts/testing.lua fast . ${cache_args[@]+"${cache_args[@]}"} "$@"
   exit $?
 fi
 if [ "${1:-}" = "ci" ]; then

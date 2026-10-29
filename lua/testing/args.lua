@@ -58,6 +58,10 @@ M.AGENT_BUDGET_MIN = 200
 ---@field agent_budget? integer `--agent-budget <n>`: character budget of the `agent` reporter
 ---@field format? "text"|"jsonl" `--format text|jsonl`: shape of the `agent` reporter (default text)
 ---@field order? "priority"|"slowest-first" `--order priority`: what failed last and what the changes reach runs first; `--order slowest-first`: the longest files start first (never a filter)
+---@field fast boolean `testing fast`: `--cached --order priority` with an interim finding after the likely specs
+---@field time_budget_text? string `--time-budget <duration>` as typed
+---@field time_budget? number `--time-budget` in seconds
+---@field skip_uncacheable boolean `--skip-uncacheable`: leave the spec files without a cache key out on purpose
 ---@field filter string[] `--filter <text>`: literal substring of the case name (SEC-30), repeatable
 ---@field file string[] `--file <text>`/`--only <text>`: substring of the spec FILE NAME, repeatable
 ---@field tags string[] `--tags a,b`
@@ -243,6 +247,28 @@ local OPTIONS = {
       end
       return ("--order must be 'priority' or 'slowest-first', got '%s'"):format(v)
     end,
+  },
+  {
+    name = "time_budget",
+    long = "time-budget",
+    kind = "value",
+    field = "time_budget_text",
+    arg = "<duration>",
+    help = "stop starting spec files after this long (90s, 2m, 1h); a running file is never cut short, the rest is `green-partial` (not run, budget), never the sentinel",
+    check = function(v)
+      local _, problem = require("testing.run.fast").parse_duration(v)
+      if problem then
+        return "--time-budget: " .. problem
+      end
+      return nil
+    end,
+  },
+  {
+    name = "skip_uncacheable",
+    long = "skip-uncacheable",
+    kind = "flag",
+    field = "skip_uncacheable",
+    help = "with the cache: leave out the spec files that have no cache key (clock, process, ...) on purpose: `green-partial`, never the sentinel; refused when CI is set",
   },
   {
     name = "filter",
@@ -899,6 +925,7 @@ function M.usage()
     "       nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [--json|--markdown] [--check] [--fleet-root=<dir>]",
     "",
     "  run      run the spec files of <root> (default)",
+    "  fast     run with --cached --order priority: the likely specs first, an interim finding after them, the verdict of the whole run last",
     "  list     list what would run (= run --list)",
     "  doctor   print the resolved configuration and the dependency report",
     "  budget   measure the performance budgets and compare them with the baseline (exit 1 when one is exceeded)",
@@ -961,6 +988,8 @@ local function new_args()
     cache_refresh = false,
     changed = false,
     allow_flaky = false,
+    fast = false,
+    skip_uncacheable = false,
     timings = true,
     given = {},
   }
@@ -1062,7 +1091,11 @@ function M.parse(argv)
   local i, n = 1, #argv
   local positionals = {}
 
-  if n >= 1 then
+  if n >= 1 and argv[1] == "fast" then
+    -- `testing fast` is a run with the cache and the priority order, and an interim finding after the likely specs
+    args.fast = true
+    i = 2
+  elseif n >= 1 then
     for _, list in ipairs({ M.SUBCOMMANDS, M.RESERVED_COMMANDS }) do
       for _, name in ipairs(list) do
         if argv[1] == name then
@@ -1123,6 +1156,18 @@ function M.parse(argv)
   end
   args.paths = positionals
 
+  if args.fast then
+    if args.shuffle then
+      return nil, "fast orders by priority; --shuffle excludes it"
+    end
+    args.order = args.order or "priority"
+    if not args.no_cache and not args.cache_refresh then
+      args.cache = true
+    end
+  end
+  if args.time_budget_text ~= nil then
+    args.time_budget = require("testing.run.fast").parse_duration(args.time_budget_text)
+  end
   if args.lf and args.ff then
     return nil, "--lf and --ff exclude each other"
   end
@@ -1170,6 +1215,8 @@ M.REPEAT_DROP = {
   ff = true,
   list = true,
   maxfail = true,
+  time_budget = true,
+  skip_uncacheable = true,
   shuffle = true,
   seed = true,
   durations = true,

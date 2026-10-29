@@ -25,8 +25,10 @@ Rules behind the numbers:
   `--lf`), `--maxfail` and a run that holds skipped cases print a distinct last line instead of the
   sentinel a script might read as "the whole suite is green".
 * **The verdict is a reading of the code, never a fifth code.** Exit `0` is `green` (the sentinel) or
-  `green-partial` (a selection, a case filter, a skip, a `--maxfail` stop, a case `--allow-flaky` accepted: no
-  sentinel, the reasons are named); exit `1` is `red`.
+  `green-partial` (a selection, a case filter, a skip, a `--maxfail` stop, a `--time-budget` that ran out, files
+  left out by `--skip-uncacheable`, a case `--allow-flaky` accepted: no sentinel, the reasons are named); exit `1`
+  is `red`. The interim finding of `testing fast` is neither: it never sets an exit code and never carries the
+  sentinel.
   Every reporter prints that distinction ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-verdict)), so a caller that
   needs "everything was looked at" reads the verdict or the sentinel, not the exit code alone.
 * **The runner never raises.** Anything unexpected is exit `3` with a message on stderr

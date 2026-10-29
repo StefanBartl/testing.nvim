@@ -1,7 +1,7 @@
 # Command line
 
 ```sh
-nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|list|doctor|budget|conformance|surface|explain|stamp|verify|init] [<root>] [options]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|fast|list|doctor|budget|conformance|surface|explain|stamp|verify|init] [<root>] [options]
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [options]
 ```
 
@@ -22,6 +22,7 @@ scripts/test.sh --file config      # only spec files whose name contains "config
 | Subcommand | Does |
 | --- | --- |
 | `run` (default) | Discover and run the specs of `<root>`. |
+| `fast` | A run with `--cached --order priority` (`--no-cache` still wins) and an **interim finding**: the files the priority order has a signal for (failed last time, changed, near a changed file) are phase 1, the rest is phase 2 of the same run. When phase 1 is done one line `fast: red\|green\|green-partial for the n likely spec(s) (a from cache, b ran[, c failed]) -- not final, the run goes on` is printed (stdout with the `term` reporter; stderr with `agent`, `json`, `junit`, `github`, because their stdout has a contract of its own) and written to the event stream as `phase_done`. A red file in phase 1 gives the line at once and the run goes on (with `-x` it stops). The verdict of the **whole** run replaces the interim finding; only that one decides the exit code and carries the sentinel. Without a signal (no history, no change) there is no phase 1 and no interim line. Excludes `--shuffle`. |
 | `list` | List what would run, run nothing (same as `run --list`). |
 | `doctor` | Print the resolved configuration and the dependency report. Evaluates `.testing.lua`. |
 | `migrate` | Plan (`dry-run`, the default) or write (`apply`) the move of a plugin repository from plenary, busted or a hand-written runner to testing.nvim, specs unchanged. It has its own arguments and exit codes: [MIGRATING.md](MIGRATING.md). |
@@ -70,6 +71,8 @@ An option that is accepted by the parser but not implemented is **refused** with
 | Option | Meaning |
 | --- | --- |
 | `-x`, `--maxfail <n>` | Stop after the first / the `<n>`th failure. Cases that did not run are not in the report, and the run says so. |
+| `--time-budget <duration>` | Stop **starting** spec files after this long (`90s`, `2m`, `1h`, `1500ms`; a bare number is seconds). The clock runs from the start of the run and is read between files, never while one runs: a file that began finishes (a cut-off file would be a false green). The files not started are `not run (budget)`; the verdict is `green-partial` (exit `0`, reason named, **never the sentinel**), or `red` when a file that ran was red. Also with `--isolated` and `--jobs` (children already started finish). A rerun for `--retry-failed` is not budgeted. |
+| `--skip-uncacheable` | With the cache: leave out on purpose the spec files that have no cache key (they read the clock, a process or an environment variable that is not part of the key). They are counted as `skipped on purpose`, the verdict is `green-partial` (reason `skipped on purpose (--skip-uncacheable)`, never the sentinel). Without the option such files run every time. **Refused with exit `2` when `CI` is set** (not empty, not `false`/`0`): CI runs every file. Without a cache in use nothing is left out and a note says so. |
 | `--shuffle`, `--seed <n>` | Random order; the seed is printed so a failure can be reproduced. |
 | `--order priority` | The files most likely to be red run first: what failed last time, what the working tree changed, the specs that `require` a changed module (nearest first), what has not run for 7 days or never, then the rest; inside a stage the file that took the least time first. It **orders and never filters**: the set of files is the one the other options selected, and the Result-IR stays in discovery order. Without history, git or a graph the discovery order is kept and a note says so. Excludes `--shuffle` (exit `2`); `--ff` is the special case of its first stage. `--list` shows `order <rank>  <file>  (<reason>)` before the cases of each file. |
 | `--order slowest-first` | With `--jobs` of 2 or more and child editors: the children of the longest files (by their remembered duration) start first. Only the start changes, the results are merged in file order; see [Worker pool](#worker-pool). |
@@ -114,7 +117,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--agent-budget <n>`, `--format <text\|jsonl>` | Only with the `agent` reporter (otherwise exit `2`): the character budget of the failure part (default 4000, at least 200; what does not fit is counted in a `more:` line) and the shape (`text`, or `jsonl`: one JSON object per line). |
 | `--json <file>` | Write the Result-IR (`schema_version = 1`) and validate it again. |
 | `--junit <file>` | Write a JUnit XML report. |
-| `--events <file\|->` | Write the events of the run while it goes (NDJSON: `run_start` with the plan, `file_start`, `case`, `file_end`, `run_done`; with `--watch` also `watch_change`), for a supervisor that wants to show a run live. `-` is stdout (the reporter then prints to stderr). See [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream). |
+| `--events <file\|->` | Write the events of the run while it goes (NDJSON: `run_start` with the plan, `file_start`, `case`, `file_end`, `run_done`; with `testing fast` also `phase_done`; with `--watch` also `watch_change`), for a supervisor that wants to show a run live. `-` is stdout (the reporter then prints to stderr). See [OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream). |
 | `--github` | Emit GitHub Actions annotations and the step summary. |
 | `--durations <n>` | Name the `<n>` slowest cases (`0` = all). |
 | `--profile` | Where the time went: phases, slowest files and cases, histogram, child start cost, pool use. Text on **stderr** (so the sentinel stays the last line of stdout) and `run.profile` in the `--json` IR. See [Profile](#profile). |
