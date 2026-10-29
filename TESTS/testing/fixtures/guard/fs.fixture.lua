@@ -174,6 +174,40 @@ B.case("red_snapshot", {
   end,
 })
 
+---Like `only_fs`, with the process guard recording what the spec starts (it never fails the case here).
+local function fs_and_processes(extra)
+  local cfg = only_fs(extra)
+  cfg.guards.process_net = "warn"
+  return cfg
+end
+
+-- a change the wrappers did not see, in a spec that started no process: saved from outside while it ran
+B.case("warn_snapshot_from_outside", {
+  cfg = fs_and_processes({ snapshot = true, watch = { sb.outside .. "/watched" } }),
+  heavy = true,
+  setup = function()
+    raw_mkdir(sb.outside .. "/watched", "p")
+    raw_write(sb.outside .. "/watched/old.txt", "1")
+  end,
+  body = function()
+    raw_write(sb.outside .. "/watched/old.txt", "changed by an editor, longer than before")
+  end,
+})
+
+-- the same change in a spec that started a process: it could have written, so it stays the spec's finding
+B.case("red_snapshot_after_a_process", {
+  cfg = fs_and_processes({ snapshot = true, watch = { sb.outside .. "/watched" } }),
+  heavy = true,
+  setup = function()
+    raw_mkdir(sb.outside .. "/watched", "p")
+    raw_write(sb.outside .. "/watched/old.txt", "1")
+  end,
+  body = function()
+    vim.fn.system({ vim.v.progpath, "--version" })
+    raw_write(sb.outside .. "/watched/old.txt", "changed by something, longer than before")
+  end,
+})
+
 B.case("green_tmp", {
   cfg = only_fs(),
   body = function()

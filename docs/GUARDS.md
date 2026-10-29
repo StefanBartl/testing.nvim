@@ -142,6 +142,7 @@ grep.
 | --- | --- | --- |
 | `fs.write_outside` | fs | A wrapped write entry point wrote outside the allowed roots. |
 | `fs.changed_outside` | fs | The tree snapshot saw a created / modified / deleted file the wrappers did not name. |
+| `fs.changed_during_run` | fs | Like `fs.changed_outside`, but the spec started no process (the process guard records that) and the wrappers saw no write of its own: the change was saved from outside while the spec ran (an editor, a formatter, a checkout). A **warning**, never red, and its text says `run again`; the cache and the stamp refuse the run anyway (an input changed while it went). With the process guard `off` this cannot be known and every change stays `fs.changed_outside`. |
 | `state.autocmd` | state | `spec X leaves autocmd BufEnter in group MyGroup (pattern *.lua)` |
 | `state.usercmd` | state | A user command (global or buffer-local) that was not there before. |
 | `state.keymap` | state | A global or buffer-local map added, replaced or removed. |

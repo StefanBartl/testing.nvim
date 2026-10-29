@@ -563,6 +563,13 @@ function G:check(snap, ctx)
     table.sort(changes, function(a, b)
       return a[1] < b[1]
     end)
+    -- A spec that started no process and whose writes the wrappers did not see cannot have written the file: it was
+    -- saved from outside while the spec ran (an editor, a formatter, a checkout). Only known when the process guard
+    -- records what a spec starts.
+    local pn = h.cfg and h.cfg.guards and h.cfg.guards.process_net
+    local spawned_known = pn ~= nil and pn.mode ~= "off"
+    local spawned = spawned_known and #h.case_ledger:entries("spawned") > 0
+    local from_outside = spawned_known and not spawned
     local shown = 0
     for _, c in ipairs(changes) do
       local k = fold(root .. "/" .. c[1])
@@ -571,12 +578,30 @@ function G:check(snap, ctx)
         if shown <= 10 then
           local full = root .. "/" .. c[1]
           h:log("fs_outside_tmp", ("%s %s"):format(c[2], full))
-          h:finding(
-            "fs",
-            "fs.changed_outside",
-            ("%s %s %s (seen by the tree snapshot)"):format(label, c[2], full),
-            { mode = self.cfg.mode }
-          )
+          if from_outside then
+            -- not the spec's doing: a warning, never red; the run cannot be proof of this tree (the stamp sees it too)
+            h:finding(
+              "fs",
+              "fs.changed_during_run",
+              ("%s %s %s while the spec ran; it started no process and wrote nothing itself, so this was probably saved from outside: run again"):format(
+                label,
+                c[2],
+                full
+              ),
+              { mode = "warn" }
+            )
+          else
+            h:finding(
+              "fs",
+              "fs.changed_outside",
+              ("%s %s %s (seen by the tree snapshot; if files were saved while the run was going, that is the cause: run again)"):format(
+                label,
+                c[2],
+                full
+              ),
+              { mode = self.cfg.mode }
+            )
+          end
         end
       end
     end

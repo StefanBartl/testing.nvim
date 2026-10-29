@@ -144,6 +144,25 @@ return function(H)
     "snapshot: a path the wrappers already named is not reported twice"
   )
 
+  -- a change in a spec that started no process is not the spec's: a warning that says "from outside", never red
+  c = r.warn_snapshot_from_outside
+  local outside = S.find(c, "fs.changed_during_run", { "modified", "old.txt", "from outside" })
+  ok(
+    outside ~= nil,
+    "no process started: reported as saved from outside: " .. vim.inspect(c.findings)
+  )
+  eq(outside and outside.severity, "warn", "... as a warning")
+  eq(#S.of(c, "fs.changed_outside"), 0, "... and not as a change of the spec")
+  -- the same change after the spec started a process stays its finding, with the hint
+  c = r.red_snapshot_after_a_process
+  local spawned = S.find(c, "fs.changed_outside", { "modified", "old.txt", "run again" })
+  ok(
+    spawned ~= nil,
+    "a process was started: the spec's finding, with the hint: " .. vim.inspect(c.findings)
+  )
+  eq(spawned and spawned.severity, "error", "... still an error")
+  eq(#S.of(c, "fs.changed_during_run"), 0, "... not a warning")
+
   -- ---------------------------------------------------------------- GREEN
   for _, name in ipairs({
     "green_tmp",
