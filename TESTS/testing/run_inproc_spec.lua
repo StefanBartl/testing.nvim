@@ -506,6 +506,44 @@ return function(H)
   eq(report.result.summary.timeout, 1, "and counted in the IR")
   eq(timeout.depth(), outer_depth, "the driver released its guard")
 
+  -- a run that ends with an error must not leave a guard behind: its deadline is persistent and would raise in
+  -- whatever code runs next ("file exceeded 300 ms" in the merge of the cache, an exit 3 with a spec's name)
+  do
+    local leak_root = new_root("leak")
+    write(leak_root .. "/TESTS/a_spec.lua", 'return function(H)\n  H.eq(1, 1, "a")\nend\n')
+    local disc_l = discover.discover(leak_root, { scan_lua_dir = false })
+    local leaked_guard
+    local failed, why = pcall(inproc.run, {
+      root = leak_root,
+      files = discover.order(disc_l),
+      soft = {
+        enter = function()
+          leaked_guard = timeout.start({ label = "leaky_spec.lua", file_ms = 300 })
+          return {}
+        end,
+        leave = function()
+          error("the runner broke after the file", 0)
+        end,
+      },
+    })
+    eq(failed, false, "release: the run's own error is still raised")
+    has(why, "the runner broke after the file", "release: ... as it was")
+    eq(timeout.depth(), outer_depth, "release: the guard a broken run left behind is stopped")
+    ok(leaked_guard and leaked_guard.stopped, "release: ... and marked stopped")
+    -- and a run that ends well but left one says so
+    local released = timeout.release_above(outer_depth)
+    eq(released, {}, "release_above: nothing to release when the depth is the old one")
+    local g1 = timeout.start({ label = "one.lua", file_ms = 60000 })
+    local g2 = timeout.start({ label = "two.lua", file_ms = 60000 })
+    eq(
+      timeout.release_above(outer_depth),
+      { "two.lua", "one.lua" },
+      "release_above: newest first, labels returned"
+    )
+    ok(g1.stopped and g2.stopped, "release_above: both stopped")
+    eq(timeout.depth(), outer_depth, "release_above: depth restored")
+  end
+
   -- a spec that swallows the timeout error is a timeout nevertheless
   write(
     T .. "a_hang_spec.lua",

@@ -688,12 +688,19 @@ end
 ---@return Testing.Inproc.Report
 function M.run(opts)
   local holder = {}
+  local depth = timeout.depth()
   local ok, report = pcall(run_files, opts, holder)
   if holder.gsess then
     pcall(holder.gsess.uninstall, holder.gsess) -- idempotent: the normal path did it already
   end
+  -- a guard that outlives the run would raise its (persistent) deadline in code that has nothing to do with the spec
+  local leaked = timeout.release_above(depth)
   if not ok then
     error(report, 0)
+  end
+  if #leaked > 0 then
+    report.notes[#report.notes + 1] = "a timeout guard outlived the run and was released: "
+      .. table.concat(leaked, ", ")
   end
   return report
 end

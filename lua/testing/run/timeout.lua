@@ -266,6 +266,26 @@ function Guard:stop()
   return self.fired_file
 end
 
+---Stop every guard above `depth` (newest first) and return their labels. A run that ends with an error leaves the
+---guard of the file it was in behind otherwise: its deadline is persistent, so it would raise "file exceeded N ms"
+---in whatever code runs next, in a place that has nothing to do with the spec (the merge of the cache, the report).
+---@param depth integer What `M.depth()` was before the run.
+---@return string[] labels
+function M.release_above(depth)
+  local labels = {}
+  while #active > depth do
+    local g = active[#active]
+    labels[#labels + 1] = g.label
+    if not pcall(g.stop, g) and active[#active] == g then
+      table.remove(active)
+    end
+  end
+  if #active == 0 then
+    uninstall()
+  end
+  return labels
+end
+
 ---Number of active guards (specs and the cleanup of a crashed run).
 ---@return integer
 function M.depth()
