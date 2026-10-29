@@ -115,6 +115,7 @@ function M.step(name, preset, own)
     timeout_ms = own.timeout_ms,
     os = own.os,
     stamp = false,
+    skip_exit = own.skip_exit,
     efm = preset and preset.efm or nil,
     version_argv = preset and preset.version_argv or nil,
   }

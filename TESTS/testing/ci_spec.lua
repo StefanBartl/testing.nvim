@@ -357,6 +357,36 @@ return function(H)
     lacks(res.out, "first|", "missing: nothing ran, not even the steps before")
   end
 
+  -- skip_exit: a step that exits with its own "skipped" code is no proof (partial, no sentinel), never red; another
+  -- code stays red; a bad value is a configuration error
+  do
+    local skipper = "lua/proj/skipper.lua"
+    local SKIPPER = "io.stdout:write('no PUC Lua here\\n')\nos.exit(tonumber(_G.arg[1]))\n"
+    local function section(code)
+      return ("{ profiles = { full = { 's' } }, steps = { s = { run = %s, skip_exit = 77 } } }"):format(
+        nv(skipper, tostring(code))
+      )
+    end
+    local root = project("skip-exit", section(77), { [skipper] = SKIPPER })
+    local res = run(root)
+    eq(res.code, 0, "skip_exit: exit 0 (" .. res.err .. ")")
+    lacks(res.out, ci.SENTINEL, "skip_exit: no sentinel")
+    local sdoc = doc_of(root)
+    eq(sdoc.partial, true, "skip_exit: the run is partial")
+    has(tostring(sdoc.partial_why), "s skipped itself", "skip_exit: said why")
+    eq(sdoc.steps[1].state, "skipped", "skip_exit: the step is skipped")
+    has(tostring(sdoc.steps[1].reason), "no PUC Lua here", "skip_exit: with the step's last line")
+    local red = project("skip-exit-red", section(5), { [skipper] = SKIPPER })
+    eq(run(red).code, 1, "skip_exit: another exit code is red")
+    local bad = project(
+      "skip-exit-bad",
+      "{ profiles = { full = { 's' } }, steps = { s = { run = { 'x' }, skip_exit = 0 } } }"
+    )
+    local bad_res = run(bad)
+    eq(bad_res.code, 2, "skip_exit: 0 is a configuration error")
+    has(bad_res.err, "skip_exit", "skip_exit: the key is named")
+  end
+
   -- --step: a partial run, no sentinel; an unknown step and profile are usage errors
   do
     local root = project(

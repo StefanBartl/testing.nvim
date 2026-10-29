@@ -491,6 +491,16 @@ local function run_process(planned, root, sv)
     result.state, result.reason = "red", ("timed out after %d ms"):format(step.timeout_ms)
   elseif r.code == 0 then
     result.state = "green"
+  elseif step.skip_exit and r.code == step.skip_exit then
+    -- the step says it could not check here (a tool it needs is missing): no proof, never red; its last line says why
+    local why
+    for i = #last, 1, -1 do
+      if last[i]:match("%S") then
+        why = vim.trim(last[i])
+        break
+      end
+    end
+    result.state, result.reason = "skipped", "skipped by the step" .. (why and (": " .. why) or "")
   else
     result.state = "red"
   end
@@ -849,17 +859,31 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
       notes[#notes + 1] = ("cannot write %s: %s"):format(json_path, tostring(err))
     end
   end
-  -- transitional: the old `.ci-last.json` of `scripts/ci.sh`, only where git ignores it (never dirty the tree),
-  -- and only for a complete run on the commit that was tested
-  if complete and legacy_ignored then
-    local legacy = vim.json.encode({
+  -- transitional: the old `.ci-last.json` of `scripts/ci.sh`, only where git ignores it (never dirty the tree).
+  -- Written for every run the old script would have recorded: the whole pipeline (also when its only gap is a suite
+  -- with a skipped case, which the old script called green), and a run that could not start for a missing tool
+  -- (the old script: red, "<tool> missing"). Not for a narrowed run (`--step`, suite options) or a moving tree.
+  local legacy
+  if legacy_ignored and not doc.head_moved and not doc.tree_changed then
+    if #doc.steps > 0 and (not doc.partial or doc.partial_why == "suite green-partial") then
+      local green = doc.verdict == "green" or doc.verdict == "green-partial"
+      legacy = {
+        state = green and "green" or "red",
+        note = green and (doc.partial and "partial: suite green-partial" or "")
+          or tostring(doc.first_red ~= vim.NIL and doc.first_red or doc.verdict),
+      }
+    elseif #doc.steps == 0 and doc.verdict == "infra" then
+      legacy = { state = "red", note = tostring((doc.problems or {})[1] or "infra") }
+    end
+  end
+  if legacy then
+    legacy = vim.json.encode({
       repo = doc.repo,
       commit = type(doc.commit) == "string" and doc.commit or "unknown",
       dirty = doc.dirty == true,
       time = doc.time,
-      state = doc.verdict == "green" and "green" or "red",
-      note = doc.verdict == "green" and ""
-        or tostring(doc.first_red ~= vim.NIL and doc.first_red or doc.verdict),
+      state = legacy.state,
+      note = legacy.note,
     })
     local ok, err = atomic(root .. "/.ci-last.json", legacy .. "\n", {})
     if not ok then
@@ -951,7 +975,17 @@ function M.main(argv, sv)
       time = os.date("!%Y-%m-%dT%H:%M:%SZ"),
       steps = {},
     }
-    for _, note in ipairs(write_doc(doc, root, args.json, state_dir, false)) do
+    -- the old script recorded a missing tool as red: so does the transitional file, where git ignores it
+    local legacy_ignored = false
+    if code == M.EXIT_INFRA then
+      local ok_git, res = pcall(function()
+        return vim
+          .system({ "git", "check-ignore", "-q", ".ci-last.json" }, { cwd = root })
+          :wait(5000)
+      end)
+      legacy_ignored = ok_git and res ~= nil and res.code == 0
+    end
+    for _, note in ipairs(write_doc(doc, root, args.json, state_dir, legacy_ignored)) do
       err("testing ci: " .. note)
     end
     if args.junit then
@@ -1142,6 +1176,9 @@ function M.main(argv, sv)
         end
       else
         r = run_process(p, root, step_sv)
+        if r.state == "skipped" then
+          partial_why[#partial_why + 1] = step.name .. " skipped itself"
+        end
       end
       r.ms = math.floor((vim.uv.hrtime() - t0) / 1e6)
       say(
@@ -1152,7 +1189,7 @@ function M.main(argv, sv)
           r.reason and (", " .. clean(r.reason)) or ""
         )
       )
-      if r.state ~= "green" then
+      if r.state ~= "green" and r.state ~= "skipped" then
         first_red = first_red or step.name
         if not args.keep_going then
           stop = true

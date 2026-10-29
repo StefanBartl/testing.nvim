@@ -53,6 +53,7 @@ return {
 | `timeout` | ms, `"30s"`, `"2m"`, `"1h"` | Deadline of a process step (default 10 minutes). At the deadline the whole process tree is killed and the step is red. An in-process preset takes none (an error): it cannot be killed, the suite has its own `timeouts`. |
 | `when` | `{ os = { "windows", "linux", "macos" } }` | Only on these systems; elsewhere the step is `skipped` and the run stays complete. |
 | `stamp` | boolean | `suite` only: write the green stamp (`testing stamp`, default `true`) or not. |
+| `skip_exit` | integer 1..255 | Process steps only: the exit code with which the step says it **skipped itself** (it could not check here, e.g. a tool it needs is missing). The step is then `skipped` with its last output line as the reason, the run is **partial** (`<step> skipped itself`: no proof, no sentinel) and the exit stays `0`. Any other non-zero exit is red. |
 
 Placeholders, in `run`, `args` and `env` values: `${root}` (the project root) and `${deps.<name>}` (a dependency
 found like `deps` of `.testing.lua`: `$<NAME>_DIR`, `.deps/<name>`, a sibling checkout, ...). Nothing else.

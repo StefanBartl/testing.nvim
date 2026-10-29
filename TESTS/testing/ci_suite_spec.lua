@@ -428,6 +428,34 @@ return function(H)
     lacks(res.out, ci.SENTINEL, "suite green-partial: no sentinel")
     eq(doc_of(root).partial, true, "suite green-partial: the run is partial")
     has(tostring(doc_of(root).partial_why), "suite green-partial", "suite green-partial: said why")
+
+    -- the transitional .ci-last.json (where git ignores it): the old script called such a run green; a run that
+    -- could not start for a missing tool is red; a narrowed run (`--step`) records nothing
+    local legacy_root = project(
+      "suite-partial-legacy",
+      "{ profiles = { full = { 'suite' } }, steps = { suite = { preset = 'suite', stamp = false } } }",
+      { ["TESTS/s_spec.lua"] = SKIP, [".gitignore"] = ".ci-last.json\n" }
+    )
+    eq(run(legacy_root).code, 0, "legacy: the green-partial run")
+    local legacy = vim.json.decode(read(legacy_root .. "/.ci-last.json") or "{}")
+    eq(legacy.state, "green", "legacy: a suite with a skipped case is green in the old format")
+    has(tostring(legacy.note), "partial", "legacy: ... and says it was partial")
+    local missing_root = project(
+      "legacy-missing-tool",
+      "{ profiles = { full = { 'a' } }, steps = { a = { run = { 'does-not-exist-tool-xyz' } } } }",
+      { [".gitignore"] = ".ci-last.json\n" }
+    )
+    eq(run(missing_root).code, 3, "legacy: a missing tool is exit 3")
+    local missing = vim.json.decode(read(missing_root .. "/.ci-last.json") or "{}")
+    eq(missing.state, "red", "legacy: a missing tool is red in the old format")
+    has(tostring(missing.note), "does-not-exist-tool-xyz", "legacy: ... naming the tool")
+    os.remove(legacy_root .. "/.ci-last.json")
+    run(legacy_root, "--step=suite")
+    eq(
+      vim.uv.fs_stat(legacy_root .. "/.ci-last.json"),
+      nil,
+      "legacy: a narrowed run (--step) writes nothing"
+    )
   end
 
   -- options after -- without a suite step, a timeout on an in-process preset, an unknown dependency in args

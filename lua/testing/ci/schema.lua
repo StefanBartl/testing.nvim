@@ -44,6 +44,7 @@ local STEP_KEYS = {
   timeout = true,
   when = true,
   stamp = true,
+  skip_exit = true,
 }
 
 local NAME = "^[%a_][%w_%-]*$"
@@ -58,6 +59,7 @@ local NAME = "^[%a_][%w_%-]*$"
 ---@field timeout_ms integer
 ---@field os? table<string, boolean> Only on these systems (`windows`, `linux`, `macos`); nil = everywhere.
 ---@field stamp boolean `suite` only: write the stamp (`testing stamp`).
+---@field skip_exit? integer A process step that exits with this code skipped itself (no proof, the run is partial).
 ---@field efm? string|string[] The preset's error format (quickfix, findings); alternatives as a list.
 ---@field version_argv? string[] How to ask the tool for its version.
 
@@ -256,6 +258,21 @@ local function resolve_step(step_name, raw, problems)
     end
   end
   if
+    raw.skip_exit ~= nil
+    and (
+      type(raw.skip_exit) ~= "number"
+      or raw.skip_exit % 1 ~= 0
+      or raw.skip_exit < 1
+      or raw.skip_exit > 255
+      or (preset and preset.inprocess)
+    )
+  then
+    problems[#problems + 1] = ('%s.skip_exit: the exit code 1..255 of a process step that means "skipped", got %s'):format(
+      where,
+      show(raw.skip_exit)
+    )
+  end
+  if
     raw.stamp ~= nil and (type(raw.stamp) ~= "boolean" or not (preset and preset.name == "suite"))
   then
     problems[#problems + 1] = ("%s.stamp: only the `suite` preset takes stamp = true/false"):format(
@@ -293,6 +310,7 @@ local function resolve_step(step_name, raw, problems)
     timeout_ms = timeout_ms --[[@as integer]],
     os = os_set,
     stamp = raw.stamp,
+    skip_exit = raw.skip_exit,
   })
 end
 
@@ -423,6 +441,7 @@ function M.resolve(raw)
       timeout_ms = step.timeout_ms,
       os = step.os,
       stamp = step.stamp,
+      skip_exit = step.skip_exit,
     }
   end
   return {
