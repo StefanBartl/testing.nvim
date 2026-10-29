@@ -368,6 +368,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
 - [docs/CI.md](docs/CI.md): `testing ci`, the pipeline of a repository: the `ci` section, presets, exit codes, `testing-ci/1`.
+- [docs/WORKFLOW-CI.md](docs/WORKFLOW-CI.md): the CI workflow as a use case: one definition, the shim, editor, pre-push hook, several repositories, the hosted runner.
 - [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format, the green stamp.
 - [docs/CI-CACHE.md](docs/CI-CACHE.md): the result cache and the stamp in CI with `actions/cache`.
 - [docs/HOOKS.md](docs/HOOKS.md): pre-push, pre-commit and Claude Code `Stop` hook recipes.

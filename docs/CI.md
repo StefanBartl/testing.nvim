@@ -1,6 +1,8 @@
 # `testing ci`: the pipeline of a repository
 
 `testing ci` runs the whole check pipeline of a repository on this machine: formatting, lint, the suite,
+
+For how the pieces fit together (shim, editor, hook, several repositories, hosted runner) see [WORKFLOW-CI.md](WORKFLOW-CI.md).
 conformance, whatever else the repository checks. One definition in the `ci` section of `.testing.lua`, the same
 exit codes as a run, no cloud, no container, no shell scripts that copy each other.
 
