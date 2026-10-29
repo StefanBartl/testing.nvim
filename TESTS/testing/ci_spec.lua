@@ -415,6 +415,34 @@ return function(H)
     local be = events_of(path)
     eq(#be, 2, "events: a run that stops before its first step has run_start and run_done")
     eq(be[2].verdict, "error", "events: ... with the verdict")
+    eq(be[1].root, "events-bad", "events: ... and run_start names the root")
+
+    -- a root that is no directory rewrites the file too: a UI must not find the last run's verdict there
+    eq(run(red_root, "--events=" .. path).code, 1, "events: a red run first")
+    eq(
+      run(tmp .. "/no-such-root", "--events=" .. path).code,
+      2,
+      "events: a root that is no directory"
+    )
+    local nr = events_of(path)
+    eq(#nr, 2, "events: no directory: run_start and run_done")
+    eq(
+      nr[2].verdict,
+      "error",
+      "events: no directory: the verdict of this run, not the red of the last"
+    )
+
+    -- --keep-going: the step after a red one starts
+    eq(run(red_root, "--keep-going", "--events=" .. path).code, 1, "events: keep-going is red")
+    local kk = {}
+    for _, e in ipairs(events_of(path)) do
+      kk[#kk + 1] = e.event .. (e.step and (":" .. e.step) or "")
+    end
+    eq(
+      kk,
+      { "run_start", "step_start:a", "step_end:a", "step_start:b", "step_end:b", "run_done" },
+      "events: with --keep-going the step after the red one has its step_start"
+    )
   end
 
   -- skip_exit: a step that exits with its own "skipped" code is no proof (partial, no sentinel), never red; another
@@ -438,6 +466,37 @@ return function(H)
     has(tostring(sdoc.steps[1].reason), "no PUC Lua here", "skip_exit: with the step's last line")
     local red = project("skip-exit-red", section(5), { [skipper] = SKIPPER })
     eq(run(red).code, 1, "skip_exit: another exit code is red")
+
+    -- a step after the one that skipped itself runs: a skip is not a red step that stops the pipeline
+    local two = project(
+      "skip-exit-two",
+      ("{ profiles = { full = { 's', 'g' } }, steps = { s = { run = %s, skip_exit = 77 }, g = { run = %s } } }"):format(
+        nv(skipper, "77"),
+        nv(echo, "after")
+      ),
+      { [skipper] = SKIPPER, [echo] = ECHO }
+    )
+    eq(run(two).code, 0, "skip_exit: the next step runs")
+    local tdoc = doc_of(two)
+    eq(tdoc.steps[2].state, "green", "skip_exit: ... and is green")
+    eq(tdoc.first_red, vim.NIL, "skip_exit: a skip is no red step")
+
+    -- the transitional .ci-last.json: a red run that also has a self-skipped step is red (a stale green must not stay)
+    local red_skip = project(
+      "skip-exit-legacy",
+      ("{ profiles = { full = { 's', 'r' } }, steps = { s = { run = %s, skip_exit = 77 }, r = { run = %s } } }"):format(
+        nv(skipper, "77"),
+        nv(skipper, "1")
+      ),
+      { [skipper] = SKIPPER, [".gitignore"] = ".ci-last.json\n" }
+    )
+    write(red_skip .. "/.ci-last.json", '{"state":"green","note":"an old green"}\n')
+    eq(run(red_skip).code, 1, "skip_exit legacy: red")
+    eq(
+      vim.json.decode(read(red_skip .. "/.ci-last.json") or "{}").state,
+      "red",
+      "skip_exit legacy: the old format says red, not the old green"
+    )
     local bad = project(
       "skip-exit-bad",
       "{ profiles = { full = { 's' } }, steps = { s = { run = { 'x' }, skip_exit = 0 } } }"

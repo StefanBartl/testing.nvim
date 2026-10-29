@@ -926,6 +926,7 @@ function M.run(o)
   -- the run's events and, once its step_start names it, the suite's; `poll_events` reads both now
   local poll_run, poll_suite = function() end, function() end
   local stop_suite = function() end
+  local suite_file = nil ---@type string|nil
   local function poll_events()
     poll_run()
     poll_suite()
@@ -959,7 +960,9 @@ function M.run(o)
   end, keep)
   local function on_suite_event(ev)
     if ev.event == "run_start" then
+      -- every suite run counts from zero (a pipeline may have more than one suite step, writing to one file)
       live.files_total = ev.files_selected or ev.files_total
+      live.files_done, live.cases, live.failed, live.current = 0, 0, 0, nil
     elseif ev.event == "file_start" then
       live.current = ev.file
     elseif ev.event == "file_end" then
@@ -978,13 +981,16 @@ function M.run(o)
       from_events = true
       live.step, live.t0 = ev.step, vim.uv.hrtime()
       progress:update({ text = ev.step, current = ev.index, total = ev.total })
-      if type(ev.suite_events) == "string" then
-        local suite_file = ev.suite_events
+      -- one reader per file: a second suite step of the same run appends to the same file, the reader goes on
+      if type(ev.suite_events) == "string" and ev.suite_events ~= suite_file then
+        stop_suite()
+        local file = ev.suite_events
         local stop_tail
-        stop_tail, poll_suite = M.tail_events(suite_file, on_suite_event)
+        stop_tail, poll_suite = M.tail_events(file, on_suite_event)
+        suite_file = file
         stop_suite = function()
           stop_tail()
-          pcall(os.remove, suite_file)
+          pcall(os.remove, file)
         end
       end
     end

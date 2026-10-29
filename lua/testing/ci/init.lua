@@ -672,8 +672,12 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     end
   end
   if scratch then
-    if scratch_traces and scratch_traces ~= real_traces then
-      move_traces(scratch_traces, real_traces, errors)
+    -- only out of the scratch state: a step whose own env names XDG_STATE_HOME keeps its traces where they are
+    if scratch_traces and planned.env.XDG_STATE_HOME == nil and scratch_traces ~= real_traces then
+      local moved, why_not = pcall(move_traces, scratch_traces, real_traces, errors)
+      if not moved then
+        keep_error(errors, "testing ci: the traces could not be kept: " .. tostring(why_not))
+      end
     end
     vim.fn.delete(scratch, "rf")
   end
@@ -866,15 +870,18 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
   -- with a skipped case, which the old script called green), and a run that could not start for a missing tool
   -- (the old script: red, "<tool> missing"). Not for a narrowed run (`--step`, suite options) or a moving tree.
   local legacy
-  if legacy_ignored and not doc.head_moved and not doc.tree_changed then
-    if #doc.steps > 0 and (not doc.partial or doc.partial_why == "suite green-partial") then
+  local why = type(doc.partial_why) == "string" and doc.partial_why or ""
+  local narrowed = why:find("--step", 1, true) or why:find("suite options", 1, true)
+  if legacy_ignored and not narrowed and not doc.head_moved and not doc.tree_changed then
+    if #doc.steps > 0 then
+      -- a red result is always written (a stale green must not stay); a green one says when it was partial
       local green = doc.verdict == "green" or doc.verdict == "green-partial"
       legacy = {
         state = green and "green" or "red",
-        note = green and (doc.partial and "partial: suite green-partial" or "")
+        note = green and (doc.partial and ("partial: " .. why) or "")
           or tostring(doc.first_red ~= vim.NIL and doc.first_red or doc.verdict),
       }
-    elseif #doc.steps == 0 and doc.verdict == "infra" then
+    elseif doc.verdict == "infra" then
       legacy = { state = "red", note = tostring((doc.problems or {})[1] or "infra") }
     end
   end
@@ -940,7 +947,16 @@ function M.main(argv, sv)
   end
   local root = vim.fs.normalize(vim.fn.fnamemodify(args.root, ":p")):gsub("/$", "")
   if vim.fn.isdirectory(root) ~= 1 then
-    err(("testing ci: root %s is not a directory"):format(args.root))
+    local not_dir = ("root %s is not a directory"):format(args.root)
+    err("testing ci: " .. not_dir)
+    -- a UI that reads a fixed events file must not find the last run's green there
+    local bad_root_events = require("testing.ci.events").open(args.events, err)
+    bad_root_events.emit("run_start", { profile = args.profile or vim.NIL, steps = {} })
+    bad_root_events.emit(
+      "run_done",
+      { verdict = "error", exit = M.EXIT_USAGE, problems = { not_dir } }
+    )
+    bad_root_events.close()
     return M.EXIT_USAGE
   end
   local report = require("testing.ci.report")
@@ -956,8 +972,9 @@ function M.main(argv, sv)
   ---@param problems string[]
   ---@param profile_name? string
   ---@param with_usage? boolean
+  ---@param narrowed? boolean `--step` or suite options: a narrowed run never writes the transitional file
   ---@return integer
-  local function stop_early(code, problems, profile_name, with_usage)
+  local function stop_early(code, problems, profile_name, with_usage, narrowed)
     for _, p in ipairs(problems) do
       err("testing ci: " .. p)
     end
@@ -978,18 +995,22 @@ function M.main(argv, sv)
       steps = {},
     }
     local early_events = require("testing.ci.events").open(args.events, err)
-    early_events.emit("run_start", { profile = profile_name or vim.NIL, steps = {} })
+    early_events.emit(
+      "run_start",
+      { profile = profile_name or vim.NIL, root = vim.fs.basename(root), steps = {} }
+    )
     early_events.emit("run_done", { verdict = doc.verdict, exit = code, problems = problems })
     early_events.close()
-    -- the old script recorded a missing tool as red: so does the transitional file, where git ignores it
+    -- the old script recorded a missing tool as red: so does the transitional file, where git ignores it, for the
+    -- commit that was checked out (a narrowed run records nothing)
     local legacy_ignored = false
-    if code == M.EXIT_INFRA then
-      local ok_git, res = pcall(function()
-        return vim
-          .system({ "git", "check-ignore", "-q", ".ci-last.json" }, { cwd = root })
-          :wait(5000)
-      end)
-      legacy_ignored = ok_git and res ~= nil and res.code == 0
+    if code == M.EXIT_INFRA and not narrowed then
+      local ok_git, gf = pcall(git_facts, root)
+      if ok_git and gf then
+        legacy_ignored = gf.legacy_ignored
+        doc.commit = gf.commit or vim.NIL
+        doc.dirty = gf.dirty == nil and vim.NIL or gf.dirty
+      end
     end
     for _, note in ipairs(write_doc(doc, root, args.json, state_dir, legacy_ignored)) do
       err("testing ci: " .. note)
@@ -1107,7 +1128,7 @@ function M.main(argv, sv)
 
   local planned, code, why = plan(pipeline, names, root)
   if not planned then
-    return stop_early(code --[[@as integer]], why, profile)
+    return stop_early(code --[[@as integer]], why, profile, nil, #partial_why > 0)
   end
 
   -- every process of our own is started now and collected later: git facts and the tool versions
@@ -1126,6 +1147,10 @@ function M.main(argv, sv)
   local suite_events = args["suite-events"]
     or (args.events and args.events ~= "" and (args.events .. ".suite.ndjson"))
     or nil
+  if suite_events and not args["suite-events"] then
+    -- the default file of an earlier run is gone before this one starts
+    os.remove(vim.fn.fnamemodify(suite_events, ":p"))
+  end
   local step_names = {}
   for _, p in ipairs(planned) do
     step_names[#step_names + 1] = p.step.name
@@ -1159,12 +1184,6 @@ function M.main(argv, sv)
             or ""
         )
       )
-      events.emit("step_start", {
-        step = step.name,
-        index = #results + 1,
-        total = #planned,
-        suite_events = step.inprocess == "run" and suite_events or nil,
-      })
       local t0 = vim.uv.hrtime()
       local reused = args.reuse
         and step.inprocess == "run"
@@ -1178,6 +1197,16 @@ function M.main(argv, sv)
             { allow_dirty = true }
           )
           == "verified"
+      -- the suite's own events file is named only when this run writes it: not for a suite reused from its stamp,
+      -- not when the options after -- bring an --events of their own
+      local _, own_events = last_option(args.suite_args, "events")
+      events.emit("step_start", {
+        step = step.name,
+        index = #results + 1,
+        total = #planned,
+        suite_events = step.inprocess == "run" and not reused and not own_events and suite_events
+          or nil,
+      })
       if reused then
         r = {
           name = step.name,

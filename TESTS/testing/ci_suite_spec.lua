@@ -290,6 +290,32 @@ return function(H)
         '"event":"run_done"',
         "run events: ... and written"
       )
+      -- a suite reused from its stamp writes no events of its own: its step_start names no file
+      local reuse_root = project(
+        "suite-run-events-reuse",
+        "{ profiles = { full = { 'suite' } } }",
+        { ["TESTS/a_spec.lua"] = PASS }
+      )
+      eq(run(reuse_root).code, 0, "run events: a stamping run first")
+      eq(run(reuse_root, "--reuse", "--events=" .. evpath).code, 0, "run events: then --reuse")
+      local reused_start
+      for line in (read(evpath) or ""):gmatch("[^\n]+") do
+        local e = vim.json.decode(line)
+        if e.event == "step_start" and e.step == "suite" then
+          reused_start = e
+        end
+      end
+      ok(reused_start ~= nil, "run events: the reused suite has its step_start")
+      eq(
+        reused_start and reused_start.suite_events,
+        nil,
+        "run events: ... without a suite events file (none is written)"
+      )
+      eq(
+        vim.uv.fs_stat(evpath .. ".suite.ndjson"),
+        nil,
+        "run events: the file of the earlier run is gone"
+      )
     end
 
     -- the suite runs in a throwaway state and cache directory, and the stamp still lands in the real one
@@ -340,6 +366,10 @@ return function(H)
       -- editor, which the suite step points at its scratch directory while it runs; the stamp must not go there
       local saved_state = vim.uv.os_getenv("XDG_STATE_HOME")
       vim.uv.os_setenv("XDG_STATE_HOME", tmp .. "/outer-state")
+      -- a run folder of that name is already there: the move cannot rename, it copies into it
+      local outer_traces = require("testing.run.isolated").trace_base() .. "/fake-run"
+      vim.fn.mkdir(outer_traces, "p")
+      write(outer_traces .. "/old.trace.json", "{}")
       local errs = {}
       local code = cli.main({ "ci", "--root=" .. stamped }, {
         out = function() end,
@@ -355,6 +385,7 @@ return function(H)
       local stamp_there = vim.uv.fs_stat(stamp_path) ~= nil
       local trace_path = require("testing.run.isolated").trace_base() .. "/fake-run/x.trace.json"
       local trace_kept = vim.uv.fs_stat(trace_path) ~= nil
+      local old_kept = vim.uv.fs_stat(outer_traces .. "/old.trace.json") ~= nil
       if saved_state then
         vim.uv.os_setenv("XDG_STATE_HOME", saved_state)
       else
@@ -370,6 +401,7 @@ return function(H)
         trace_kept,
         "suite isolation: a trace of the suite outlives the scratch directory: " .. trace_path
       )
+      ok(old_kept, "suite isolation: ... copied into a run folder that was already there")
     end
 
     local red =
@@ -473,6 +505,19 @@ return function(H)
     local missing = vim.json.decode(read(missing_root .. "/.ci-last.json") or "{}")
     eq(missing.state, "red", "legacy: a missing tool is red in the old format")
     has(tostring(missing.note), "does-not-exist-tool-xyz", "legacy: ... naming the tool")
+    local head = vim.trim(
+      vim.system({ "git", "rev-parse", "HEAD" }, { cwd = missing_root, text = true }):wait().stdout
+        or ""
+    )
+    eq(missing.commit, head, "legacy: ... for the commit that is checked out, not 'unknown'")
+    -- a narrowed run (--step) that stops for the missing tool leaves the file alone
+    write(missing_root .. "/.ci-last.json", '{"state":"green","note":"kept"}\n')
+    eq(run(missing_root, "--step=a").code, 3, "legacy: --step on a missing tool is exit 3")
+    eq(
+      vim.json.decode(read(missing_root .. "/.ci-last.json") or "{}").note,
+      "kept",
+      "legacy: ... and a narrowed run does not write the old format"
+    )
     os.remove(legacy_root .. "/.ci-last.json")
     run(legacy_root, "--step=suite")
     eq(

@@ -484,6 +484,13 @@ return function(H)
         return nil
       end
       local qargv
+      local qrun_events
+      local tails = 0
+      local real_tail = editor.tail_events
+      editor.tail_events = function(...)
+        tails = tails + 1
+        return real_tail(...)
+      end
       editor.system = function(argv, opts, on_exit)
         qargv = argv
         local run_events
@@ -517,7 +524,18 @@ return function(H)
           total = 2,
           suite_events = events,
         }) .. "\n")
+        -- a second suite step of the same run names the same file: the reader that runs goes on
+        rf:write(vim.json.encode({
+          v = 1,
+          event = "step_start",
+          ts = 1,
+          step = "suite_again",
+          index = 2,
+          total = 2,
+          suite_events = events,
+        }) .. "\n")
         rf:close()
+        qrun_events = run_events
         local ef = assert(io.open(events, "wb"))
         ef:write(
           '{"v":1,"event":"run_start","ts":1,"run":1,"files_total":2,"files_selected":2,"files":["a","b"]}\n'
@@ -526,6 +544,13 @@ return function(H)
           '{"v":1,"event":"file_end","ts":1,"run":1,"file":"a","cases":1,"failed":0,"duration_ms":3}\n'
         )
         ef:write('{"v":1,"event":"run_done","ts":2,"run":1,"exit_code":1,"verdict":"red"}\n')
+        -- the second suite step appends its own run to the same file: it counts from zero
+        ef:write(
+          '{"v":1,"event":"run_start","ts":3,"run":2,"files_total":1,"files_selected":1,"files":["c"]}\n'
+        )
+        ef:write(
+          '{"v":1,"event":"file_end","ts":3,"run":2,"file":"c","cases":1,"failed":0,"duration_ms":3}\n'
+        )
         ef:close()
         opts.stdout(
           nil,
@@ -595,6 +620,14 @@ return function(H)
         step_two = step_two or (u.text == "suite" and u.current == 2 and u.total == 2)
       end
       ok(step_two, "quiet run: without a plan the events say step 2 of 2")
+      editor.tail_events = real_tail
+      eq(tails, 1, "quiet run: one reader for the suite's file, also for a second suite step")
+      eq(vim.uv.fs_stat(qrun_events), nil, "quiet run: the run's events file is removed")
+      eq(
+        vim.uv.fs_stat(qrun_events .. ".suite.ndjson"),
+        nil,
+        "quiet run: ... and the suite's events file"
+      )
       -- the later cases count the handles from the first one
       table.remove(handles, h_before + 1)
     end

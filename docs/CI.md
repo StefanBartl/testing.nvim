@@ -104,7 +104,8 @@ removed afterwards (the step's own `env` wins), so a spec never writes into the 
 `stdpath("cache")`. The document and the stamp are placed below the real state directory before that
 (`--state-dir`, default `stdpath("state")`). The trace folders of a child that timed out or crashed (`testing-traces/<run>`,
 [CHILD.md](CHILD.md)) are moved from the scratch directory to the real `stdpath("state")/testing-traces` before it
-is removed.
+is removed (a folder of the same name there is filled file by file). A suite step whose own `env` sets
+`XDG_STATE_HOME` keeps its traces where it put them.
 
 A repository whose specs need more than that (a throwaway `NVIM_APPNAME`, a long `TEMP`) runs `testing ci` through its
 `scripts/test.sh` (testing.nvim itself: `scripts/test.sh ci`), so the in-process suite gets the same
@@ -273,7 +274,9 @@ list opens only on red.
 
 `testing ci --events=<file>` writes what the run is doing while it goes, one JSON object per line (NDJSON, flushed after
 every line, keys sorted), for a UI that shows a run without reading its terminal text (the editor, a test explorer, a
-desktop app). The file is written anew by every run. Like the suite's stream it is never part of the verdict: a file
+desktop app). The file is written anew by every run that starts, also by one that stops at once (a configuration
+error, a `--root` that is no directory: `run_start` and `run_done`); a command line that cannot be parsed at all leaves
+it untouched. Like the suite's stream it is never part of the verdict: a file
 that cannot be opened or written is one note on stderr, and the run goes on.
 
 Every line has `v` (`1`), `event` and `ts` (unix seconds).
@@ -344,6 +347,9 @@ step that decided the exit code; `write_errors` lists reports that could not be 
 selection, `partial_why` says which), `red`, `error` (exit 2) or `infra` (exit 3). A step's `state` is `green`,
 `red`, `skipped`, `error` or `infra`; `errors` holds up to 20 of its last output lines.
 
-**Transition.** Where git ignores `.ci-last.json`, a complete run also writes it in the old format of
-`scripts/ci.sh` (`repo`, `commit`, `dirty`, `time`, `state`, `note`), so readers of that file keep working. Where
-git does not ignore it, nothing is written: a run never makes the tree dirty.
+**Transition.** Where git ignores `.ci-last.json`, a run also writes it in the old format of `scripts/ci.sh` (`repo`,
+`commit`, `dirty`, `time`, `state`, `note`), so readers of that file keep working: every run of the whole pipeline
+(a red one always, so an old green never stays; a green-partial one as `green` with the note `partial: <why>`), and a
+run that stops for a missing tool or dependency (`red`, the problem as the note, for the commit that is checked out).
+A narrowed run (`--step`, suite options) and a run in which HEAD or the tree moved write nothing. Where git does not
+ignore the file, nothing is written: a run never makes the tree dirty.
