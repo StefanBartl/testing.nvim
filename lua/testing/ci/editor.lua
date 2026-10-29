@@ -191,6 +191,7 @@ M.MAX_LINE = 400
 ---@param path string
 ---@param on_event fun(ev: table)
 ---@return fun() stop
+---@return fun() poll Read what was written since the last read, now.
 function M.tail_events(path, on_event)
   local reader = require("testing.run.events_reader").new({ on_event = on_event })
   local offset = 0
@@ -213,7 +214,7 @@ function M.tail_events(path, on_event)
     timer:stop()
     timer:close()
     poll()
-  end
+  end, poll
 end
 
 ---@param file string
@@ -869,7 +870,16 @@ function M.run(o)
   local counted, seen = {}, 0
   local keep, raw = M.quiet_step("suite")
   -- what is going on right now, as the last line of the buffer: a step that is quiet for minutes must not look dead
-  local live = { step = nil, t0 = nil, files_total = nil, files_done = 0, current = nil }
+  local live = {
+    step = nil,
+    t0 = nil,
+    files_total = nil,
+    files_done = 0,
+    current = nil,
+    cases = 0,
+    failed = 0,
+  }
+  local poll_events = function() end
   local feed, flush = M.feeder(view, function(line)
     local step = M.step_of(line)
     if step and not counted[step] and (not planned or planned[step]) then
@@ -880,24 +890,31 @@ function M.run(o)
     if step then
       live.step, live.t0 = step, vim.uv.hrtime()
     end
+    -- the suite's verdict line is followed by what the events counted (read them now: the last file may be unread)
+    if line:match("^%-%- suite:") then
+      poll_events()
+      view.append({
+        ("   %d spec file(s), %d case(s)%s"):format(
+          live.files_done,
+          live.cases,
+          live.failed > 0 and (", " .. live.failed .. " failed") or ""
+        ),
+      })
+    end
   end, keep)
-  local stop_events = M.tail_events(events, function(ev)
+  local stop_events
+  stop_events, poll_events = M.tail_events(events, function(ev)
     if ev.event == "run_start" then
       live.files_total = ev.files_selected or ev.files_total
     elseif ev.event == "file_start" then
       live.current = ev.file
     elseif ev.event == "file_end" then
       live.files_done = live.files_done + 1
+      live.cases = live.cases + (ev.cases or 0)
+      live.failed = live.failed + (ev.failed or 0)
       progress:update({
         text = live.files_total and ("suite %d/%d"):format(live.files_done, live.files_total)
           or ("suite %d"):format(live.files_done),
-      })
-    elseif ev.event == "run_done" then
-      view.append({
-        ("   suite: %d file(s)%s"):format(
-          live.files_done,
-          ev.verdict and (", " .. ev.verdict) or ", stopped"
-        ),
       })
     end
   end)

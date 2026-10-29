@@ -500,7 +500,7 @@ return function(H)
         ef:close()
         opts.stdout(
           nil,
-          "== stylua: stylua --check .\n-- stylua: green (0.1 s)\n== suite\nspec noise\n"
+          "== stylua: stylua --check .\n-- stylua: green (0.1 s)\n== suite\nspec noise\n-- suite: red (0.5 s)\n"
         )
         vim.defer_fn(function()
           on_exit({ code = 1, stdout = "", stderr = "" })
@@ -539,7 +539,13 @@ return function(H)
         "quiet run: the specs' own output is kept aside and shown last, because the run is red"
       )
       has(qtext, "== suite", "quiet run: the suite header is")
-      has(qtext, "suite: 1 file(s)", "quiet run: the events say how far the suite got")
+      has(qtext, "1 spec file(s), 1 case(s)", "quiet run: the events say how much the suite did")
+      local suite_at = qtext:find("-- suite: red", 1, true)
+      local count_at = qtext:find("1 spec file(s)", 1, true)
+      ok(
+        suite_at and count_at and count_at > suite_at,
+        "quiet run: ... right after the verdict line of the suite"
+      )
       local seen_text = false
       for _, u in ipairs(handles[h_before + 1] and handles[h_before + 1].updates or {}) do
         seen_text = seen_text or (u.text == "suite 1/2")
