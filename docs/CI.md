@@ -216,8 +216,9 @@ events there ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#events-stream)), and the edi
 The progress indicator says `suite 12/187` (spec files done of selected), and the **last line of the buffer** is a
 status line that changes every second, so a step that is quiet for minutes does not look dead:
 `   ... suite: 12 of 187 spec files done, now TESTS/x_spec.lua (1:30)`, or `   ... luacheck is running (0:04)`. It is
-removed when the run ends. The buffer shows the header `== suite`, one line `suite: <n> file(s), <verdict>` and the
-verdict line, but not what the specs print themselves (a spec may print anything: a table, a line without an end of
+removed when the run ends. The buffer shows the header `== suite`, the verdict line `-- suite: ...` and right after
+it `   <n> spec file(s), <m> case(s)` (with `, <k> failed` when cases failed; no such line for a suite reused from its
+stamp or skipped), but not what the specs print themselves (a spec may print anything: a table, a line without an end of
 line, a progress meter). Those lines are kept aside; when the run is not green, the last 40 of them follow under
 `-- the last n line(s) the suite printed:`. A line longer than 400 characters is cut and says how much was left out.
 The terminal (`testing ci`) shows everything as before.

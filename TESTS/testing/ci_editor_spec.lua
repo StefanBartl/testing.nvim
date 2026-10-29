@@ -500,7 +500,7 @@ return function(H)
         ef:close()
         opts.stdout(
           nil,
-          "== stylua: stylua --check .\n-- stylua: green (0.1 s)\n== suite\nspec noise\n-- suite: red (0.5 s)\n"
+          "== stylua: stylua --check .\n-- stylua: green (0.1 s)\n== suite\nspec noise\n-- suite: red (0.5 s)\n== conformance\n-- conformance: green (0.1 s)\n"
         )
         vim.defer_fn(function()
           on_exit({ code = 1, stdout = "", stderr = "" })
@@ -546,6 +546,16 @@ return function(H)
         suite_at and count_at and count_at > suite_at,
         "quiet run: ... right after the verdict line of the suite"
       )
+      local qlines = vim.api.nvim_buf_get_lines(qbuf, 0, -1, false)
+      local verdict_row
+      for i, l in ipairs(qlines) do
+        verdict_row = l:find("-- suite: red", 1, true) and i or verdict_row
+      end
+      eq(
+        verdict_row and qlines[verdict_row + 1],
+        "   1 spec file(s), 1 case(s)",
+        "quiet run: the count line is the very next line, also when more output came in the same chunk"
+      )
       local seen_text = false
       for _, u in ipairs(handles[h_before + 1] and handles[h_before + 1].updates or {}) do
         seen_text = seen_text or (u.text == "suite 1/2")
@@ -553,6 +563,92 @@ return function(H)
       ok(seen_text, "quiet run: the progress says `suite 1/2`")
       -- the later cases count the handles from the first one
       table.remove(handles, h_before + 1)
+    end
+
+    -- a suite that ran no files of its own (reused from its stamp) gets no count line
+    do
+      local rroot = vim.fn.tempname() .. "-reused"
+      vim.fn.mkdir(rroot, "p")
+      local real_plan = editor.step_plan
+      editor.step_plan = function()
+        return { "suite" }
+      end
+      editor.system = function(_, opts, on_exit)
+        opts.stdout(
+          nil,
+          "== suite\n-- suite: green (0.0 s, reused: its stamp verifies)\nci: GREEN full 1/1\n"
+        )
+        vim.defer_fn(function()
+          on_exit({ code = 0, stdout = "", stderr = "" })
+        end, 300)
+        return {}
+      end
+      local done_r = false
+      local h_r = #handles
+      editor.run({
+        root = rroot,
+        on_done = function()
+          done_r = true
+        end,
+      })
+      editor.step_plan = real_plan
+      ok(
+        vim.wait(3000, function()
+          return done_r
+        end),
+        "reused run: ends"
+      )
+      local rtext = table.concat(
+        vim.api.nvim_buf_get_lines(vim.fn.bufnr(editor.view_name(rroot)), 0, -1, false),
+        "\n"
+      )
+      ok(not rtext:find("spec file(s)", 1, true), "reused run: no count line: " .. rtext)
+      has(rtext, "ci: GREEN", "reused run: the verdict is there")
+      table.remove(handles, h_r + 1)
+    end
+
+    -- a skipped suite step hides nothing: what follows it is the next step or the verdict
+    do
+      local keep_s = editor.quiet_step("suite")
+      local shown_s = {}
+      for _, l in ipairs({
+        "== stylua: stylua --check .",
+        "-- stylua: red (0.1 s)",
+        "== suite (skipped: an earlier step failed)",
+        "  stylua         red         0.1 s",
+        "ci: RED stylua (exit 1)",
+      }) do
+        if keep_s(l) then
+          shown_s[#shown_s + 1] = l
+        end
+      end
+      eq(#shown_s, 5, "quiet_step: a skipped suite hides nothing: " .. vim.inspect(shown_s))
+    end
+
+    -- a status tick that was already queued when the run ended does not bring the line back
+    do
+      local calls = {}
+      local real_new_timer = vim.uv.new_timer
+      local captured
+      vim.uv.new_timer = function()
+        return {
+          start = function(_, _, _, cb)
+            captured = cb
+          end,
+          stop = function() end,
+          close = function() end,
+        }
+      end
+      local stop_status = editor.live_status({
+        status = function(text)
+          calls[#calls + 1] = text == nil and "<removed>" or text
+        end,
+      }, { files_done = 0 })
+      vim.uv.new_timer = real_new_timer
+      stop_status()
+      captured()
+      vim.wait(100)
+      eq(calls, { "<removed>" }, "live_status: nothing after the stop: " .. vim.inspect(calls))
     end
     ok(
       vim.wait(2000, function()

@@ -124,7 +124,12 @@ end
 function M.live_status(view, live)
   local started = vim.uv.hrtime()
   local timer = vim.uv.new_timer()
+  local stopped = false
   local function tick()
+    -- a tick already scheduled when the run ended must not put the line back
+    if stopped then
+      return
+    end
     local t0 = live.t0 or started
     view.status(M.live_text({
       step = live.step,
@@ -135,7 +140,6 @@ function M.live_status(view, live)
     }))
   end
   timer:start(1000, 1000, vim.schedule_wrap(tick))
-  local stopped = false
   return function()
     if stopped then
       return
@@ -158,7 +162,8 @@ function M.quiet_step(name)
   local function keep(line)
     local step = M.step_of(line)
     if step then
-      inside = step == name
+      -- `== suite (skipped: ...)` has no output of its own: what follows belongs to the next step or the verdict
+      inside = step == name and not line:match("^== %S+ %(skipped:")
       return true
     end
     if inside and line:match("^%-%- " .. vim.pesc(name) .. ":") then
@@ -536,9 +541,10 @@ end
 ---mid-line is not glued to a chunk of stderr), a line shown as a terminal shows it (the text after the last carriage
 ---return). `feed(stream)` is the pipe callback, `flush()` writes what is left when the process has ended; `on_line`
 ---sees every line as it is shown.
----`keep(line)` (optional) decides which lines the buffer shows; `on_line` still sees all of them.
+---`keep(line)` (optional) decides which lines the buffer shows; `on_line` still sees all of them, and the lines it
+---returns (optional) are shown right after the line it saw.
 ---@param view { append: fun(lines: string[]) }
----@param on_line? fun(line: string)
+---@param on_line? fun(line: string): string[]|nil
 ---@param keep? fun(line: string): boolean
 ---@return fun(stream: "out"|"err"): fun(_: any, data: string|nil) feed
 ---@return fun() flush
@@ -560,12 +566,13 @@ function M.feeder(view, on_line, keep)
       if not keep or keep(line) then
         out[#out + 1] = line
       end
+      local extra = on_line and on_line(line)
+      if type(extra) == "table" then
+        vim.list_extend(out, extra)
+      end
     end
     if #out > 0 then
       view.append(out)
-    end
-    for _, line in ipairs(on_line and lines or {}) do
-      on_line(line)
     end
   end
   local function feed(stream)
@@ -890,16 +897,19 @@ function M.run(o)
     if step then
       live.step, live.t0 = step, vim.uv.hrtime()
     end
-    -- the suite's verdict line is followed by what the events counted (read them now: the last file may be unread)
+    -- the suite's verdict line is followed by what the events counted (read them now: the last file may be unread);
+    -- a suite that wrote no events (reused from its stamp, not in-process) gets no line
     if line:match("^%-%- suite:") then
       poll_events()
-      view.append({
-        ("   %d spec file(s), %d case(s)%s"):format(
-          live.files_done,
-          live.cases,
-          live.failed > 0 and (", " .. live.failed .. " failed") or ""
-        ),
-      })
+      if live.files_total ~= nil then
+        return {
+          ("   %d spec file(s), %d case(s)%s"):format(
+            live.files_done,
+            live.cases,
+            live.failed > 0 and (", " .. live.failed .. " failed") or ""
+          ),
+        }
+      end
     end
   end, keep)
   local stop_events
