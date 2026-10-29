@@ -267,6 +267,81 @@ return function(H)
     ok(res.out:find("p  *proven *skipped") ~= nil, "fake: the table says proven\n" .. res.out)
     has(res.out, "ci repos: RED 2/3 (1 proven, not run)", "fake: the verdict line")
     ok(res.lines[#res.lines] ~= ci.SENTINEL, "fake: no sentinel after a red run")
+    -- every change of a repository's state is a line of its own (the editor's live table reads them)
+    local events = {}
+    for _, line in ipairs(res.lines) do
+      if line:match("^ci repos: %[") then
+        events[#events + 1] = line
+      end
+    end
+    eq(events, {
+      "ci repos: [0/3] #1 verify p",
+      "ci repos: [1/3] #1 proven p",
+      "ci repos: [1/3] #2 verify q",
+      "ci repos: [1/3] #2 run q",
+      "ci repos: [2/3] #2 green q",
+      "ci repos: [2/3] #3 verify r",
+      "ci repos: [2/3] #3 run r",
+      "ci repos: [3/3] #3 red r",
+    }, "fake: the state lines, in order, with how many are done")
+
+    -- --json: the document testing-ci-repos/1, each run with the testing-ci/1 it wrote
+    local json = tmp .. "/repos-doc.json"
+    local run_argvs = {}
+    res = run({ "--repos=" .. tmp .. "/p,q,r", "--json=" .. json }, function(argv, opts, on_exit)
+      local kind, dir, path = "run", nil, nil
+      for _, a in ipairs(argv) do
+        kind = a == "verify" and "verify" or kind
+        dir = a:match("^%-%-root=(.*)$") or dir
+        path = a:match("^%-%-json=(.*)$") or path
+      end
+      local name = vim.fs.basename(dir)
+      if kind == "run" then
+        run_argvs[#run_argvs + 1] = table.concat(argv, " ")
+      end
+      local code = (
+        { p = { verify = 0 }, q = { verify = 1, run = 0 }, r = { verify = 1, run = 1 } }
+      )[name][kind]
+      if path and name == "r" then
+        local f = assert(io.open(path, "wb"))
+        f:write(vim.json.encode({ schema = "testing-ci/1", verdict = "red", steps = {} }))
+        f:close()
+      end
+      vim.defer_fn(function()
+        on_exit({ code = code, stdout = "", stderr = "" })
+      end, 10)
+      return {}
+    end)
+    eq(res.code, 1, "json: the exit code is unchanged")
+    eq(#run_argvs, 2, "json: q and r ran")
+    ok(run_argvs[1]:find("--json=", 1, true) ~= nil, "json: each run is asked for its document")
+    local doc = vim.json.decode(table.concat(vim.fn.readfile(json), "\n"))
+    eq(
+      { doc.schema, doc.verdict, doc.exit, #doc.repos },
+      { "testing-ci-repos/1", "red", 1, 3 },
+      "json: schema, verdict, exit, one row per repository"
+    )
+    eq(
+      { doc.repos[1].name, doc.repos[1].state, doc.repos[1].verify, doc.repos[1].doc },
+      { "p", "skipped", "proven", vim.NIL },
+      "json: a proven repository has no document"
+    )
+    eq(doc.repos[2].doc, vim.NIL, "json: a run that wrote nothing has none")
+    eq(
+      { doc.repos[3].state, doc.repos[3].code, doc.repos[3].dir, doc.repos[3].doc.verdict },
+      { "red", 1, vim.fs.normalize(vim.fn.fnamemodify("r", ":p")):gsub("/+$", ""), "red" },
+      "json: a red run carries its testing-ci/1"
+    )
+    local left =
+      vim.fn.glob(vim.fn.fnamemodify(vim.fn.tempname(), ":h") .. "/*.testing-ci.json", true, true)
+    eq(left, {}, "json: the temporary documents of the runs are removed")
+    -- a document that cannot be written: infrastructure, and the verdict line says so (not GREEN)
+    vim.fn.mkdir(tmp .. "/a-directory", "p")
+    res = run({ "--repos=a", "--force", "--json=" .. tmp .. "/a-directory" }, fake({}))
+    eq(res.code, 3, "json: a document that cannot be written is exit 3")
+    has(res.err, "cannot write", "json: ... said")
+    has(res.out, "ci repos: INFRA 1/1", "json: ... and the verdict line is not GREEN")
+    ok(res.lines[#res.lines] ~= ci.SENTINEL, "json: ... and no sentinel")
 
     -- the options reach the children
     seen = {}

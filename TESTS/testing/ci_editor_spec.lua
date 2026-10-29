@@ -200,7 +200,7 @@ return function(H)
   local root = tmp .. "/proj"
 
   local messages = {}
-  local real_notify, real_system = vim.notify, editor.system
+  local real_notify, real_system, real_progress = vim.notify, editor.system, editor.progress
   vim.notify = function(msg, level)
     messages[#messages + 1] = { msg = tostring(msg), level = level }
   end
@@ -211,8 +211,26 @@ return function(H)
     end
     return table.concat(t, "\n")
   end
+  ---Every progress handle a run creates: `{ title, updates = { fields... }, finished?, cancelled? }`.
+  local handles = {}
+  local function fake_progress(opts)
+    local h = { title = opts.title, updates = {} }
+    handles[#handles + 1] = h
+    return {
+      update = function(_, fields)
+        h.updates[#h.updates + 1] = vim.deepcopy(fields)
+      end,
+      finish = function(_, text)
+        h.finished = text or true
+      end,
+      cancel = function(_, text)
+        h.cancelled = text or true
+      end,
+    }
+  end
+  editor.progress = fake_progress
   local function restore()
-    vim.notify, editor.system = real_notify, real_system
+    vim.notify, editor.system, editor.progress = real_notify, real_system, real_progress
   end
 
   local passed, err = pcall(function()
@@ -285,6 +303,13 @@ return function(H)
     eq(vim.fn.getqflist({ title = 1 }).title, "testing ci: findings", "quickfix: titled")
     has(said(), "luacheck failed", "run: the verdict is notified")
     eq(editor.state[root].running, false, "state: not running any more")
+    local h = handles[#handles]
+    eq(h.title, "testing ci", "progress: one indicator per run")
+    eq(h.updates, {
+      { text = "stylua", current = 1 },
+      { text = "luacheck", current = 2 },
+    }, "progress: one step per `== <step>` line (no total before `ci list` was asked)")
+    eq(h.finished, "failed", "progress: finished with the outcome")
     vim.cmd("silent! cclose")
     vim.fn.setqflist({}, "r")
 
@@ -369,6 +394,61 @@ return function(H)
       "streams: per stream, whole lines, progress rewritten, the rest flushed"
     )
 
+    -- progress: a step counts once, and with a known plan only a planned step (a step's own output may start
+    -- with `== `); --step=a,a is one step
+    system, seen = fake({ "== a: tool\n== build\n== a\n" }, nil, 0)
+    editor.system = system
+    done = nil
+    editor.run({
+      root = root,
+      steps = { "a", "a" },
+      on_done = function(v)
+        done = v
+      end,
+    })
+    seen.finish()
+    ok(
+      vim.wait(2000, function()
+        return done ~= nil
+      end),
+      "plan: finishes"
+    )
+    eq(
+      handles[#handles].updates,
+      { { text = "a", current = 1, total = 1 } },
+      "plan: one update, out of the distinct steps asked for"
+    )
+
+    -- the plan of a profile comes from `ci list` only while .testing.lua is unchanged since
+    local proot = tmp .. "/planned"
+    vim.fn.mkdir(proot, "p")
+    vim.fn.writefile({ "return {}" }, proot .. "/.testing.lua")
+    editor.system = function(_, _, cb)
+      cb({
+        code = 0,
+        stdout = vim.json.encode({
+          default = "full",
+          profiles = { full = { "x", "y" } },
+          steps = {},
+        }),
+        stderr = "",
+      })
+      return {}
+    end
+    eq(editor.step_plan(proot), nil, "plan: nothing before `ci list` was asked")
+    editor.list(proot)
+    ok(
+      vim.wait(2000, function()
+        return editor.step_plan(proot) ~= nil
+      end),
+      "plan: known once `ci list` answered"
+    )
+    eq(editor.step_plan(proot), { "x", "y" }, "plan: the steps of the default profile")
+    eq(editor.step_plan(proot, "other"), nil, "plan: an unknown profile has none")
+    local st = vim.uv.fs_stat(proot .. "/.testing.lua")
+    vim.uv.fs_utime(proot .. "/.testing.lua", st.atime.sec, st.mtime.sec + 5)
+    eq(editor.step_plan(proot), nil, "plan: a changed .testing.lua makes the cached list stale")
+
     -- the statusline asks again after a while, and never starts more than the refresh
     local calls = 0
     editor.system = function(argv, opts, cb)
@@ -447,6 +527,7 @@ return function(H)
     eq(bad, false, "no process: refused")
     has(bad_why, "no such program", "no process: with the reason")
     eq(editor.state[root].running, false, "no process: not stuck in running")
+    eq(handles[#handles].cancelled, true, "no process: the progress indicator is cancelled")
   end)
   restore()
   if not passed then
@@ -501,7 +582,80 @@ return function(H)
   vim.notify = function(msg, level)
     messages[#messages + 1] = { msg = tostring(msg), level = level }
   end
+  editor.progress = fake_progress
   local passed_repos, err_repos = pcall(function()
+    -- pure: the state lines of the child, the table, the quickfix items and the verdict of a document
+    eq(
+      editor.repos_event("ci repos: [1/3] #2 run my repo"),
+      { finished = 1, total = 3, index = 2, event = "run", name = "my repo" },
+      "repos_event: a state line (a name may have blanks)"
+    )
+    eq(
+      editor.repos_event("a.nvim | ci repos: [1/3] #1 run x"),
+      nil,
+      "repos_event: a child's line is not one"
+    )
+    eq(
+      editor.repos_event("ci repos: GREEN 1/1 (0 proven, not run)"),
+      nil,
+      "repos_event: nor the verdict"
+    )
+    eq(
+      editor.repos_table(
+        { { name = "a.nvim", state = "green", verify = "not proven", ms = 1500 } },
+        1,
+        3
+      ),
+      {
+        "ci repos  1/3 done",
+        "repo    state    verify      time",
+        "a.nvim  green    not proven  1.5 s",
+        "(2 not started yet)",
+        "",
+      },
+      "repos_table: the rows seen, then what is still to come"
+    )
+    local DOC = {
+      schema = "testing-ci-repos/1",
+      verdict = "red",
+      exit = 1,
+      repos = {
+        { name = "a", dir = "/r/a", state = "skipped", verify = "proven", code = 0, ms = 10 },
+        {
+          name = "b",
+          dir = "/r/b",
+          state = "red",
+          verify = "not proven",
+          code = 1,
+          ms = 20,
+          doc = RED,
+        },
+        { name = "c", dir = "/r/c", state = "infra", code = 3, ms = 5, doc = vim.NIL },
+      },
+    }
+    local items = editor.repos_items(DOC)
+    eq(#items, 4, "repos_items: the findings of b (3) and a text item for c without a document")
+    eq(items[1].filename, "/r/b/lua/a.lua", "repos_items: a file relative to its repository")
+    has(items[1].text, "b [luacheck]", "repos_items: the repository's name in front")
+    eq(items[4].text, "c: infra (exit 3)", "repos_items: no document, the state and the exit code")
+    local v = editor.repos_verdict(DOC, 1)
+    eq(v.level, "error", "repos_verdict: red is an error")
+    has(
+      v.message,
+      "b (red), c (infra), 4 in the quickfix list",
+      "repos_verdict: which ones, how many items"
+    )
+    v = editor.repos_verdict(
+      { schema = "testing-ci-repos/1", verdict = "green", repos = { DOC.repos[1] } },
+      0
+    )
+    eq(v, {
+      level = "info",
+      message = "ci repos: all 1 green or proven (1 proven, not run)",
+      items = {},
+    }, "repos_verdict: green")
+    eq(editor.repos_verdict(nil, 2).level, "error", "repos_verdict: no document and a failure")
+
     local argv_seen, opts_seen, on_exit_raw
     local finish
     editor.system = function(argv, opts, on_exit)
@@ -530,7 +684,11 @@ return function(H)
       "--repos-root=/r",
       "run_repos: no --root (it works on the repositories it is told about)"
     )
-    eq(argv_seen[#argv_seen - 1], "ci", "run_repos: the ci subcommand")
+    eq(argv_seen[#argv_seen - 2], "ci", "run_repos: the ci subcommand")
+    ok(
+      argv_seen[#argv_seen - 1]:match("^%-%-json=.+%.testing%-ci%-repos%.json$") ~= nil,
+      "run_repos: asks for the document (" .. tostring(argv_seen[#argv_seen - 1]) .. ")"
+    )
     finish(1)
     ok(
       vim.wait(2000, function()
@@ -574,6 +732,116 @@ return function(H)
         return said():find("all green or proven", 1, true) ~= nil
       end),
       "run_repos: green is notified"
+    )
+
+    -- live: the state lines fill the table at the top, the progress follows; the document gives the final table,
+    -- the verdict and the quickfix list
+    vim.fn.setqflist({}, "r")
+    messages = {}
+    done = nil
+    editor.system = function(argv, opts, on_exit)
+      opts_seen = opts
+      finish = function(code)
+        local path
+        for _, a in ipairs(argv) do
+          path = a:match("^%-%-json=(.*)$") or path
+        end
+        local f = assert(io.open(path, "wb"))
+        f:write(vim.json.encode(DOC))
+        f:close()
+        on_exit({ code = code, stdout = "", stderr = "" })
+      end
+      return {}
+    end
+    editor.run_repos({
+      args = {},
+      cwd = root,
+      on_done = function(code)
+        done = code
+      end,
+    })
+    local h = handles[#handles]
+    eq(h.title, "testing ci repos", "live: a progress indicator of its own")
+    opts_seen.stdout(
+      nil,
+      "ci repos: [0/3] #1 verify a\na | ci verify: proven\nci repos: [1/3] #1 proven a\n"
+    )
+    opts_seen.stdout(nil, "ci repos: [1/3] #2 verify b\n")
+    local buf = vim.fn.bufnr(editor.view_name("/repos"))
+    ok(
+      vim.wait(2000, function()
+        return #h.updates == 3
+      end),
+      "live: one progress update per state line"
+    )
+    eq(
+      h.updates[3],
+      { text = "verify b", current = 1, total = 3 },
+      "live: the progress text and count"
+    )
+    eq(vim.api.nvim_buf_get_lines(buf, 0, -1, false), {
+      "ci repos  1/3 done",
+      "repo  state    verify      time",
+      "a     proven   -           -",
+      "b     verify   -           -",
+      "(1 not started yet)",
+      "",
+      "ci repos: [0/3] #1 verify a",
+      "a | ci verify: proven",
+      "ci repos: [1/3] #1 proven a",
+      "ci repos: [1/3] #2 verify b",
+    }, "live: the table on top, the output below")
+    -- a second repository with the same directory name (another root) is a row of its own
+    opts_seen.stdout(nil, "ci repos: [1/3] #3 verify a\n")
+    ok(
+      vim.wait(2000, function()
+        return #h.updates == 4
+      end),
+      "live: the state line of the second a"
+    )
+    eq(vim.api.nvim_buf_get_lines(buf, 0, 6, false), {
+      "ci repos  1/3 done",
+      "repo  state    verify      time",
+      "a     proven   -           -",
+      "b     verify   -           -",
+      "a     verify   -           -",
+      "",
+    }, "live: same name, two rows, none left to start")
+    finish(1)
+    ok(
+      vim.wait(2000, function()
+        return done ~= nil
+      end),
+      "live: finishes"
+    )
+    local final = vim.api.nvim_buf_get_lines(buf, 0, 6, false)
+    eq(final, {
+      "ci repos  3/3 done",
+      "repo  state    verify      time",
+      "a     proven   proven      0.0 s",
+      "b     red      not proven  0.0 s",
+      "c     infra    -           0.0 s",
+      "",
+    }, "live: the final table from the document")
+    eq(h.finished, "failed", "live: the progress ends with the outcome")
+    has(said(), "b (red), c (infra)", "live: the verdict names the repositories")
+    eq(vim.fn.getqflist({ size = 1 }).size, 4, "live: the quickfix list of all repositories")
+    eq(vim.fn.getqflist({ title = 1 }).title, "testing ci repos: findings", "live: titled")
+    vim.cmd("silent! cclose")
+    vim.fn.setqflist({}, "r")
+
+    -- a process that cannot start: refused, not stuck, the progress indicator cancelled
+    editor.system = function()
+      error("no such program")
+    end
+    local bad, bad_why = editor.run_repos({ args = {}, cwd = root })
+    eq(bad, false, "run_repos: no process, refused")
+    has(bad_why, "no such program", "run_repos: ... with the reason")
+    eq(editor.state["*repos*"].running, false, "run_repos: no process, not stuck in running")
+    eq(
+      { handles[#handles].title, handles[#handles].cancelled },
+      { "testing ci repos", true },
+      "run_repos: no process, the progress indicator is cancelled"
     )
   end)
   restore()

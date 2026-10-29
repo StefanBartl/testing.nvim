@@ -195,8 +195,12 @@ since. `verify` and `hook` run the driver's subcommands of the same name and sho
 the result was for. It reads a cache and blocks on nothing: every 5 seconds (`editor.REFRESH_AFTER`) and after a run it re-reads
 the document and asks git for the tree of HEAD in the background, so a run in a terminal, a commit or the pre-push hook
 show up (uncommitted changes do not make a result stale; `ci verify` says `dirty`). Completion never waits for
-`testing ci list` either: the first <Tab> after `.testing.lua` changed starts it, the next one has the names. Not part of this version: the progress indicator, the table for
-several repositories (`--repos`) and the terminal.nvim view.
+`testing ci list` either: the first <Tab> after `.testing.lua` changed starts it, the next one has the names.
+
+**Progress.** A run shows a progress indicator (`lib.nvim.progress`, in whatever style it resolves to; nothing for a
+run under 150 ms): the step that just started and how many steps went, out of the profile's steps once `testing ci
+list` has been asked for them (or the steps of `--step=`). It ends with `green`, `partial` or `failed`. Not part of
+this version: the terminal.nvim view.
 
 ## Several repositories
 
@@ -204,16 +208,21 @@ several repositories (`--repos`) and the terminal.nvim view.
 testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list>
            [--repos-include=<names>] [--repos-exclude=<names>] [--refresh]
            [--force] [--jobs=<n>] [--profile=<name>] [--keep-going] [--reuse] [--state-dir=<dir>]
+           [--json=<file>]
 ```
 
 The pipelines of several repositories, one after the other. Every repository is a child process of its own, so
 pipelines never share a Neovim, a global or a working directory. For each one `testing ci verify` runs first: a repository
 whose state is already proven is **skipped** (`--force` runs it anyway), otherwise `testing ci` runs. After a change in
 a library that is the big saving: only the repositories whose proof broke run again. Output is streamed line by line with
-the repository's name in front; at the end there is one row per repository (`proven`/`not proven`/`forced`, the result,
+the repository's name in front, and every change of a repository's state is a line of its own,
+`ci repos: [<done>/<total>] #<index> <event> <name>` (`verify`, `run`, then `proven`, `green`, `red`, `error` or
+`infra`; `#<index>` tells apart two repositories with the same directory name); at the end there is one row per repository (`proven`/`not proven`/`forced`, the result,
 the time) and a verdict line `ci repos: GREEN 3/3 (2 proven, not run)`. The exit code is the worst single result
 (`0` green or proven, `1` red, `2` a usage or pipeline error, `3` infrastructure); the last line of an all-green run is
-`TESTING_CI_OK`.
+`TESTING_CI_OK`. `--json=<file>` writes the rows as the document `testing-ci-repos/1`: `verdict`, `exit`, `profile` and
+`repos`, one entry per repository with `name`, `dir` (absolute), `verify`, `state` (`skipped` for a proven one),
+`code`, `ms` and `doc`, the `testing-ci/1` its run wrote (`null` when it did not run or wrote none).
 
 Which repositories: an explicit list (`--repos`, a list file with one directory per line), or every directory directly
 below a root (`--repos-root`, repeatable) whose `.testing.lua` has a `ci` section. That detection is textual (the file is
@@ -230,7 +239,12 @@ require("testing").setup({
 ```
 
 `:Testing ci repos [--force] [--jobs=<n>] [--profile=<name>] [--refresh] [--keep-going] [--reuse] [--repos-root=<dir>]`
-runs them in one child and streams the output into the buffer `testing-ci://repos-<hash>`.
+runs them in one child and streams the output into the buffer `testing-ci://repos-<hash>`. At the top of that buffer a
+table follows the run (one row per repository with its state, `(n not started yet)` below), with a progress indicator
+alongside; when the child ends, the table is rewritten from its document (verify, result, time per repository), the
+verdict names the repositories that are not green, and their findings fill the quickfix list, each entry with the
+repository's name in front (a repository without findings gets a text-only entry with its state and exit code). The
+list opens only on red.
 
 ## Reports and findings
 

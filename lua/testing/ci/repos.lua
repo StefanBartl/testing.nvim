@@ -9,8 +9,11 @@
 ---
 --- Each repository is a child process of its own (`testing ci verify`, then `testing ci` when the state is not already
 --- proven): the pipelines of different repositories never share a Neovim, a global or a working directory. Output is
---- streamed line by line, each line prefixed with the repository's name. At the end one row per repository; the exit
---- code is the worst single result (0 green or proven, 1 red, 2 a usage or pipeline error, 3 infrastructure).
+--- streamed line by line, each line prefixed with the repository's name; every change of a repository's state is a line
+--- `ci repos: [<finished>/<total>] #<index> <event> <name>` (event: verify, run, then proven, green, red, error or infra), which
+--- the editor reads for its live table. At the end one row per repository; the exit code is the worst single result
+--- (0 green or proven, 1 red, 2 a usage or pipeline error, 3 infrastructure). `--json=<file>` writes the rows as the
+--- document `testing-ci-repos/1`, each with the `testing-ci/1` its run wrote.
 ---
 --- Which repositories: an explicit list (`--repos`, `--repos-file`) or every directory directly below a root
 --- (`--repos-root`, repeatable; the `ci.repos.roots` setting of the editor) whose `.testing.lua` has a `ci` section.
@@ -36,6 +39,7 @@ M.USAGE = table.concat({
   "  --keep-going            run every step of a repository even after a red one",
   "  --reuse                 skip a suite whose stamp still verifies",
   "  --state-dir=<dir>       the state directory of the children and of the cache",
+  "  --json=<file>           write the document testing-ci-repos/1 (one row per repository with its testing-ci/1)",
 }, "\n")
 
 ---@class Testing.Ci.Repos.Args
@@ -51,6 +55,7 @@ M.USAGE = table.concat({
 ---@field keep_going boolean
 ---@field reuse boolean
 ---@field state_dir? string
+---@field json? string
 ---@field help boolean
 
 local VALUED = {
@@ -62,6 +67,7 @@ local VALUED = {
   jobs = true,
   profile = true,
   ["state-dir"] = true,
+  json = true,
 }
 
 ---@param text string
@@ -452,7 +458,7 @@ function M.main(argv, sv)
   ---@type { dir: string, name: string, verify?: string, state?: string, code: integer, ms: integer }[]
   local results = {}
   for i, dir in ipairs(repos) do
-    results[i] = { dir = dir, name = vim.fs.basename(dir), code = 0, ms = 0 }
+    results[i] = { index = i, dir = dir, name = vim.fs.basename(dir), code = 0, ms = 0 }
   end
 
   ---Run one child, streaming its lines with the repository's name in front; calls `cb(code)` when it ended.
@@ -500,11 +506,19 @@ function M.main(argv, sv)
   end
 
   local finished, next_index, active = 0, 1, 0
+  ---One line per change of a repository's state (the editor's live table reads it); `#<index>` tells apart two
+  ---repositories with the same directory name.
+  ---@param word string
+  ---@param r table
+  local function event(word, r)
+    sv.out(("ci repos: [%d/%d] #%d %s %s"):format(finished, #results, r.index, word, r.name))
+  end
   local pump
   local function done(r, t0)
     r.ms = math.floor((vim.uv.hrtime() - t0) / 1e6)
     finished = finished + 1
     active = active - 1
+    event(r.state == "skipped" and "proven" or r.state, r)
     pump()
   end
   local function start(r)
@@ -517,8 +531,19 @@ function M.main(argv, sv)
       if args.reuse then
         run_args[#run_args + 1] = "--reuse"
       end
+      local json = args.json and (vim.fn.tempname() .. ".testing-ci.json") or nil
+      if json then
+        run_args[#run_args + 1] = "--json=" .. json
+      end
+      event("run", r)
       spawn(r, run_args, function(code)
         r.code, r.state = code, state_of(code)
+        if json then
+          local text = require("lib.nvim.fs.read")(json)
+          local okd, doc = pcall(vim.json.decode, text or "")
+          r.doc = okd and type(doc) == "table" and doc or nil
+          pcall(os.remove, json)
+        end
         done(r, t0)
       end)
     end
@@ -527,6 +552,7 @@ function M.main(argv, sv)
       run()
       return
     end
+    event("verify", r)
     spawn(r, common(args, { "verify" }), function(code)
       if code == 0 then
         r.verify, r.state, r.code = "proven", "skipped", 0
@@ -567,8 +593,44 @@ function M.main(argv, sv)
       )
     )
   end
-  local verdict = exit == 0 and "GREEN" or exit == 1 and "RED" or exit == 2 and "ERROR" or "INFRA"
-  sv.out(("ci repos: %s %d/%d (%d proven, not run)"):format(verdict, green, #results, proven))
+  ---@param code integer
+  ---@return string
+  local function word(code)
+    return code == 0 and "GREEN" or code == 1 and "RED" or code == 2 and "ERROR" or "INFRA"
+  end
+  -- the document first: a document that cannot be written makes the run infrastructure, and the verdict line says so
+  if args.json then
+    local rows = {}
+    for i, r in ipairs(results) do
+      rows[i] = {
+        name = r.name,
+        -- absolute: a reader resolves the findings' file names against it, from whatever directory it runs in
+        dir = (vim.fs.normalize(vim.fn.fnamemodify(r.dir, ":p")):gsub("([^:/])/+$", "%1")),
+        verify = r.verify or vim.NIL,
+        state = r.state or "infra",
+        code = r.code,
+        ms = r.ms,
+        doc = r.doc or vim.NIL,
+      }
+    end
+    local text = vim.json.encode({
+      schema = M.SCHEMA,
+      verdict = word(exit):lower(),
+      exit = exit,
+      profile = args.profile or vim.NIL,
+      repos = rows,
+    })
+    local ok_w, werr = require("lib.nvim.fs.write.atomic")(
+      vim.fn.fnamemodify(args.json, ":p"),
+      text,
+      { mkdirp = true }
+    )
+    if not ok_w then
+      sv.err(("testing ci: cannot write %s: %s"):format(args.json, tostring(werr)))
+      exit = math.max(exit, M.EXIT_INFRA)
+    end
+  end
+  sv.out(("ci repos: %s %d/%d (%d proven, not run)"):format(word(exit), green, #results, proven))
   if exit == 0 then
     sv.out(require("testing.ci").SENTINEL)
   end

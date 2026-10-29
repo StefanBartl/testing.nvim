@@ -25,6 +25,13 @@ M.state = {}
 ---@type function
 M.system = vim.system
 
+---Replaced by a spec: the progress indicator of a run (`lib.nvim.progress`).
+---@param opts table
+---@return { update: fun(self, fields: table), finish: fun(self, text?: string), cancel: fun(self, text?: string) }
+function M.progress(opts)
+  return require("lib.nvim.progress").create(opts)
+end
+
 ---@param root string
 ---@return string
 local function key(root)
@@ -285,8 +292,9 @@ function M.view_name(root)
 end
 
 ---The live buffer of a project: one per root, cleared at the start of a run, shown in a split when it is not visible.
+---`header(lines)` replaces a block at the top of the buffer (the table of a multi-repository run), `append` adds below.
 ---@param root string
----@return { buf: integer, append: fun(lines: string[]) }
+---@return { buf: integer, append: fun(lines: string[]), header: fun(lines: string[]) }
 function M.open_view(root)
   local name = M.view_name(root)
   local buf = vim.fn.bufnr(name)
@@ -311,16 +319,29 @@ function M.open_view(root)
     vim.api.nvim_win_set_buf(0, buf)
     vim.api.nvim_set_current_win(prev)
   end
+  local header_n = 0
+  ---@return boolean
+  local function pristine()
+    return vim.api.nvim_buf_line_count(buf) == 1
+      and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
+  end
   return {
     buf = buf,
+    header = function(lines)
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return
+      end
+      vim.bo[buf].modifiable = true
+      vim.api.nvim_buf_set_lines(buf, 0, pristine() and -1 or header_n, false, lines)
+      header_n = #lines
+      vim.bo[buf].modifiable = false
+    end,
     append = function(lines)
       if not vim.api.nvim_buf_is_valid(buf) then
         return
       end
       vim.bo[buf].modifiable = true
-      local first = vim.api.nvim_buf_line_count(buf) == 1
-        and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
-      vim.api.nvim_buf_set_lines(buf, first and 0 or -1, -1, false, lines)
+      vim.api.nvim_buf_set_lines(buf, pristine() and 0 or -1, -1, false, lines)
       vim.bo[buf].modifiable = false
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(win) == buf then
@@ -333,11 +354,13 @@ end
 
 ---Feed the live buffer from the two pipes of a child: one unfinished line per stream (a chunk of stdout that ends
 ---mid-line is not glued to a chunk of stderr), a line shown as a terminal shows it (the text after the last carriage
----return). `feed(stream)` is the pipe callback, `flush()` writes what is left when the process has ended.
+---return). `feed(stream)` is the pipe callback, `flush()` writes what is left when the process has ended; `on_line`
+---sees every line as it is shown.
 ---@param view { append: fun(lines: string[]) }
+---@param on_line? fun(line: string)
 ---@return fun(stream: "out"|"err"): fun(_: any, data: string|nil) feed
 ---@return fun() flush
-function M.feeder(view)
+function M.feeder(view, on_line)
   local partial = { out = "", err = "" }
   ---@param line string
   ---@return string
@@ -357,6 +380,9 @@ function M.feeder(view)
         end
         if #lines > 0 then
           view.append(lines)
+          for _, line in ipairs(on_line and lines or {}) do
+            on_line(line)
+          end
         end
       end)
     end
@@ -364,8 +390,12 @@ function M.feeder(view)
   local function flush()
     for _, stream in ipairs({ "out", "err" }) do
       if partial[stream] ~= "" then
-        view.append({ shown(partial[stream]) })
+        local line = shown(partial[stream])
         partial[stream] = ""
+        view.append({ line })
+        if on_line then
+          on_line(line)
+        end
       end
     end
   end
@@ -402,8 +432,127 @@ function M.repos_args(ci_cfg, flags)
   return args
 end
 
+---A state line of the multi-repository run (`ci repos: [<finished>/<total>] #<index> <event> <name>`), or nil.
+---@param line string
+---@return { finished: integer, total: integer, index: integer, event: string, name: string }|nil
+function M.repos_event(line)
+  local finished, total, index, event, name =
+    line:match("^ci repos: %[(%d+)/(%d+)%] #(%d+) (%a+) (.+)$")
+  if not finished then
+    return nil
+  end
+  return {
+    finished = tonumber(finished),
+    total = tonumber(total),
+    index = tonumber(index),
+    event = event,
+    name = name,
+  }
+end
+
+---The table at the top of the multi-repository view: one row per repository seen so far (in order of appearance),
+---then the ones not started yet. `rows` are `{ name, state, verify?, ms? }`.
+---@param rows { name: string, state: string, verify?: string, ms?: integer }[]
+---@param finished integer
+---@param total integer
+---@return string[]
+function M.repos_table(rows, finished, total)
+  local width = #"repo"
+  for _, r in ipairs(rows) do
+    width = math.max(width, vim.fn.strdisplaywidth(r.name))
+  end
+  local lines = {
+    ("ci repos  %d/%d done"):format(finished, total),
+    ("%-" .. width .. "s  %-8s %-11s %s"):format("repo", "state", "verify", "time"),
+  }
+  for _, r in ipairs(rows) do
+    lines[#lines + 1] = ("%-" .. width .. "s  %-8s %-11s %s"):format(
+      r.name,
+      r.state,
+      type(r.verify) == "string" and r.verify or "-",
+      type(r.ms) == "number" and ("%.1f s"):format(r.ms / 1000) or "-"
+    )
+  end
+  if total > #rows then
+    lines[#lines + 1] = ("(%d not started yet)"):format(total - #rows)
+  end
+  lines[#lines + 1] = ""
+  return lines
+end
+
+---Quickfix items of a `testing-ci-repos/1` document: the findings of every repository that is not green, each text
+---with the repository's name in front; a repository without a document gets a text-only item.
+---@param doc table
+---@return table[]
+function M.repos_items(doc)
+  local items = {}
+  for _, r in ipairs(type(doc) == "table" and type(doc.repos) == "table" and doc.repos or {}) do
+    if r.state ~= "green" and r.state ~= "skipped" then
+      local own = type(r.doc) == "table" and M.items(r.doc, r.dir) or {}
+      for _, item in ipairs(own) do
+        item.text = ("%s %s"):format(r.name, item.text)
+        items[#items + 1] = item
+      end
+      if #own == 0 then
+        items[#items + 1] = {
+          text = ("%s: %s (exit %s)"):format(r.name, tostring(r.state), tostring(r.code)),
+          type = "E",
+        }
+      end
+    end
+  end
+  return items
+end
+
+---What the user is told when the multi-repository child has ended.
+---@param doc table|nil `testing-ci-repos/1` (nil: none could be read)
+---@param code integer
+---@return { level: "info"|"error", message: string, items: table[] }
+function M.repos_verdict(doc, code)
+  if type(doc) ~= "table" or doc.schema ~= "testing-ci-repos/1" or type(doc.repos) ~= "table" then
+    if code == 0 then
+      return { level = "info", message = "ci repos: all green or proven", items = {} }
+    end
+    return {
+      level = "error",
+      message = ("ci repos: exit %d (see %s)"):format(code, M.view_name("/repos")),
+      items = {},
+    }
+  end
+  local proven, bad = 0, {}
+  for _, r in ipairs(doc.repos) do
+    if r.state == "skipped" then
+      proven = proven + 1
+    elseif r.state ~= "green" then
+      bad[#bad + 1] = ("%s (%s)"):format(tostring(r.name), tostring(r.state))
+    end
+  end
+  if code == 0 and #bad == 0 then
+    return {
+      level = "info",
+      message = ("ci repos: all %d green or proven (%d proven, not run)"):format(
+        #doc.repos,
+        proven
+      ),
+      items = {},
+    }
+  end
+  local items = M.repos_items(doc)
+  return {
+    level = "error",
+    message = ("ci repos: %s, %d in the quickfix list (exit %d)"):format(
+      #bad > 0 and table.concat(bad, ", ") or tostring(doc.verdict),
+      #items,
+      code
+    ),
+    items = items,
+  }
+end
+
 ---Run the pipelines of several repositories (`testing ci --repos ...`) in a child; the output streams into the view
----`testing-ci://repos`. Returns false with a reason when one is already running or the child cannot start.
+---`testing-ci://repos`, with a table of the repositories at its top that follows the run, and a progress indicator.
+---At the end the document the child wrote (`--json`) gives the verdict and the quickfix list (opened only on red).
+---Returns false with a reason when one is already running or the child cannot start.
 ---@param o { args: string[], cwd: string, on_done?: fun(code: integer) }
 ---@return boolean started
 ---@return string|nil err
@@ -414,8 +563,27 @@ function M.run_repos(o)
     return false, "a multi-repository run is already going"
   end
   local view = M.open_view("/repos")
-  local feed, flush = M.feeder(view)
-  local argv = M.child_argv(o.cwd, vim.list_extend({ "ci" }, o.args))
+  -- rows by the child's index: two repositories with the same directory name stay two rows
+  local rows, by_index = {}, {}
+  local progress = M.progress({ title = "testing ci repos" })
+  local function on_line(line)
+    local ev = M.repos_event(line)
+    if not ev then
+      return
+    end
+    local row = by_index[ev.index]
+    if not row then
+      row = { name = ev.name }
+      by_index[ev.index] = row
+      rows[#rows + 1] = row
+    end
+    row.state = ev.event
+    view.header(M.repos_table(rows, ev.finished, ev.total))
+    progress:update({ text = ev.event .. " " .. ev.name, current = ev.finished, total = ev.total })
+  end
+  local feed, flush = M.feeder(view, on_line)
+  local json = vim.fn.tempname() .. ".testing-ci-repos.json"
+  local argv = M.child_argv(o.cwd, vim.list_extend({ "ci", "--json=" .. json }, o.args))
   table.remove(argv) -- the multi-repository run takes no --root: it works on the repositories it is told about
   entry.running = true
   local ok, started = pcall(M.system, argv, {
@@ -432,11 +600,29 @@ function M.run_repos(o)
       if (res.signal or 0) ~= 0 then
         code = 3 -- killed by a signal: infrastructure, whatever code the runtime reports
       end
-      local notify = require("testing.notify").get()
-      if code == 0 then
-        notify.info("ci repos: all green or proven")
-      else
-        notify.error(("ci repos: exit %d (see %s)"):format(code, M.view_name("/repos")))
+      local doc = read_json(json)
+      pcall(os.remove, json)
+      if type(doc) == "table" and type(doc.repos) == "table" then
+        local final = {}
+        for i, r in ipairs(doc.repos) do
+          final[i] = {
+            name = tostring(r.name),
+            state = r.state == "skipped" and "proven" or tostring(r.state),
+            verify = r.verify,
+            ms = r.ms,
+          }
+        end
+        view.header(M.repos_table(final, #final, #final))
+      end
+      local verdict = M.repos_verdict(doc, code)
+      progress:finish(verdict.level == "info" and "green" or "failed")
+      require("testing.notify").get()[verdict.level](verdict.message)
+      if #verdict.items > 0 then
+        require("lib.nvim.ui.list").qf(
+          verdict.items,
+          "testing ci repos: findings",
+          { open = "auto" }
+        )
       end
       if o.on_done then
         o.on_done(code)
@@ -445,6 +631,7 @@ function M.run_repos(o)
   end)
   if not ok or not started then
     entry.running = false
+    progress:cancel()
     return false, tostring(started)
   end
   return true
@@ -471,7 +658,22 @@ function M.run(o)
     reuse = o.reuse,
   })
   local view = M.open_view(o.root)
-  local feed, flush = M.feeder(view)
+  local plan = M.step_plan(o.root, o.profile, o.steps)
+  local planned = plan and {} or nil
+  for _, name in ipairs(plan or {}) do
+    planned[name] = true
+  end
+  local progress = M.progress({ title = "testing ci" })
+  -- a step counts once, and only a planned one when the plan is known: a step's own output can start with `== `
+  local counted, seen = {}, 0
+  local feed, flush = M.feeder(view, function(line)
+    local step = M.step_of(line)
+    if step and not counted[step] and (not planned or planned[step]) then
+      counted[step] = true
+      seen = seen + 1
+      progress:update({ text = step, current = seen, total = plan and #plan or nil })
+    end
+  end)
   local function finish(res)
     vim.schedule(function()
       flush()
@@ -479,6 +681,9 @@ function M.run(o)
       local doc = read_json(json)
       pcall(os.remove, json)
       local verdict = M.verdict(doc, res.code or -1, o.root, res.stderr)
+      progress:finish(
+        verdict.level == "info" and "green" or verdict.level == "warn" and "partial" or "failed"
+      )
       local notify = require("testing.notify").get()
       notify[verdict.level](verdict.message)
       if #verdict.items > 0 then
@@ -500,6 +705,7 @@ function M.run(o)
   }, finish)
   if not ok or not started then
     entry.running = false
+    progress:cancel()
     return false, tostring(started)
   end
   return true
@@ -576,6 +782,43 @@ function M.list(root)
     end
   end
   return cached and cached.list or nil
+end
+
+---The step a line of the terminal report starts (`== <step>` or `== <step>: <argv>` or `== <step> (skipped: ...)`).
+---@param line string
+---@return string|nil
+function M.step_of(line)
+  return line:match("^== ([^%s:]+)")
+end
+
+---The steps a run will report, without starting anything: the distinct steps asked for, or those of the profile as
+---`testing ci list` gave them while `.testing.lua` is unchanged since; nil when not known.
+---@param root string
+---@param profile? string
+---@param steps? string[]
+---@return string[]|nil
+function M.step_plan(root, profile, steps)
+  if steps and #steps > 0 then
+    local out, seen = {}, {}
+    for _, name in ipairs(steps) do
+      if not seen[name] then
+        seen[name] = true
+        out[#out + 1] = name
+      end
+    end
+    return out
+  end
+  local cfg = vim.uv.fs_stat(root .. "/.testing.lua")
+  local cached = list_cache[key(root)]
+  if not cfg or not cached or cached.stamp ~= cfg.mtime.sec * 1000000000 + cfg.mtime.nsec then
+    return nil
+  end
+  local list = cached.list
+  if type(list) ~= "table" or type(list.profiles) ~= "table" then
+    return nil
+  end
+  local names = list.profiles[(profile and profile ~= "") and profile or list.default]
+  return type(names) == "table" and names or nil
 end
 
 return M
