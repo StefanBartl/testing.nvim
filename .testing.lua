@@ -12,6 +12,11 @@ return {
   -- Sniff the dialect per file. The specs of this repo are `return function(H)` files on
   -- TESTS/harness.lua.
   dialect = "auto",
+  -- Every spec file runs in a child editor of its own, four at a time. `auto` would run all files one after the other
+  -- in ONE editor, where `--jobs` changes nothing: 8 minutes against 2 for this suite (187 files, many of which
+  -- start editors themselves), and nothing leaks from one file into the next.
+  isolated = "file",
+  jobs = 4,
   -- Entry for isolated child runs: puts this checkout and lib.nvim on the runtimepath.
   minit = "TESTS/minimal_init.lua",
   -- lib.nvim is resolved by the runner itself (it cannot run without it), so `deps` stays empty.

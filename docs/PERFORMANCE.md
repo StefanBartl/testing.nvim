@@ -233,6 +233,24 @@ seed of every child), and each of them needs the same test as this one: a proof 
 So on lib.nvim the incremental loop is "about 1.3 s after editing a spec" and "one to two minutes after editing a
 module". The budget stays missed; it is not adjusted.
 
+## Why `--jobs` can change nothing
+
+`--jobs n` caps the **child editors** that run at once. A run that is not isolated (`isolated = "none"`, and `"auto"`
+runs every dialect except busted that way) runs all files one after the other in the one editor: `--jobs 6` then
+changes nothing, which is what the suite of this repository showed (2026-10-29, Windows, 12 cores, 187 files):
+
+| Configuration | Wall time of the suite |
+| --- | --- |
+| `isolated = "auto"` (one editor, one file after the other), any `--jobs` | 480 to 487 s |
+| `--isolated file --jobs 6` | 120 s (two spec files were red, both fixed) |
+| `isolated = "file"`, `jobs = 4` in `.testing.lua` | 146 s |
+
+A child editor that does nothing costs about 0.2 s here (24 empty files: 4.7 s with `--jobs 1`, 2.1 s with `--jobs 4`),
+so the time of the suite is the specs themselves (many start editors of their own), not the starting of the children.
+The sum of the per-file times is 423 s, the longest file 30 s. A project whose specs are in one editor and slow
+should try `isolated = "file"` with `jobs`; what a spec leaves behind no longer reaches the next file, and a spec that
+needs state of an earlier one shows up at once.
+
 ## The worker pool
 
 What the task text asks of `--jobs`, checked against the code and the specs:

@@ -398,7 +398,11 @@ jobs:
     }, { text = true, timeout = 30000, env = { NVIM_APPNAME = "wave2-gate-test" } })
     :wait()
   eq(res.code, 1, "the gate exits 1 when a dependency is missing")
-  has(res.stderr, "dependency 'testing.nvim' not found", "and names the dependency")
+  -- which one is named depends on what the environment finds (an isolated child of the runner has TESTING_NVIM_DIR)
+  ok(
+    (res.stderr or ""):find("dependency '[%w%._%-]+' not found") ~= nil,
+    "and names the dependency (" .. tostring(res.stderr):sub(1, 200) .. ")"
+  )
 
   -- applied twice, nothing is left to do (the gate is recognised)
   write(repo .. "/TESTS/minimal_init.lua", minit.after)

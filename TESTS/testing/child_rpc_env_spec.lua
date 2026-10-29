@@ -118,8 +118,9 @@ return function(H)
     eq(free.env.LANG, "de_AT.UTF-8", "deterministic = false: LANG is the parent's")
     eq(free.env.TZ, "Europe/Vienna", "deterministic = false: TZ is the parent's")
     eq(free.env.LC_TIME, "de_AT.UTF-8", "deterministic = false: LC_* too")
-    -- macOS: the editor itself exports LC_ALL from the system locale, so only elsewhere it must be absent
-    if vim.fn.has("mac") == 0 then
+    -- macOS: the editor itself exports LC_ALL from the system locale; an isolated child of the runner has it set to
+    -- C.UTF-8 (determinism): only where this editor has none of its own must it be absent
+    if vim.fn.has("mac") == 0 and vim.uv.os_getenv("LC_ALL") == nil then
       eq(free.env.LC_ALL, nil, "and LC_ALL is not invented")
     end
 
