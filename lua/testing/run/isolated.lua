@@ -530,6 +530,7 @@ end
 ---@field selector_spec? { filter?: string[], tags?: string[], exclude_tags?: string[] } What the children rebuild their selector from.
 ---@field lf? table<string, table<string, true>>
 ---@field maxfail? integer
+---@field on_file_done? fun(rel: string) Called once all slots of a file are committed (also for a file the selection removed entirely).
 ---@field out_of_budget? fun(): boolean `--time-budget`: asked before a file starts, never while one runs.
 ---@field seed? integer
 ---@field timeouts? Testing.Child.Timeouts
@@ -1104,6 +1105,33 @@ function M.run(opts)
       and pool_fallback_note == nil
   end
 
+  ---`--time-budget`: is the file of this slot out of budget? Asked before the first slot of a file starts (a file that
+  ---began finishes, its other case slots too). A skipped file stays unrun and nothing of it is committed.
+  ---@param slot Testing.Isolated.Slot
+  ---@return boolean skipped
+  local function budget_skip(slot)
+    local rel = slot.entry.rel
+    if not slot.not_first and not budget_out and opts.out_of_budget and opts.out_of_budget() then
+      budget_out = true
+    end
+    if budget_files[rel] or (budget_out and not slot.not_first and not state.stopped) then
+      budget_files[rel] = true
+      slot.state = "done"
+      return true
+    end
+    return false
+  end
+
+  ---Tell the caller the file begins (once per file), when it really does: after the budget and the warm pool let it.
+  ---@param slot Testing.Isolated.Slot
+  local function announce(slot)
+    if slot.announced or slot.not_first or state.stopped or not opts.on_file_start then
+      return
+    end
+    slot.announced = true
+    pcall(opts.on_file_start, slot.entry.rel)
+  end
+
   ---Run the file of `slot` in a pool member. Returns false when no member could be started (the
   ---caller then runs a child of its own, and says so once).
   ---@param slot Testing.Isolated.Slot
@@ -1129,6 +1157,12 @@ function M.run(opts)
       slot.state = "done"
       return true
     end
+    -- the member may have been waited for past the budget (a pool smaller than --jobs): ask again
+    if budget_skip(slot) then
+      pl:release(member)
+      return true
+    end
+    announce(slot)
     local mchild = member.child
     local h = mchild.proc()
     if not frag_dir then
@@ -1282,18 +1316,11 @@ function M.run(opts)
 
   ---@param slot Testing.Isolated.Slot
   local function run_slot(slot)
-    local rel = slot.entry.rel
-    if not slot.not_first and not budget_out and opts.out_of_budget and opts.out_of_budget() then
-      budget_out = true
-    end
-    if budget_files[rel] or (budget_out and not slot.not_first and not state.stopped) then
-      -- the file never began: it stays unrun (its other case slots too), nothing of it is committed
-      budget_files[rel] = true
-      slot.state = "done"
+    if budget_skip(slot) then
       return
     end
-    if opts.on_file_start and not slot.not_first and not state.stopped then
-      pcall(opts.on_file_start, slot.entry.rel)
+    if not pooled(slot) then
+      announce(slot)
     end
     if pooled(slot) and run_pooled(slot) then
       return
@@ -1301,6 +1328,7 @@ function M.run(opts)
     if slot.state == "done" then
       return
     end
+    announce(slot)
     run_child(slot)
   end
 
@@ -1482,6 +1510,10 @@ function M.run(opts)
   local function commit_ready()
     while next_commit <= #slots do
       local slot = slots[next_commit]
+      if not state.stopped and slot.kind == "inproc" and slot.state ~= "done" then
+        -- an in-process file runs here, at its turn: the budget is asked before it starts like for a child
+        budget_skip(slot)
+      end
       if state.stopped then
         -- a file with several case slots is one file, and a file that already ran is not "unrun"
         if not slot.not_first then
@@ -1500,6 +1532,11 @@ function M.run(opts)
           return
         end
         commit(slot)
+        -- the slots of one file are consecutive: the file is done with its last slot
+        local following = slots[next_commit + 1]
+        if opts.on_file_done and not (following and following.not_first) and not state.stopped then
+          pcall(opts.on_file_done, slot.entry.rel)
+        end
       end
       next_commit = next_commit + 1
     end

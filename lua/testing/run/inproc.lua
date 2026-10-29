@@ -144,6 +144,7 @@ end
 ---@field skip_facts? boolean Do not ask git for the header (a child editor: the parent owns it).
 ---@field on_case? fun(case: Testing.Result.Case) Progress hook, called for every recorded case.
 ---@field on_file_start? fun(rel: string) Called when a file begins to run (before its first case); never for a file that is not run.
+---@field on_file_done? fun(rel: string) Called once a file's cases are all recorded (also for a file the selection removed entirely); never for a file that is not run.
 ---@field on_case_early? fun(case: Testing.Result.Case) Called the moment a dialect finishes a case, long before the file is over (a child editor streams these, so a kill keeps them). The case may still be adjusted afterwards (file deadline); `on_case` sees the final one.
 ---@field clock? Testing.Assert.Clock Case clock in ms (default `vim.uv.hrtime`).
 ---@field soft? Testing.Isolation.Session Soft isolation (`isolated = "soft"`): the state a file changed is restored before the next file; findings land on the file's last case.
@@ -449,6 +450,9 @@ local function run_files(opts, holder)
 
       if not is_busted and not accept(file_id) then
         files_unselected = files_unselected + 1
+        if opts.on_file_done then
+          pcall(opts.on_file_done, rel)
+        end
       else
         files_run = files_run + 1
         if opts.on_file_start then
@@ -612,6 +616,9 @@ local function run_files(opts, holder)
 
         for _, c in ipairs(cases) do
           record(c)
+        end
+        if opts.on_file_done then
+          pcall(opts.on_file_done, rel)
         end
         if maxfail and bad_total >= maxfail then
           stopped = true

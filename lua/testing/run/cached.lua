@@ -52,7 +52,8 @@ local CONFIG_NOT_IN_KEY = {
 ---@field hits table<string, Testing.Cache.Case[]> Spec file -> its cached cases.
 ---@field keys table<string, string> Spec file -> key (files that run and can be stored).
 ---@field infos table<string, Testing.Cache.FileInfo> Spec file -> what the key was computed from (the key is computed again after the run).
----@field uncacheable table<string, string> Spec file -> why it has no key.
+---@field uncacheable table<string, string> Spec file -> why it has no key (or why the discovery's finding keeps it from being cached).
+---@field keyless? table<string, string> The files among `uncacheable` that have no key because of what they read or do (clock, process, environment): the only ones `--skip-uncacheable` may leave out. A file with a discovery finding is not among them.
 ---@field details table<string, Testing.Cache.Detail> Spec file -> why it has no key, in a form a program can read.
 ---@field parts table<string, string[]> Spec file -> the lines its key is the hash of (kept in the stored entry).
 ---@field allow_flip table<string, boolean> Spec file -> declares `-- @cache-allow nondeterministic`.
@@ -311,6 +312,7 @@ function M.prepare(o)
     keys = {},
     infos = {},
     uncacheable = {},
+    keyless = {},
     details = {},
     parts = {},
     allow_flip = {},
@@ -368,6 +370,7 @@ function M.prepare(o)
       local key, why, parts, detail = cache.key(info, prep.ctx)
       if not key then
         prep.uncacheable[f.rel] = why or "no key"
+        prep.keyless[f.rel] = why or "no key"
         prep.details[f.rel] = detail
         if detail and detail.kind == "nondeterministic" then
           prep.nondeterministic[f.rel] = detail.classes

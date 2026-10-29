@@ -154,37 +154,36 @@ function Tracker:begin()
   end
 end
 
----A case was recorded. A bad case in a phase 1 file is a red interim finding at once; the last pending file that
----reports ends phase 1.
+---A case was recorded. A bad case in a phase 1 file is a red interim finding at once. A passing case says nothing
+---yet: the cases of a file arrive in batches, so only `file_done` knows that no bad case is still to come.
 ---@param case { file: string, status: string }
 function Tracker:case(case)
   if self._fired or not self._set[case.file] then
     return
   end
-  if self._pending[case.file] then
-    self._pending[case.file] = nil
-  end
   if BAD[case.status] then
     self._bad = self._bad + 1
     self._failed_files[case.file] = true
+    self._pending[case.file] = nil -- a file with a bad case has run
     self:_fire()
     return
   end
   if case.status == "skip" then
     self._skip = self._skip + 1
   end
+end
+
+---All the cases of a file are recorded (the runner says so, also for a file with no case at all). The last pending
+---file of phase 1 ends it.
+---@param rel string
+function Tracker:file_done(rel)
+  if self._fired or not self._set[rel] then
+    return
+  end
+  self._pending[rel] = nil
   if next(self._pending) == nil then
     self:_fire()
   end
-end
-
----A file outside phase 1 starts: phase 1 is over whatever it still owes (a file without cases reports nothing).
----@param rel string
-function Tracker:file_start(rel)
-  if self._fired or self._set[rel] then
-    return
-  end
-  self:_fire()
 end
 
 ---@return boolean

@@ -894,9 +894,12 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     if prep.mode == "off" then
       err("testing: note: --skip-uncacheable: no cache is in use, nothing is left out")
     else
+      -- only a file without a KEY (what it reads or does): one the discovery has a finding for must still run and
+      -- say so, and one that failed last time is exactly the one that must not be left out
       local kept = {}
       for _, f in ipairs(prep.run_files) do
-        if prep.uncacheable[f.rel] then
+        local red_before = order_info and order_info[f.rel] and order_info[f.rel].stage == "red"
+        if prep.keyless and prep.keyless[f.rel] and not red_before then
           deliberate = deliberate + 1
           dropped[f.rel] = true
         else
@@ -904,6 +907,15 @@ function M.execute_run(plan, sv, run_opts, err, ev)
         end
       end
       prep.run_files = kept
+      if #kept == 0 and deliberate > 0 and vim.tbl_count(prep.hits) == 0 then
+        release()
+        err(
+          ("testing: --skip-uncacheable left out all %d spec file(s) (none has a cache key, none is cached): nothing ran"):format(
+            deliberate
+          )
+        )
+        return M.EXIT_USAGE
+      end
     end
   end
   common.files = prep.run_files
@@ -918,7 +930,11 @@ function M.execute_run(plan, sv, run_opts, err, ev)
     end
   end
   -- `testing fast`: one interim finding when the likely specs (phase 1) are done; the verdict of the run replaces it
-  if args.fast and order_info then
+  if args.fast and not (order_info and args.order == "priority") then
+    err(
+      "testing: note: fast: only --order priority tells the likely files; no interim finding with another order"
+    )
+  elseif args.fast and order_info then
     local fast_mod = require("testing.run.fast")
     local in_order = {}
     for _, f in ipairs(files) do
@@ -951,18 +967,16 @@ function M.execute_run(plan, sv, run_opts, err, ev)
         end
       end,
     })
-    local prev_start, prev_case = common.on_file_start, common.on_case
-    common.on_file_start = function(rel)
-      phase:file_start(rel)
-      if prev_start then
-        prev_start(rel)
-      end
-    end
+    -- the case event goes out first, so the stream reads: the cases of the likely files, then `phase_done`
+    local prev_case = common.on_case
     common.on_case = function(case)
-      phase:case(case)
       if prev_case then
         prev_case(case)
       end
+      phase:case(case)
+    end
+    common.on_file_done = function(rel)
+      phase:file_done(rel)
     end
     phase:begin()
   end
@@ -1083,7 +1097,11 @@ function M.execute_run(plan, sv, run_opts, err, ev)
   end
   local res = report.result
   if #res.cases == 0 then
-    err("testing: no case matched the selection; nothing ran")
+    if (report.files_unrun_budget or 0) > 0 and report.files_run == 0 then
+      err("testing: the --time-budget ran out before the first spec file started; nothing ran")
+    else
+      err("testing: no case matched the selection; nothing ran")
+    end
     return M.EXIT_USAGE
   end
   -- 6. reporters

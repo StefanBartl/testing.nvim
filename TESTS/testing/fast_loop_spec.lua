@@ -83,15 +83,32 @@ return function(H)
     t:begin()
     eq(#fired, 0, "tracker: a file that still has to run keeps phase 1 open")
     t:case({ file = "b", status = "pass" })
-    eq(#fired, 1, "tracker: the last pending file ends phase 1")
+    eq(#fired, 0, "tracker: a passing case says nothing yet (the file may still have a bad one)")
+    t:file_done("b")
+    eq(#fired, 1, "tracker: the last pending file done ends phase 1")
     eq(
       { fired[1].kind, fired[1].specs, fired[1].cached, fired[1].ran, fired[1].failed },
       { "green", 2, 1, 1, 0 },
       "tracker: green, one from cache, one ran"
     )
     t:case({ file = "b", status = "fail" })
-    t:file_start("z")
+    t:file_done("z")
     eq(#fired, 1, "tracker: fires once")
+  end
+  do
+    -- the cases of a file arrive in a batch, a bad one after good ones: still red, never a green first
+    local t, fired = tracker({ "a" })
+    t:case({ file = "a", status = "pass" })
+    t:case({ file = "a", status = "pass" })
+    eq(#fired, 0, "tracker: good cases do not end phase 1")
+    t:case({ file = "a", status = "fail" })
+    eq(#fired, 1, "tracker: the bad case after them does")
+    eq(fired[1].kind, "red", "tracker: ... red")
+    local u, ufired = tracker({ "a", "b" })
+    u:file_done("a")
+    eq(#ufired, 0, "tracker: another likely file is still owed")
+    u:file_done("b")
+    eq(ufired[1].kind, "green", "tracker: a file with no case at all is done, not a problem")
   end
   do
     local t, fired = tracker({ "a", "b" })
@@ -117,18 +134,18 @@ return function(H)
     local t, fired = tracker({})
     t:begin()
     t:case({ file = "a", status = "pass" })
-    t:file_start("a")
+    t:file_done("a")
     eq(#fired, 0, "tracker: no phase 1, no interim finding")
   end
   do
-    local t, fired = tracker({ "a", "b" })
-    t:case({ file = "a", status = "pass" })
-    t:file_start("z")
-    eq(#fired, 1, "tracker: the first file of phase 2 ends phase 1 whatever it still owes")
-    eq(fired[1].kind, "green-partial", "tracker: a file that never reported is not a plain green")
     local u, ufired = tracker({ "a" })
     u:case({ file = "a", status = "skip" })
+    u:file_done("a")
     eq(ufired[1].kind, "green-partial", "tracker: a skipped case is never green")
+    local v, vfired = tracker({ "a" })
+    v:case({ file = "z", status = "fail" })
+    v:file_done("z")
+    eq(#vfired, 0, "tracker: a bad case of a file outside phase 1 says nothing")
   end
   has(
     fast.line({ kind = "red", specs = 4, cached = 1, ran = 3, failed = 2 }),
@@ -242,7 +259,22 @@ return function(H)
     bad, problem = args_mod.parse({ ".", "--time-budget", "soon" })
     ok(bad == nil and problem:find("--time-budget", 1, true) ~= nil, "args: a bad budget is named")
     ok(args_mod.parse({ "." }).fast == false, "args: fast is off by default")
-    has(args_mod.usage(), "fast ", "args: the usage names fast")
+    has(
+      args_mod.usage(),
+      "  fast     run with --cached --order priority",
+      "args: the usage names fast"
+    )
+    -- the rerun line of the agent reporter: `fast` must not take the place of the root
+    eq(
+      args_mod.repeat_argv({ "fast", ".", "--time-budget", "2m", "--skip-uncacheable" }),
+      { "." },
+      "args: a repeat of a fast run is a plain run of the root"
+    )
+    eq(
+      args_mod.repeat_argv({ "fast", "--cache-dir", "x", "root" }),
+      { "--cache-dir", "x", "root" },
+      "args: ... wherever the root stands"
+    )
   end
 
   -- ------------------------------------------------------------------ the run driver
@@ -306,7 +338,7 @@ return function(H)
     "fast: ... and comes before the verdict"
   )
   ok(r.last ~= "TESTING_OK", "fast: no sentinel after a red run")
-  has(r.out, "3 spec file(s)", "fast: the verdict covers every file (phase 2 ran)")
+  has(r.out, "3 ran", "fast: the verdict says all three files ran (phase 2 too)")
 
   -- -x: the stop after the red file of phase 1 still gives the interim finding and a red verdict
   r = run({ "fast", root, "-x", "--cache-dir", cache }, NOCI)
@@ -428,6 +460,192 @@ return function(H)
   eq(r.last, "TESTING_OK", "skip-uncacheable without a cache leaves nothing out")
   has(r.err, "no cache is in use", "skip-uncacheable: ... and says so")
 
+  -- ------------------------------------------------------------------ the interim finding must not lie
+  local function project(files)
+    local dir = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(dir .. "/TESTS", "p")
+    for rel, text in pairs(files) do
+      local fh = assert(io.open(dir .. "/" .. rel, "wb"))
+      fh:write(text)
+      fh:close()
+    end
+    return dir, dir .. "-state", dir .. "-cache"
+  end
+  local made = {}
+  local function keep(...)
+    for _, p in ipairs({ ... }) do
+      made[#made + 1] = p
+    end
+  end
+
+  do
+    -- a file with several cases reports them in a batch: a bad second case must not be preceded by a green finding
+    local multi = "describe('m', function()\n"
+      .. "  it('one', function()\n    assert.is_true(true)\n  end)\n"
+      .. "  it('two', function()\n    assert.is_true(false)\n  end)\nend)\n"
+    local dir, st, ca = project({ ["TESTS/e_spec.lua"] = multi, ["TESTS/b_spec.lua"] = GREEN })
+    keep(dir, st, ca)
+    local seams = { state_dir = st, env = { CI = "" } }
+    r = run({ dir, "--isolated", "none" }, seams)
+    eq(r.code, 1, "multi-case: setup is red\n" .. r.err)
+    r = run({ "fast", dir, "--isolated", "none", "--cache-dir", ca }, seams)
+    eq(r.code, 1, "multi-case: the run is red\n" .. r.err)
+    has(r.out, "fast: red for the 1 likely spec(s)", "multi-case: the interim finding is red")
+    lacks(r.out, "fast: green", "multi-case: ... never green first")
+  end
+
+  do
+    -- child editors: the file after the likely one starts before the likely one's cases are committed
+    local dir, st, ca = project({ ["TESTS/a_spec.lua"] = GREEN, ["TESTS/c_spec.lua"] = RED })
+    keep(dir, st, ca)
+    local seams = { state_dir = st, env = { CI = "" } }
+    r = run({ dir, "--isolated", "file", "--jobs", "1" }, seams)
+    eq(r.code, 1, "isolated: setup is red\n" .. r.err)
+    local ev_path = dir .. "-events.ndjson"
+    keep(ev_path)
+    r = run({
+      "fast",
+      dir,
+      "--isolated",
+      "file",
+      "--jobs",
+      "1",
+      "--cache-dir",
+      ca,
+      "--events",
+      ev_path,
+    }, seams)
+    eq(r.code, 1, "isolated: the run is red\n" .. r.err)
+    has(
+      r.out,
+      "fast: red for the 1 likely spec(s)",
+      "isolated: the interim finding is red, with its red case"
+    )
+    local verdict_of_phase
+    for _, line in ipairs(vim.fn.readfile(ev_path)) do
+      local obj = vim.json.decode(line)
+      if obj.event == "phase_done" then
+        verdict_of_phase = obj.verdict
+      end
+    end
+    eq(verdict_of_phase, "red", "isolated: phase_done is red")
+
+    -- a likely file that is green now: only the runner saying "the file is done" can close phase 1 as green
+    local fh = assert(io.open(dir .. "/TESTS/c_spec.lua", "wb"))
+    fh:write(GREEN .. "-- fixed\n")
+    fh:close()
+    r = run({
+      "fast",
+      dir,
+      "--isolated",
+      "file",
+      "--jobs",
+      "1",
+      "--cache-dir",
+      ca,
+    }, seams)
+    eq(r.code, 0, "isolated: the fixed run is green\n" .. r.err)
+    has(
+      r.out,
+      "fast: green for the 1 likely spec(s)",
+      "isolated: phase 1 closes green when its file is done"
+    )
+  end
+
+  do
+    -- --skip-uncacheable leaves out files without a key, not a file the discovery has a finding for, and not the
+    -- one that failed last time
+    local nokey =
+      "return function(H)\n  local _ = os.getenv('FAST_LOOP_SPEC_NOKEY')\n  H.ok(false, 'red')\nend\n"
+    local dir, st, ca = project({
+      ["TESTS/a_spec.lua"] = GREEN,
+      ["TESTS/u_spec.lua"] = "local x = 1\n",
+    })
+    keep(dir, st, ca)
+    local seams = { state_dir = st, env = { CI = "" } }
+    r = run({ dir, "--cached", "--cache-dir", ca, "--skip-uncacheable" }, seams)
+    eq(
+      r.code,
+      1,
+      "skip-uncacheable: a file with a discovery finding still runs and stays red\n" .. r.out
+    )
+    lacks(
+      r.out,
+      "skipped on purpose (--skip",
+      "skip-uncacheable: ... and is not counted as left out"
+    )
+
+    local dir2, st2, ca2 = project({ ["TESTS/a_spec.lua"] = GREEN, ["TESTS/d_spec.lua"] = nokey })
+    keep(dir2, st2, ca2)
+    local seams2 = { state_dir = st2, env = { CI = "" } }
+    r = run({ dir2, "--cached", "--cache-dir", ca2 }, seams2)
+    eq(r.code, 1, "skip-uncacheable: setup, the keyless file is red\n" .. r.err)
+    r = run({ "fast", dir2, "--cache-dir", ca2, "--skip-uncacheable" }, seams2)
+    eq(r.code, 1, "skip-uncacheable: the file that failed last time is not left out\n" .. r.out)
+    lacks(r.out, "skipped on purpose (--skip", "skip-uncacheable: ... it ran")
+
+    local dir3, st3, ca3 = project({
+      ["TESTS/d_spec.lua"] = "return function(H)\n  local _ = os.getenv('FAST_LOOP_SPEC_NOKEY')\n  H.ok(true, 'ok')\nend\n",
+    })
+    keep(dir3, st3, ca3)
+    r = run(
+      { dir3, "--cached", "--cache-dir", ca3, "--skip-uncacheable" },
+      { state_dir = st3, env = { CI = "" } }
+    )
+    eq(r.code, 2, "skip-uncacheable: leaving out everything is a usage error")
+    has(r.err, "left out all 1 spec file(s)", "skip-uncacheable: ... and says what happened")
+  end
+
+  do
+    -- the budget also holds for the files an isolated run executes in this editor
+    local dir, st = project({})
+    keep(dir, st)
+    local marker = dir .. "/marker"
+    local function native(name)
+      return ("return function(H)\n  local fh = io.open(%q, 'w')\n  fh:close()\n  H.ok(true, %q)\nend\n"):format(
+        marker,
+        name
+      )
+    end
+    local busted =
+      "describe('m', function()\n  it('one', function()\n    assert.is_true(true)\n  end)\nend)\n"
+    for rel, text in pairs({
+      ["TESTS/a_spec.lua"] = native("a"),
+      ["TESTS/b_spec.lua"] = native("b"),
+      ["TESTS/c_spec.lua"] = busted,
+    }) do
+      local fh = assert(io.open(dir .. "/" .. rel, "wb"))
+      fh:write(text)
+      fh:close()
+    end
+    local jpath = dir .. "-ir.json"
+    keep(jpath)
+    -- no time has passed until the first file has run (it writes the marker)
+    local function marker_clock()
+      return vim.uv.fs_stat(marker) and 100 or 0
+    end
+    r = run(
+      { dir, "--no-cache", "--time-budget", "60s", "--json", jpath },
+      { state_dir = st, env = { CI = "" }, budget_clock = marker_clock }
+    )
+    eq(r.code, 0, "budget, mixed run: exit 0\n" .. r.err)
+    local ir = vim.json.decode(table.concat(vim.fn.readfile(jpath), "\n"))
+    local ran_files = {}
+    for _, c in ipairs(ir.cases) do
+      ran_files[c.file] = true
+    end
+    ok(ran_files["TESTS/a_spec.lua"], "budget, mixed run: the first file ran")
+    ok(
+      not ran_files["TESTS/b_spec.lua"],
+      "budget, mixed run: a file run in this editor is not started after the budget"
+    )
+    eq(ir.run.verdict.kind, "green-partial", "budget, mixed run: green-partial")
+    ok((ir.run.verdict.files.budget or 0) >= 1, "budget, mixed run: the verdict counts the budget")
+  end
+
+  for _, p in ipairs(made) do
+    vim.fn.delete(p, "rf")
+  end
   vim.fn.delete(root, "rf")
   vim.fn.delete(state, "rf")
   vim.fn.delete(cache, "rf")

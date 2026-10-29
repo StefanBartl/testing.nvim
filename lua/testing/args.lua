@@ -1,12 +1,12 @@
 ---@module 'testing.args'
----@brief Argument parser of the command line: `testing [run|init|list|doctor] [<root>] [options]`.
+---@brief Argument parser of the command line: `testing [run|fast|init|list|doctor] [<root>] [options]`.
 ---@description
 --- Pure: reads only the list it is given (the caller passes `_G.arg`, which `nvim -l` fills with
 --- everything after the script), never executes or `eval`s any of it, never touches the editor or
 --- the filesystem (SEC-34/35: no `-c` strings with user text, nothing is interpreted as code).
 ---
 --- Grammar (GNU style):
----   * subcommand: the FIRST argument, when it is exactly `run`, `init`, `list` or `doctor`
+---   * subcommand: the FIRST argument, when it is exactly `run`, `fast`, `init`, `list` or `doctor`
 ---     (default `run`). Any other first argument is the project root as before; a directory that is
 ---     called `list` is spelled `./list` or `--root list`.
 ---   * long options take their value as `--name value` or `--name=value`; the value of the
@@ -921,7 +921,7 @@ end
 ---@return string
 function M.usage()
   local lines = {
-    "usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|init|list|doctor|budget|conformance|surface] [<root>] [options]",
+    "usage: nvim -n -i NONE --headless -u NONE -l scripts/testing.lua [run|fast|init|list|doctor|budget|conformance|surface] [<root>] [options]",
     "       nvim -n -i NONE --headless -u NONE -l scripts/testing.lua migrate [dry-run|apply] [<path>] [--json|--markdown] [--check] [--fleet-root=<dir>]",
     "",
     "  run      run the spec files of <root> (default)",
@@ -1246,7 +1246,9 @@ M.REPEAT_DROP = {
 function M.repeat_argv(argv, drop)
   drop = drop or M.REPEAT_DROP
   local out = {}
-  local i, n = 1, #argv
+  -- `fast` is a run with the cache and an order: the repeat of one failed case is a plain run of it, and the word
+  -- must not take the place of the root
+  local i, n = argv[1] == "fast" and 2 or 1, #argv
   local positionals = 0
   local options_done = false
   while i <= n do

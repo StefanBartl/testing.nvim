@@ -19,7 +19,11 @@
 #
 #   scripts/test.sh fast [options]     `testing fast`: --cached --order priority, the likely specs first with an
 #                                      interim finding after them; the verdict of the whole run comes last
-#                                      (docs/CLI.md); `--time-budget 2m` stops starting files after that long
+#                                      (docs/CLI.md); `--time-budget 2m` stops starting files after that long.
+#                                      This script's throwaway state holds no failure history, so the
+#                                      "failed last time" stage is empty here (changes still count); with
+#                                      history, run `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua
+#                                      fast .` directly
 #   scripts/test.sh conformance        the conformance suite K1..K15 (docs/CONFORMANCE.md) in the same isolated
 #                                      environment; extra options go to `testing conformance .`; exit 1 when the
 #                                      repo is gated (`conformance.gate = true`, or `--gate`) and a check failed
