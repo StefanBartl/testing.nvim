@@ -390,6 +390,27 @@ return function(H)
         needle = "open CDX tag",
         status = "pass", -- info only: the tag is listed, never judged
       },
+      {
+        name = "a vim.fn.confirm call",
+        mutate = function(r)
+          S.write(
+            r .. "/lua/goodp/p.lua",
+            'local c = 1\nvim.fn.confirm("Delete?", "&Yes\\n&No")\nreturn c\n'
+          )
+        end,
+        rule = "UI-63",
+        needle = "native prompt",
+        status = "warn",
+      },
+      {
+        name = "a literal Yes/No select behind another statement",
+        mutate = function(r)
+          S.write(r .. "/lua/goodp/p.lua", 'if x then vim.ui.select({ "Yes", "No" }, {}, cb) end\n')
+        end,
+        rule = "UI-63",
+        needle = "native prompt",
+        status = "warn",
+      },
     }
     for _, case in ipairs(cases) do
       local repo = S.new_repo()
@@ -442,6 +463,19 @@ return function(H)
         "",
       }, "\n")
     )
+    -- UI-63: a marked line, a comment, a harmless select list, the dialog helper's own folder and TESTS/scripts
+    S.write(
+      exempt .. "/lua/goodp/marked.lua",
+      'vim.fn.input("Name: ") -- native-prompt: a synchronous API, documented\n'
+        .. '-- vim.fn.confirm("x")\n'
+        .. 'vim.ui.select({ "a", "b" }, {}, cb)\n'
+    )
+    S.write(
+      exempt .. "/lua/lib/nvim/ui/dialog/native.lua",
+      'return vim.fn.confirm("x", "&Yes\\n&No")\n'
+    )
+    S.write(exempt .. "/TESTS/prompts.lua", 'vim.fn.confirm("x")\n')
+    S.write(exempt .. "/scripts/prompts.lua", 'vim.fn.input("x")\n')
     local rep = run(exempt, { "K1", "K15" })
     ok(S.check(rep, "K15").status == "pass", "exemptions hold " .. S.messages(rep, "K15"))
     ok(

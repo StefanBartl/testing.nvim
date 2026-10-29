@@ -355,6 +355,51 @@ M.rules = {
       return items
     end,
   },
+  {
+    id = "UI-63",
+    title = "no native prompt: confirm/input/inputlist or a literal Yes/No select (grep)",
+    gate = "REVIEW",
+    severity = "recommended",
+    run = function(ctx)
+      -- the patterns of rules-vault's UI-63: each call at the start of a line, and later in it behind something
+      -- that is not a comment; the rule's own drift check against rules.nvim is the bridge (family `UI`)
+      local calls = {
+        "vim%.fn%.confirm%(",
+        "vim%.fn%.input%(",
+        "vim%.fn%.inputlist%(",
+        "vim%.ui%.select%(%s*{%s*[\"']Yes[\"']",
+        "vim%.ui%.select%(%s*{%s*[\"']No[\"']",
+        "vim%.ui%.select%(%s*{%s*[\"']Ja[\"']",
+        "vim%.ui%.select%(%s*{%s*[\"']Nein[\"']",
+      }
+      local items, total = {}, 0
+      for _, src in ipairs(ctx.sources("lua")) do
+        -- the dialog helper and the kit are where the native fallback lives
+        local rel = "/" .. src.rel
+        if
+          not (rel:find("/lib/nvim/ui/dialog/", 1, true) or rel:find("/lib/nvim/ui/kit/", 1, true))
+        then
+          for n, line in ipairs(src.lines) do
+            if not line:find("native-prompt:", 1, true) then
+              for _, call in ipairs(calls) do
+                if line:match("^%s*" .. call) or line:match("^%s*[^%s%-].-" .. call) then
+                  total = push(items, {
+                    message = "an unasked native prompt, ask through lib.nvim.ui.dialog (or mark the line `-- native-prompt: <reason>`): "
+                      .. util.show(vim.trim(line), 80),
+                    file = src.rel,
+                    line = n,
+                  }, total)
+                  break
+                end
+              end
+            end
+          end
+        end
+      end
+      summarize(items, total)
+      return items
+    end,
+  },
 }
 
 return M

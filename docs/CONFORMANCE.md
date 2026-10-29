@@ -148,6 +148,7 @@ a heuristic (a grep) marks its items `warn` itself.
 | CMT-15 | info | open `--- CDX:` tags are listed (a tag that was decided stays) |
 | SEC-47 | heuristic, warn | `os.tmpname()` and `"/tmp/name"` literals |
 | XP-01 | heuristic, warn | `glob`/`globpath` on a concatenated path |
+| UI-63 | recommended (warn) | `vim.fn.confirm/input/inputlist(` and a `vim.ui.select` with a literal Yes/No list in `lua/` (not in `lib/nvim/ui/dialog/` or `ui/kit/`); a line marked `-- native-prompt: <reason>` is exempt. The patterns are those of the rule in rules-vault; add `"UI"` to `conformance.rules_bridge.families` to have `--bridge` report drift against it |
 
 ### Manual rules
 
