@@ -184,6 +184,10 @@ return function(H)
     return root
   end
 
+  local function no_env()
+    return nil
+  end
+
   ---@param root string
   ---@param ... string
   ---@return { code: integer, out: string, err: string, last: string }
@@ -201,7 +205,10 @@ return function(H)
       state_dir = state_dir,
       cache_dir = cache_dir,
       color = false,
-      affected = { provider = false },
+      -- nothing from the real environment for the stamp: on a CI runner `CI=true` makes every local stamp
+      -- `untrusted` (the trust model, not what this spec is about), so `--reuse` would never reuse
+      affected = { provider = false, getenv = no_env },
+      stamp = { getenv = no_env },
     })
     package.loaded["proj.mod"] = nil
     return {
@@ -298,6 +305,11 @@ return function(H)
       )
       eq(run(reuse_root).code, 0, "run events: a stamping run first")
       eq(run(reuse_root, "--reuse", "--events=" .. evpath).code, 0, "run events: then --reuse")
+      has(
+        tostring(doc_of(reuse_root).steps[1].reason),
+        "reused",
+        "run events: the suite really was reused from its stamp"
+      )
       local reused_start
       for line in (read(evpath) or ""):gmatch("[^\n]+") do
         local e = vim.json.decode(line)
