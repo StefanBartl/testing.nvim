@@ -214,15 +214,7 @@ function M.main(argv, sv)
     return M.EXIT_REFUSED
   end
   -- the profiles must exist, or the first push would fail with a usage error
-  local loaded = require("testing.config.project").load(root)
-  local pipeline, problems
-  if loaded.error then
-    problems = { loaded.error }
-  elseif loaded.config.ci == nil then
-    problems = { ("%s/.testing.lua has no `ci` section (docs/CI.md)"):format(root) }
-  else
-    pipeline, problems = require("testing.ci.schema").resolve(loaded.config.ci)
-  end
+  local pipeline, problems = require("testing.ci.schema").load(root)
   if not pipeline then
     sv.err("testing ci hook: " .. table.concat(problems or {}, "; "))
     return M.EXIT_USAGE

@@ -221,14 +221,7 @@ local function check(args, sv)
   if vim.fn.isdirectory(root) ~= 1 then
     return fail("usage", M.EXIT_USAGE, ("root %s is not a directory"):format(args.root))
   end
-  local loaded = require("testing.config.project").load(root)
-  if loaded.error then
-    return fail("usage", M.EXIT_USAGE, loaded.error)
-  end
-  if loaded.config.ci == nil then
-    return fail("usage", M.EXIT_USAGE, ("%s/.testing.lua has no `ci` section"):format(root))
-  end
-  local pipeline, problems = schema.resolve(loaded.config.ci)
+  local pipeline, problems = schema.load(root)
   if not pipeline then
     return fail("usage", M.EXIT_USAGE, table.concat(problems or {}, "; "))
   end

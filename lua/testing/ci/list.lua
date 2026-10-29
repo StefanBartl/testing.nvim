@@ -12,20 +12,18 @@ M.EXIT_OK, M.EXIT_USAGE = 0, 2
 ---@return table|nil list `{ default, profiles = { name = { step, ... } }, steps = { name, ... } }`
 ---@return string|nil problem
 function M.load(root)
-  local loaded = require("testing.config.project").load(root)
-  if loaded.error then
-    return nil, loaded.error
-  end
-  if loaded.config.ci == nil then
-    return nil, ("%s/.testing.lua has no `ci` section (docs/CI.md)"):format(root)
-  end
-  local pipeline, problems = require("testing.ci.schema").resolve(loaded.config.ci)
+  local pipeline, problems = require("testing.ci.schema").load(root)
   if not pipeline then
     return nil, table.concat(problems or {}, "; ")
   end
   local steps = vim.tbl_keys(pipeline.steps)
   table.sort(steps)
-  return { default = pipeline.default, profiles = pipeline.profiles, steps = steps }
+  return {
+    default = pipeline.default,
+    profiles = pipeline.profiles,
+    steps = steps,
+    derived = pipeline.derived,
+  }
 end
 
 ---@param argv string[] The arguments after `list`.
@@ -65,6 +63,14 @@ function M.main(argv, sv)
         table.concat(list.profiles[name], ", ")
       )
     )
+  end
+  -- a derived pipeline says where each step came from (no `ci` profiles in .testing.lua)
+  if list.derived then
+    local steps = vim.tbl_keys(list.derived)
+    table.sort(steps)
+    for _, step in ipairs(steps) do
+      sv.out(("derived: %s (%s)"):format(step, list.derived[step]))
+    end
   end
   return M.EXIT_OK
 end

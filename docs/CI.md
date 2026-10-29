@@ -74,6 +74,41 @@ Process steps inherit the environment of `testing ci` with the step's `env` on t
 tools a step runs (luacheck needs `LUA_PATH`) are not child editors, so the allowlist of `testing.child` does not
 apply to them.
 
+## Without writing a pipeline: the derived one
+
+A Lua project (a `lua/` folder) that has **no `ci` section, or one without `profiles`**, gets its pipeline from what
+the repository has:
+
+| Step | When | Why |
+| --- | --- | --- |
+| `stylua` | `stylua.toml` or `.stylua.toml` | the project formats with stylua |
+| `luacheck` | `.luacheckrc` | the project lints with luacheck (its own `files`/`exclude_files` decide what is read) |
+| `suite` | a spec file below a spec root (`roots` of `.testing.lua`, default `TESTS`) | the project has specs |
+| `conformance` | `conformance.gate = true` | the project made the conformance suite a gate |
+
+Profiles: `fast` (stylua and luacheck, the check before a push) and `full` (all of them), `full` is the default.
+`testing ci list` says where each step came from (`derived: stylua (stylua.toml)`), the document `testing-ci/1` has
+`derived` (step and reason), and a derived step whose tool is missing says how to leave it out. The same files give
+the same steps on every machine: only the repository is read, never the machine.
+
+A section without `profiles` adjusts what is derived instead of replacing it:
+
+```lua
+ci = {
+  skip = { "luacheck" },                                       -- leave a derived step out (opt-out)
+  steps = {
+    stylua = { preset = "stylua", args = { "lua", "TESTS" } }, -- a derived step defined anew
+    docs = { run = { "scripts/gen_docs.sh", "--check" } },     -- a step of its own: it joins `full`
+  },
+},
+```
+
+`skip` names only derived steps (anything else is an error), and leaving everything out is an error. A section
+**with** `profiles` is used as written, nothing is derived and `skip` is an error there. A project that is not a Lua
+project, or has none of the files above, needs a section (`testing ci` says so, exit `2`). `testing ci --repos`
+still picks the repositories whose `.testing.lua` has a `ci` section: running every Lua project below a root is a
+decision of its own.
+
 ## Presets
 
 | Preset | Runs | Needs |

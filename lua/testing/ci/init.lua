@@ -270,10 +270,17 @@ local function plan(pipeline, names, root)
   local function need(name, tool)
     local path, where = find_tool(tool)
     if not path then
-      problems[#problems + 1] = ("step %s needs %s, which was not found (searched: %s)"):format(
+      local why = pipeline.derived and pipeline.derived[name]
+      problems[#problems + 1] = ("step %s needs %s, which was not found (searched: %s)%s"):format(
         name,
         tool,
-        where
+        where,
+        why
+            and (". The step is derived (%s): leave it out with ci = { skip = { %q } } in .testing.lua"):format(
+              why,
+              name
+            )
+          or ""
       )
       infra = true
     end
@@ -1033,26 +1040,10 @@ function M.main(argv, sv)
     return code
   end
 
-  local loaded = require("testing.config.project").load(root)
-  if loaded.error then
-    return stop_early(M.EXIT_USAGE, { loaded.error })
-  end
-  local raw = loaded.config.ci
-  if raw == nil then
-    -- a `ci` that is not a table was dropped by the loader with a warning: say that, not "no section"
-    for _, p in ipairs(loaded.problems or {}) do
-      if p:find("'ci'", 1, true) then
-        return stop_early(M.EXIT_USAGE, { p })
-      end
-    end
-    return stop_early(
-      M.EXIT_USAGE,
-      { ("%s/.testing.lua has no `ci` section (docs/CI.md)"):format(root) }
-    )
-  end
-  local pipeline, problems = schema.resolve(raw)
+  -- the `ci` section, or the pipeline derived from the repository (a Lua project without profiles of its own)
+  local pipeline, problems = schema.load(root)
   if not pipeline then
-    return stop_early(M.EXIT_USAGE, problems)
+    return stop_early(M.EXIT_USAGE, problems or {})
   end
 
   local profile = args.profile or pipeline.default
@@ -1326,6 +1317,8 @@ function M.main(argv, sv)
     pipeline_sha = vim.fn.sha256(require("lib.nvim.json.canonical").encode(pipeline.digest_input)),
     time = os.date("!%Y-%m-%dT%H:%M:%SZ", started),
     steps = steps_doc,
+    -- the steps that were derived from the repository (no `ci` profiles of its own) and why
+    derived = pipeline.derived or vim.NIL,
   }
 
   -- the reports: a report that could not be written is exit 3 (as for a run), and the document says so

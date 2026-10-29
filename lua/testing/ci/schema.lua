@@ -68,6 +68,7 @@ local NAME = "^[%a_][%w_%-]*$"
 ---@field default string
 ---@field steps table<string, Testing.Ci.Step>
 ---@field digest_input table What the pipeline hash is taken over (the resolved definition).
+---@field derived? table<string, string> Derived steps (`testing.ci.derive`) and why; nil for a written pipeline.
 
 ---@param v any
 ---@return string
@@ -444,21 +445,138 @@ function M.resolve(raw)
       skip_exit = step.skip_exit,
     }
   end
-  return {
+  ---@type Testing.Ci.Pipeline
+  local pipeline = {
     profiles = expanded,
     default = default --[[@as string]],
     steps = steps,
     digest_input = digest_input,
-  },
-    problems
+  }
+  return pipeline, problems
 end
 
 ---Whether a `ci` value passes (the config loader's check; `testing ci` names the problems).
 ---@param v any
 ---@return boolean
 function M.check(v)
+  -- a section without profiles adjusts the derived pipeline: what it means is known only with the repository
+  if type(v) == "table" and v.profiles == nil then
+    return true
+  end
   local pipeline = M.resolve(v)
   return pipeline ~= nil
+end
+
+---The keys of a section that adjusts the derived pipeline (no `profiles`).
+local DERIVED_KEYS = { skip = true, steps = true, default = true }
+
+---The pipeline of a project: its `ci` section, or the one derived from the repository (`testing.ci.derive`) when the
+---section is absent or has no `profiles`. Such a section only adjusts what is derived: `skip` (names to leave out),
+---`steps` (a derived step defined anew, or a step of its own, which joins `full`). The one function `testing ci`,
+---`ci list`, `ci verify` and `ci hook` read the pipeline through.
+---@param root string
+---@return Testing.Ci.Pipeline|nil pipeline With `derived` (`step = why`) when it was derived.
+---@return string[]|nil problems
+function M.load(root)
+  local loaded = require("testing.config.project").load(root)
+  if loaded.error then
+    return nil, { loaded.error }
+  end
+  local raw = loaded.config.ci
+  if raw == nil then
+    -- a `ci` that is not a table was dropped by the loader with a warning: say that
+    for _, p in ipairs(loaded.problems or {}) do
+      if p:find("'ci'", 1, true) then
+        return nil, { p }
+      end
+    end
+  end
+  if type(raw) == "table" and raw.profiles ~= nil then
+    if raw.skip ~= nil then
+      return nil,
+        { "ci.skip: only a section without `profiles` (a derived pipeline) can leave steps out" }
+    end
+    return M.resolve(raw)
+  end
+  raw = raw or {}
+  local problems = {}
+  for key in pairs(raw) do
+    if not DERIVED_KEYS[key] then
+      problems[#problems + 1] = ("unknown key 'ci.%s' (a section without `profiles` takes skip, steps, default)"):format(
+        tostring(key)
+      )
+    end
+  end
+  local section, why = require("testing.ci.derive").section(root, loaded.config)
+  if not section then
+    problems[#problems + 1] = ("%s/.testing.lua has no `ci` section, and %s (docs/CI.md)"):format(
+      root,
+      tostring(why)
+    )
+    return nil, problems
+  end
+  ---@cast why table<string, string>
+  local skip = raw.skip == nil and {} or raw.skip
+  if type(skip) ~= "table" or (next(skip) ~= nil and not vim.islist(skip)) then
+    problems[#problems + 1] = ("ci.skip: expected a list of step names, got %s"):format(show(skip))
+    skip = {}
+  end
+  local skipped = {}
+  for _, name in ipairs(skip) do
+    if type(name) ~= "string" or not why[name] then
+      problems[#problems + 1] = ("ci.skip: %s is not a derived step (derived: %s)"):format(
+        show(name),
+        table.concat(vim.tbl_keys(why), ", ")
+      )
+    else
+      skipped[name] = true
+    end
+  end
+  if #problems > 0 then
+    return nil, problems
+  end
+  for name, profile in pairs(section.profiles) do
+    section.profiles[name] = vim.tbl_filter(function(n)
+      return not skipped[n]
+    end, profile)
+  end
+  if section.profiles.fast and #section.profiles.fast == 0 then
+    section.profiles.fast = nil
+    section.profiles.full = vim.tbl_filter(function(n)
+      return n ~= "fast"
+    end, section.profiles.full)
+  end
+  -- the project's own steps: a derived one defined anew, or a new one that joins `full`
+  local own = type(raw.steps) == "table" and raw.steps or {}
+  section.steps = own
+  local names = vim.tbl_keys(own)
+  table.sort(names)
+  for _, name in ipairs(names) do
+    if not why[name] then
+      table.insert(section.profiles.full, name)
+    end
+  end
+  if raw.steps ~= nil and type(raw.steps) ~= "table" then
+    section.steps = raw.steps -- resolve names the problem
+  end
+  if #section.profiles.full == 0 then
+    return nil, { "ci.skip leaves nothing to run (write a `ci` section with profiles instead)" }
+  end
+  if raw.default ~= nil then
+    section.default = raw.default
+  end
+  local pipeline, resolve_problems = M.resolve(section)
+  if not pipeline then
+    return nil, resolve_problems
+  end
+  local derived = {}
+  for name, reason in pairs(why) do
+    if not skipped[name] then
+      derived[name] = reason
+    end
+  end
+  pipeline.derived = derived
+  return pipeline, resolve_problems
 end
 
 return M

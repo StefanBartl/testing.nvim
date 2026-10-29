@@ -16,23 +16,25 @@ on the hosted runner. This page is the use case; [CI.md](CI.md) is the reference
 
 ## A repository, set up
 
+A Lua project with a `stylua.toml`, a `.luacheckrc` and specs needs **no `ci` section at all**: `stylua`, `luacheck`,
+the suite (and `conformance`, when it is a gate) are derived from those files, `fast` and `full` with them
+([CI.md](CI.md#without-writing-a-pipeline-the-derived-one)). `testing ci list` shows what was derived and why. Only
+what differs is written down:
+
 ```lua
 -- .testing.lua
 return {
   deps = { "lib.nvim" },
   ci = {
-    default = "full",
-    profiles = {
-      fast = { "stylua", "luacheck" },
-      full = { "fast", "suite", "conformance" },
-    },
+    skip = { "conformance" },                                -- leave a derived step out
     steps = {
-      luacheck = { preset = "luacheck", args = { "lua", "TESTS", "scripts" } },
       docs = { run = { "scripts/gen_docs.sh", "--check" } }, -- a step of the repository: argv, never a shell line
     },
   },
 }
 ```
+
+A section with `profiles` is the whole pipeline, written by hand, for a project whose checks differ more.
 
 ```bash
 scripts/ci.sh                # the default profile (full)
