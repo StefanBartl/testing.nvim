@@ -44,6 +44,10 @@ child editor after setup()) and, when a tracked run is given, which of them the 
 
   --from <ir.json>            hits from a Result-IR whose cases carry `surface.hit` (repeatable)
   --hits <file>               hits from a tracker sink, JSON lines (repeatable)
+  --no-tags                   do not count `binding:`/`command:` tags and `-- @covers` headers as exercised
+  --matrix                    the matrix entries x spec files instead of the entry list
+  --csv                       tab separated table (the list, or with --matrix the matrix)
+  --write-ir <file>           the first --from IR with the aggregate as its `surface` section
   --kind <k[,k...]>           kinds that make up the ratio (default binding,command,autocmd)
   --threshold <0..1>          fail (exit 1) when the overall ratio is below; 0 = only report
   --threshold <kind>=<0..1>   the same for one kind (repeatable)
@@ -163,6 +167,7 @@ end
 ---@field fail_on_removed? boolean
 ---@field require_signed_baseline? boolean A baseline that is `edited` or `unsigned` fails the run.
 ---@field write_baseline? string
+---@field tags? boolean Count tag claims (`binding:...` in `cases[].tags`, `-- @covers`); default true (`surface.tags = false` turns it off).
 
 ---Write a file the way lib.nvim does (temp file, flush, rename): never half a file.
 ---@param path string
@@ -259,6 +264,18 @@ function M.report(root, opts)
   for _, n in ipairs(hits.notes) do
     notes[#notes + 1] = n
   end
+  local use_tags = opts.tags
+  if use_tags == nil then
+    use_tags = surf_cfg.tags ~= false
+  end
+  if use_tags then
+    local claims = require("testing.surface.tags").apply(hits, root)
+    if claims > 0 then
+      notes[#notes + 1] = ("%d entry(ies) counted from tags (`binding:`/`command:` tags, `-- @covers`): claims, not tracked executions"):format(
+        claims
+      )
+    end
+  end
   local cov = coverage.compute(surface, hits, { kinds = kinds, ignore = ignore })
   report.coverage = cov
   report.hits = hits
@@ -354,6 +371,37 @@ function M.annotate_ir(ir, report)
   return ir
 end
 
+---Write the Result-IR `src` with the aggregate of `report` as its `surface` section to `dst`.
+---@param src string|nil The IR file the hits came from (the first `--from`).
+---@param dst string
+---@param report table
+---@return string|nil err
+function M.write_ir(src, dst, report)
+  if not src then
+    return "--write-ir needs the IR to annotate: give --from <ir.json>"
+  end
+  if not report.coverage then
+    return "--write-ir: nothing was measured, no section to write"
+  end
+  local text, err = read_file(src)
+  if not text then
+    return err
+  end
+  local ok, ir = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
+  if not ok or type(ir) ~= "table" then
+    return ("%s is not a Result-IR (JSON)"):format(src)
+  end
+  M.annotate_ir(ir, report)
+  local enc_ok, enc = pcall(vim.json.encode, ir, { sort_keys = true })
+  if not enc_ok then
+    enc_ok, enc = pcall(vim.json.encode, ir)
+  end
+  if not enc_ok or not atomic_write(dst, enc .. "\n") then
+    return "cannot write the IR " .. tostring(dst)
+  end
+  return nil
+end
+
 -- ===========================================================
 -- command line
 -- ===========================================================
@@ -370,7 +418,10 @@ end
 ---@field fail_on_removed boolean
 ---@field require_signed_baseline boolean
 ---@field write_baseline? string
----@field format "text"|"markdown"|"json"
+---@field no_tags boolean
+---@field matrix boolean
+---@field write_ir? string
+---@field format "text"|"markdown"|"json"|"csv"
 ---@field out? string
 ---@field help boolean
 
@@ -398,6 +449,8 @@ function M.parse_args(argv)
     fail_on_new = false,
     fail_on_removed = false,
     require_signed_baseline = false,
+    no_tags = false,
+    matrix = false,
     format = "text",
     help = false,
   }
@@ -426,6 +479,18 @@ function M.parse_args(argv)
       a.format = "json"
     elseif name == "--markdown" then
       a.format = "markdown"
+    elseif name == "--csv" then
+      a.format = "csv"
+    elseif name == "--matrix" then
+      a.matrix = true
+    elseif name == "--no-tags" then
+      a.no_tags = true
+    elseif name == "--write-ir" then
+      v, err = value(name, inline)
+      if not v then
+        return nil, err
+      end
+      a.write_ir = v
     elseif name == "--fail-on-new" then
       a.fail_on_new = true
     elseif name == "--fail-on-removed" then
@@ -551,12 +616,22 @@ function M.main(argv, services)
     fail_on_removed = args.fail_on_removed,
     require_signed_baseline = args.require_signed_baseline,
     write_baseline = args.write_baseline,
+    tags = (args.no_tags or nil) and false,
   })
   if report.error and not report.surface then
     local code = report.exit_code
     return code, "testing surface: " .. tostring(report.error) .. "\n"
   end
-  local text = render.render(report, args.format)
+  local text = render.render(report, args.format, { matrix = args.matrix })
+  if args.write_ir then
+    local werr = M.write_ir(args.from[1], args.write_ir, report)
+    if werr then
+      text = text .. "testing surface: " .. werr .. "\n"
+      if report.exit_code == M.EXIT_OK then
+        report.exit_code = M.EXIT_USAGE
+      end
+    end
+  end
   if report.error then
     text = text .. "testing surface: " .. tostring(report.error) .. "\n"
   end

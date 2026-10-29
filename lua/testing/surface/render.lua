@@ -56,7 +56,7 @@ local function rows(report)
     for _, e in ipairs(report.coverage.entries) do
       out[#out + 1] = {
         clean(e.kind),
-        e.status,
+        e.status .. (e.tagged and " (tag)" or ""),
         e.count > 0 and tostring(e.count) or "",
         clean(e.id),
         clean(e.src or ""),
@@ -181,6 +181,13 @@ function M.text(report)
   end
   lines[#lines + 1] = ""
   vim.list_extend(lines, summary(report))
+  if report.coverage and #report.coverage.missing > 0 then
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = ("not covered (%d):"):format(#report.coverage.missing)
+    for _, id in ipairs(report.coverage.missing) do
+      lines[#lines + 1] = ("  %s - no feature test"):format(clean(id))
+    end
+  end
   for _, f in ipairs(report.failures or {}) do
     lines[#lines + 1] = failure_line(f)
   end
@@ -245,6 +252,9 @@ function M.markdown(report)
     )
   end
   local extra = {}
+  for _, id in ipairs(cov and cov.missing or {}) do
+    extra[#extra + 1] = ("* not covered: `%s` - no feature test"):format(cell(id))
+  end
   for _, f in ipairs(report.failures or {}) do
     extra[#extra + 1] = "* " .. failure_line(f)
   end
@@ -273,8 +283,9 @@ end
 
 ---The report as JSON (the entries with their status when a tracked run was given).
 ---@param report table
+---@param matrix? boolean Add `matrix = { files, rows }`.
 ---@return string
-function M.json(report)
+function M.json(report, matrix)
   local cov = report.coverage
   local doc = {
     version = 1,
@@ -296,15 +307,147 @@ function M.json(report)
     notes = report.notes,
     exit_code = report.exit_code,
   }
+  if matrix and cov and report.hits then
+    doc.matrix = require("testing.surface.coverage").matrix(cov, report.hits)
+  end
   return encode(doc) .. "\n"
 end
 
+---The matrix entries x spec files as a header and rows of cells (strings), `nil` without a tracked run.
+---Columns: KIND, STATUS, ID, one per spec file (cases that exercised the entry), TOTAL.
 ---@param report table
----@param format? "text"|"markdown"|"json"
+---@return string[]|nil header
+---@return string[][] rows
+function M.matrix_rows(report)
+  if not (report.coverage and report.hits) then
+    return nil, {}
+  end
+  local m = require("testing.surface.coverage").matrix(report.coverage, report.hits)
+  local header = { "KIND", "STATUS", "ID" }
+  for _, f in ipairs(m.files) do
+    header[#header + 1] = clean(f)
+  end
+  header[#header + 1] = "TOTAL"
+  local rows_out = {}
+  local tagged = {}
+  for _, e in ipairs(report.coverage.entries) do
+    tagged[e.id] = e.tagged
+  end
+  for _, r in ipairs(m.rows) do
+    local row = { clean(r.kind), r.status .. (tagged[r.id] and " (tag)" or ""), clean(r.id) }
+    for _, f in ipairs(m.files) do
+      row[#row + 1] = r.cells[f] and tostring(r.cells[f]) or ""
+    end
+    row[#row + 1] = r.total > 0 and tostring(r.total) or ""
+    rows_out[#rows_out + 1] = row
+  end
+  return header, rows_out
+end
+
+---Tab separated table: the entry list, or with `matrix` the matrix. Tabs and line breaks inside a cell
+---become a space, so a cell never splits a column or a row.
+---@param report table
+---@param matrix? boolean
 ---@return string
-function M.render(report, format)
-  if format == "json" then
-    return M.json(report)
+function M.csv(report, matrix)
+  local header, data
+  if matrix then
+    header, data = M.matrix_rows(report)
+    if not header then
+      return "no tracked run was given (--from <ir.json> or --hits <file>): no matrix\n"
+    end
+  else
+    header, data = { "KIND", "STATUS", "HITS", "ID", "SRC" }, rows(report)
+  end
+  local lines = {}
+  local function put(r)
+    local cells = {}
+    for i, c in ipairs(r) do
+      cells[i] = (tostring(c):gsub("[\t\r\n]", " "))
+    end
+    lines[#lines + 1] = table.concat(cells, "\t")
+  end
+  put(header)
+  for _, r in ipairs(data) do
+    put(r)
+  end
+  return table.concat(lines, "\n") .. "\n"
+end
+
+---The matrix as a text table (or markdown).
+---@param report table
+---@param markdown? boolean
+---@return string
+function M.matrix(report, markdown)
+  local header, data = M.matrix_rows(report)
+  if not header then
+    return "no tracked run was given (--from <ir.json> or --hits <file>): no matrix\n"
+  end
+  local lines = {}
+  if markdown then
+    lines[#lines + 1] = ("# Surface matrix of `%s`"):format(clean(report.plugin))
+    lines[#lines + 1] = ""
+    local head, sep = {}, {}
+    for i, h in ipairs(header) do
+      head[i] = cell(h)
+      sep[i] = i <= 3 and "---" or "---:"
+    end
+    lines[#lines + 1] = "| " .. table.concat(head, " | ") .. " |"
+    lines[#lines + 1] = "| " .. table.concat(sep, " | ") .. " |"
+    for _, r in ipairs(data) do
+      local c = {}
+      for i, v in ipairs(r) do
+        c[i] = cell(v)
+      end
+      lines[#lines + 1] = "| " .. table.concat(c, " | ") .. " |"
+    end
+  else
+    local widths = {}
+    for i, h in ipairs(header) do
+      widths[i] = vim.fn.strdisplaywidth(h)
+    end
+    for _, r in ipairs(data) do
+      for i, v in ipairs(r) do
+        widths[i] = math.max(widths[i], vim.fn.strdisplaywidth(v))
+      end
+    end
+    local function fmt(r)
+      local c = {}
+      for i, v in ipairs(r) do
+        c[i] = pad(v, widths[i])
+      end
+      return (table.concat(c, "  "):gsub("%s+$", ""))
+    end
+    lines[#lines + 1] = ("surface matrix: %s (%d entries x %d spec files)"):format(
+      clean(report.plugin),
+      #data,
+      #header - 4
+    )
+    lines[#lines + 1] = fmt(header)
+    for _, r in ipairs(data) do
+      lines[#lines + 1] = fmt(r)
+    end
+    lines[#lines + 1] = ""
+    vim.list_extend(lines, summary(report))
+  end
+  return table.concat(lines, "\n") .. "\n"
+end
+
+---@class Testing.Surface.RenderOpts
+---@field matrix? boolean The matrix entries x spec files instead of the entry list.
+
+---@param report table
+---@param format? "text"|"markdown"|"json"|"csv"
+---@param opts? Testing.Surface.RenderOpts
+---@return string
+function M.render(report, format, opts)
+  local matrix = opts ~= nil and opts.matrix == true
+  if format == "csv" then
+    return M.csv(report, matrix)
+  elseif matrix and format ~= "json" then
+    return M.matrix(report, format == "markdown")
+  elseif format == "json" then
+    return M.json(report, matrix)
   elseif format == "markdown" then
     return M.markdown(report)
   end

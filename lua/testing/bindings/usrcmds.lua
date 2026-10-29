@@ -723,13 +723,28 @@ function M.routes()
           bool = true,
           desc = "Print the report as Markdown instead of a text table",
         },
+        {
+          name = "matrix",
+          bool = true,
+          desc = "Show the matrix entries x spec files instead of the entry list",
+        },
+        {
+          name = "csv",
+          bool = true,
+          desc = "Print a tab separated table (with --matrix: the matrix)",
+        },
+        {
+          name = "no-tags",
+          bool = true,
+          desc = "Do not count binding:/command: tags and -- @covers headers",
+        },
       },
       run = function(ctx)
         start("surface", {
           root = M.resolve_root(ctx.args.root),
           flags = {
             raw = raw_args(ctx.flags, {
-              bool = { "markdown" },
+              bool = { "markdown", "matrix", "csv", "no-tags" },
               value = { "from", "threshold" },
             }),
           },

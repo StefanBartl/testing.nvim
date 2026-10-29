@@ -194,6 +194,36 @@ Output: a text table (default), `--markdown`, `--json`; `--out FILE` also writes
 baseline: a crash leaves the old file or the new one, never half of it). Text from the plugin
 (names, descriptions, paths) is scrubbed of control characters and bidi overrides.
 
+## Tags: a case names the entry it tests
+
+Besides the tracker, a case can claim an entry. A claim counts as a hit, is marked `hit (tag)` in the
+table, is listed in `ir.surface.tagged`, and is noted in the report: a tag is a statement, not a measured
+execution. Only a **passing** case claims; a failed or skipped case covers nothing.
+
+| Where | How |
+| --- | --- |
+| Result-IR | a string in `cases[].tags` that is an id (`binding:<leader>ssa`, `command:Session save`); other tags such as `slow` are ignored |
+| Dialect A (busted-style) | a header comment in the first 30 lines of the spec, which claims for every case of the file: `-- @covers binding:<leader>ssa, command:Session save` (`,` or `;` between ids, `@covers:` works too; `#tag` words of titles cannot hold `<`, `>` or a space) |
+
+A claim on an id that is not in the surface is a stale tag and is listed under "exercised but not in the
+surface". A header path that leaves the project root is not read. `--no-tags` (or `surface = { tags = false }`)
+turns the claims off, so the ratio is the tracked one only; an IR without `cases[].surface` still takes the
+claims (they are static), while the rest stays `untracked`.
+
+## The matrix and the report sections
+
+```bash
+testing surface . --from out.json                    # the list; "not covered" names each entry: `binding:<leader>slt - no feature test`
+testing surface . --from out.json --matrix           # entries x spec files, cases that exercised the entry per file
+testing surface . --from out.json --matrix --csv     # the same as a tab separated table (tabs and line breaks in a cell become a space)
+testing surface . --from out.json --matrix --json    # `matrix = { files, rows = { { id, kind, status, cells, total } } }`
+testing surface . --from out.json --write-ir annotated.json   # the IR with the aggregate as its own `surface` section
+```
+
+`:Testing surface --matrix` shows the same table in the viewer. The `surface` section of the IR holds the
+totals, the ratio per kind and per spec file, `missing`, `untracked` and `tagged`. A view built on
+`ui.kit` is tracked separately (`binding-coverage-ui-view`).
+
 ## Gating a repository by baseline
 
 A percentage is a claim most plugins of a fleet cannot meet yet (keymaps are rarely pressed by specs). A baseline gate
@@ -247,7 +277,8 @@ Pilot: fileops.nvim (`surface.baseline.json`, the "Surface baseline gate" step o
 | `testing.surface.read` | the registries -> entries, in this editor |
 | `testing.surface.collect` | the same in a child editor |
 | `testing.surface.track` | the tracking layer: `install`, `hook_runner`, `unwrap` |
-| `testing.surface.coverage` | pure: `compute`, `by_file`, `thresholds`, `check`, `baseline`, `diff`, `from_ir`, `from_sink`, `annotate_ir` |
+| `testing.surface.coverage` | pure: `compute`, `by_file`, `thresholds`, `check`, `baseline`, `diff`, `matrix`, `from_ir`, `from_sink`, `annotate_ir` |
+| `testing.surface.tags` | `is_id`, `ids_of_tags`, `parse_covers`, `file_covers`, `apply`: the claims of passing cases (tags, `-- @covers`) |
 | `testing.surface.render` | text, markdown, JSON |
 
 ## Integration: what is wired and what is not

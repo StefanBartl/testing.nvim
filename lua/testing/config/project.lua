@@ -547,6 +547,10 @@ local SCHEMA = {
       check = list_of(is_lua_pattern, 0),
       expect = "a list of Lua patterns that match entry ids",
     },
+    tags = {
+      check = is_bool,
+      expect = "true or false (true: binding:/command: tags and `-- @covers` headers of passing cases count as exercised)",
+    },
     setup_chunk = {
       check = function(v)
         return type(v) == "string" and v ~= "" and #v <= 4000

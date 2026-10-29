@@ -30,6 +30,8 @@ local M = {}
 ---@field exact? boolean Every run that reported said that nothing existed before its tracker was installed: a handler that no run wrapped was then never created, so it is `missing`, not `untracked`.
 ---@field not_tracked? boolean The source holds no tracked run at all (an IR without `cases[].surface`): nothing is `missing`, everything is `untracked`.
 ---@field cases { id?: string, file?: string, hit: string[] }[] per case, when the source says so
+---@field tag_cases? { id?: string, file?: string, status?: string, tags: string[], tagged?: string[] }[] every case of an IR (tracked or not): the tags are claims (`testing.surface.tags`)
+---@field tagged? table<string, true> ids exercised by a tag claim (`testing.surface.tags.apply`)
 ---@field notes string[]
 
 ---@return Testing.Surface.Hits
@@ -66,6 +68,12 @@ function M.merge(a, b)
   for _, c in ipairs(b.cases) do
     a.cases[#a.cases + 1] = c
   end
+  if b.tag_cases then
+    a.tag_cases = a.tag_cases or {}
+    for _, c in ipairs(b.tag_cases) do
+      a.tag_cases[#a.tag_cases + 1] = c
+    end
+  end
   for _, n in ipairs(b.notes) do
     a.notes[#a.notes + 1] = n
   end
@@ -97,6 +105,11 @@ function M.from_ir(ir)
   local saw = false
   for _, c in ipairs(type(ir.cases) == "table" and ir.cases or {}) do
     local s = type(c) == "table" and c.surface or nil
+    if type(c) == "table" then
+      hits.tag_cases = hits.tag_cases or {}
+      hits.tag_cases[#hits.tag_cases + 1] =
+        { id = c.id, file = c.file, status = c.status, tags = string_list(c.tags) }
+    end
     if type(s) == "table" then
       saw = true
       local list = string_list(s.hit)
@@ -294,6 +307,7 @@ end
 ---@field desc? string
 ---@field status "hit"|"missing"|"untracked"|"ignored"|"listed"
 ---@field count integer
+---@field tagged? boolean Claimed by a `binding:`/`command:` tag of a passing case (`testing.surface.tags`).
 
 ---@class Testing.Surface.Coverage
 ---@field plugin string
@@ -400,6 +414,7 @@ function M.compute(surface, hits, opts)
       desc = e.desc,
       status = status,
       count = hits.counts[e.id] or 0,
+      tagged = hits.tagged ~= nil and hits.tagged[e.id] == true or nil,
     }
     local bk = cov.by_kind[e.kind]
     if bk then
@@ -494,6 +509,77 @@ function M.by_file(cov, hits)
     out[file] = { hit = n, total = total, ratio = ratio(n, total), missing = missing }
   end
   return out
+end
+
+---@class Testing.Surface.MatrixRow
+---@field id string
+---@field kind string
+---@field status string
+---@field cells table<string, integer> spec file -> number of its cases that exercised the entry
+---@field total integer sum of the cells
+
+---@class Testing.Surface.Matrix
+---@field files string[] spec files, sorted (the columns)
+---@field rows Testing.Surface.MatrixRow[] entries of the asked kinds in surface order (the lines)
+
+---The matrix registry x cases, reduced to spec files: which file exercised which entry, how often.
+---Both sources count: the cases the tracker saw (`hits.cases`) and the claims of passing cases
+---(`case.tagged`). Entries of a kind that is not trackable (`config`, `health`) are not rows.
+---@param cov Testing.Surface.Coverage
+---@param hits Testing.Surface.Hits
+---@return Testing.Surface.Matrix
+function M.matrix(cov, hits)
+  local asked = {}
+  for _, k in ipairs(cov.kinds) do
+    asked[k] = true
+  end
+  local rows, index = {}, {}
+  for _, e in ipairs(cov.entries) do
+    if asked[e.kind] then
+      local row = { id = e.id, kind = e.kind, status = e.status, cells = {}, total = 0 }
+      rows[#rows + 1] = row
+      index[e.id] = row
+    end
+  end
+  -- one case can be in both lists (tracked and tagged): it counts once per entry
+  local per_case, order = {}, {}
+  local function add(c, list)
+    if type(c.file) ~= "string" then
+      return
+    end
+    local key = c.file .. "|" .. tostring(c.id or #order + 1)
+    local slot = per_case[key]
+    if not slot then
+      slot = { file = c.file, set = {} }
+      per_case[key] = slot
+      order[#order + 1] = slot
+    end
+    for _, id in ipairs(list or {}) do
+      slot.set[id] = true
+    end
+  end
+  for _, c in ipairs(hits.cases) do
+    add(c, c.hit)
+  end
+  for _, c in ipairs(hits.tag_cases or {}) do
+    add(c, c.tagged)
+  end
+  local files, seen = {}, {}
+  for _, slot in ipairs(order) do
+    if not seen[slot.file] then
+      seen[slot.file] = true
+      files[#files + 1] = slot.file
+    end
+    for id in pairs(slot.set) do
+      local row = index[id]
+      if row then
+        row.cells[slot.file] = (row.cells[slot.file] or 0) + 1
+        row.total = row.total + 1
+      end
+    end
+  end
+  table.sort(files)
+  return { files = files, rows = rows }
 end
 
 -- ===========================================================
@@ -743,6 +829,12 @@ function M.annotate_ir(ir, cov, files, hits)
   for k, bk in pairs(cov.by_kind) do
     kinds[k] = { total = bk.total, hit = bk.hit, ratio = bk.ratio, untracked = bk.untracked }
   end
+  local tagged = {}
+  for _, e in ipairs(cov.entries) do
+    if e.tagged then
+      tagged[#tagged + 1] = e.id
+    end
+  end
   ir.surface = {
     plugin = cov.plugin,
     total = cov.total,
@@ -750,6 +842,7 @@ function M.annotate_ir(ir, cov, files, hits)
     ratio = cov.ratio,
     missing = cov.missing,
     untracked = cov.untracked,
+    tagged = tagged,
     kinds = kinds,
     files = files,
   }
