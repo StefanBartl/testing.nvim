@@ -25,7 +25,9 @@ return function(H)
       .system({ bash, "-c", "mktemp -d" }, { env = { TMPDIR = missing }, text = true })
       :wait(60000)
     if probe.code == 0 then
-      vim.fn.delete(vim.trim(probe.stdout or ""), "rf")
+      -- removed by the shell that made it: the directory is in the system's temp folder, which is not one of the
+      -- roots this spec may write to (the fs guard of an isolated child says so), and it was made by `mktemp`, not by us
+      vim.system({ bash, "-c", 'rm -rf "$1"', "sh", vim.trim(probe.stdout or "") }):wait(60000)
       ok(
         true,
         "this mktemp ignores TMPDIR (macOS): the failure of the scratch directory cannot be forced here"
