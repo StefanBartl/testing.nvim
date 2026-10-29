@@ -25,6 +25,7 @@ function M.open(content, limits)
     return nil
   end
   vim.api.nvim_create_autocmd({ "CursorMoved", "InsertEnter", "BufLeave" }, {
+    group = vim.api.nvim_create_augroup("TestingHoverFloat", { clear = false }),
     once = true,
     callback = function()
       if vim.api.nvim_win_is_valid(winid) then
