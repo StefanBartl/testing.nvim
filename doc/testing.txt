@@ -111,6 +111,11 @@ hover ~
                          `:Hover show` over a test file, a describe
                          block or a spec path in any buffer. With the `hover`
                          keymap action (no default key) on a key of your own.
+                         A buffer with unsaved changes is worded as outdated;
+                         only `_spec.lua` files and files with a recorded
+                         result answer. hover.nvim is never required by
+                         `setup()`: a retry in the augroup
+                         TestingHoverRegister waits for it.
 :Testing terminal         Repeat the last run in a terminal.nvim terminal.
 :Testing list [{root}]    List what would run.
 :Testing init [{root}] [--force] [--plugin={name}]

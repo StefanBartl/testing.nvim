@@ -32,6 +32,12 @@ M.MAX_LINE = 200
 ---@type integer
 M.MAX_FAILS = 8
 
+---Highlight groups of the first line (`Testing.Hover.Content.highlight`). `HoverError` is one hover.nvim defines
+---itself (linked to `DiagnosticError`); hover.nvim has no warning group, so `TestingHoverWarn` is this plugin's own
+---(linked to `DiagnosticWarn`). `testing.hover.float.ensure_highlight` defines both, `default = true`.
+M.HL_ERROR = "HoverError"
+M.HL_WARN = "TestingHoverWarn"
+
 local BAD = { fail = true, error = true, timeout = true, crash = true, xpass = true }
 
 ---@param s any
@@ -78,6 +84,7 @@ local WHY = {
   changed = "the file changed since the run",
   gone = "the file is gone",
   ["no result"] = "no result recorded",
+  ["unsaved changes"] = "the buffer has unsaved changes",
 }
 
 ---@param limits? Testing.Hover.Limits
@@ -140,15 +147,18 @@ function M.describe_case(c, file_ts, stale, why, now, limits)
   end
   -- A case that is a whole file (dialect A and the like): every failing assertion with its line.
   if c.line == nil and c.fails and #c.fails > 0 then
+    -- the store keeps the first assertions only; `fails_total` is the real count when there were more
+    local total = math.max(c.fails_total or 0, #c.fails)
     lines[#lines + 1] = ""
-    lines[#lines + 1] = ("%d failing assertion(s):"):format(#c.fails)
-    for i, f in ipairs(c.fails) do
-      if i > M.MAX_FAILS then
-        lines[#lines + 1] = ("... and %d more"):format(#c.fails - M.MAX_FAILS)
-        break
-      end
+    lines[#lines + 1] = ("%d failing assertion(s):"):format(total)
+    local shown = math.min(#c.fails, M.MAX_FAILS)
+    for i = 1, shown do
+      local f = c.fails[i]
       local where = f.line and ("%s:%d"):format(safe(c.file), f.line) or safe(c.file)
       lines[#lines + 1] = ("  %s %s"):format(where, safe(f.msg or ""))
+    end
+    if total > shown then
+      lines[#lines + 1] = ("... and %d more"):format(total - shown)
     end
   end
   local name = c.name and c.name ~= "" and c.name or c.id
@@ -158,9 +168,9 @@ function M.describe_case(c, file_ts, stale, why, now, limits)
   end
   local highlight
   if stale then
-    highlight = "HoverWarn"
+    highlight = M.HL_WARN
   elseif BAD[c.status] then
-    highlight = "HoverError"
+    highlight = M.HL_ERROR
   end
   return { lines = lines, title = title, highlight = highlight }
 end
@@ -228,9 +238,9 @@ local function describe_cases(title, cases, ts, stale, why, now)
   end
   local highlight
   if stale then
-    highlight = "HoverWarn"
+    highlight = M.HL_WARN
   elseif #failed > 0 then
-    highlight = "HoverError"
+    highlight = M.HL_ERROR
   end
   return {
     lines = lines,
@@ -276,7 +286,7 @@ function M.describe_file(file, sum, now, cases)
   return {
     lines = lines,
     title = safe(file) .. (sum.stale and " (outdated)" or ""),
-    highlight = sum.stale and "HoverWarn" or (#sum.failed > 0 and "HoverError" or nil),
+    highlight = sum.stale and M.HL_WARN or (#sum.failed > 0 and M.HL_ERROR or nil),
   }
 end
 
@@ -300,7 +310,7 @@ function M.not_run(what, hint)
   return {
     lines = { "not run yet - " .. (hint or "run :Testing file") },
     title = safe(what),
-    highlight = "HoverWarn",
+    highlight = M.HL_WARN,
   }
 end
 

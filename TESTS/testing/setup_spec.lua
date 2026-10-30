@@ -50,6 +50,37 @@ return function(H)
   )
   pcall(vim.keymap.del, "n", "<leader>th")
 
+  -- hover.nvim: `setup()` never loads it. Not loaded yet, one retry in a named group waits for it
+  local saved_loaded, saved_preload =
+    package.loaded["hover.registry"], package.preload["hover.registry"]
+  local required, registered = 0, nil
+  package.loaded["hover.registry"] = nil
+  package.preload["hover.registry"] = function()
+    required = required + 1
+    error("hover.nvim must not be required by setup()")
+  end
+  testing.setup()
+  eq(required, 0, "setup() does not require hover.nvim")
+  local okg, armed = pcall(vim.api.nvim_get_autocmds, { group = "TestingHoverRegister" })
+  ok(okg and #armed > 0, "setup() without hover.nvim loaded arms the retry")
+  package.preload["hover.registry"] = nil
+  package.loaded["hover.registry"] = {
+    register = function(name)
+      registered = name
+    end,
+  }
+  vim.api.nvim_exec_autocmds("User", { pattern = "LazyLoad", modeline = false })
+  eq(registered, "testing.nvim", "hover.nvim loaded later: the retry registers")
+  -- loaded before setup(): registered at once, nothing armed
+  registered = nil
+  testing.setup()
+  eq(registered, "testing.nvim", "hover.nvim loaded before setup(): registered at once")
+  ok(
+    not pcall(vim.api.nvim_get_autocmds, { group = "TestingHoverRegister" }),
+    "and no retry is armed"
+  )
+  package.loaded["hover.registry"], package.preload["hover.registry"] = saved_loaded, saved_preload
+
   config.reset()
   -- `setup()` registered :Testing in this editor: leave it as found
   pcall(vim.api.nvim_del_user_command, "Testing")
