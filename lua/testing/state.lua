@@ -46,6 +46,9 @@ M.MAX_DESCRIBE = 20
 ---Failing assertions kept per case (`fails`).
 ---@type integer
 M.MAX_FAILS = 20
+---Largest `fails_total` taken from a result file or a run (the count of ALL failing assertions of a case).
+---@type integer
+M.MAX_FAILS_TOTAL = 1000000
 
 local STATUS = {
   pass = true,
@@ -79,6 +82,7 @@ local uv = vim.uv or vim.loop
 ---@field expected? string
 ---@field actual? string
 ---@field fails? Testing.State.Fail[]  Every failing assertion with its source line (at most `MAX_FAILS`), for a case that is a whole file.
+---@field fails_total? integer  How many assertions failed in all; set only when that is more than `#fails` (capped at `MAX_FAILS_TOTAL`).
 
 ---@class Testing.State.File
 ---@field mtime_ns string  Decimal string, nanoseconds since the epoch.
@@ -127,6 +131,14 @@ local function clean(s, max, keep_newlines)
     return (s:gsub("[%z\1-\8\11\12\14-\31\127]", "?"))
   end
   return (s:gsub("[%z\1-\31\127]", "?"))
+end
+
+---A case or describe title the way the store keeps it (control characters replaced, cut to 300 bytes): what a
+---title read from a spec file's text must become before it is compared with a stored `name` or `describe` entry.
+---@param s any
+---@return string|nil
+function M.title(s)
+  return clean(s, 300)
 end
 
 ---@param s any
@@ -283,10 +295,11 @@ local function validate_case(raw)
   if not inside(norm_file(raw.file)) then
     return nil, "file outside the project"
   end
-  local fails
+  local fails, fails_total
   if type(raw.fails) == "table" then
+    local kept = 0
     for _, f in ipairs(raw.fails) do
-      if #(fails or {}) >= M.MAX_FAILS then
+      if kept >= M.MAX_FAILS then
         break
       end
       if type(f) == "table" then
@@ -295,8 +308,20 @@ local function validate_case(raw)
           fl = nil
         end
         fails = fails or {}
-        fails[#fails + 1] = { line = fl, msg = clean(first_line(f.msg), M.MAX_TEXT) }
+        kept = kept + 1
+        fails[kept] = { line = fl, msg = clean(first_line(f.msg), M.MAX_TEXT) }
       end
+    end
+    -- the true count only counts when it is a whole number above what is kept; never trusted beyond the cap
+    local ft = raw.fails_total
+    if
+      fails
+      and type(ft) == "number"
+      and ft == math.floor(ft)
+      and ft > #fails
+      and ft <= M.MAX_FAILS_TOTAL
+    then
+      fails_total = ft
     end
   end
   return {
@@ -312,6 +337,7 @@ local function validate_case(raw)
     expected = clean(raw.expected, M.MAX_TEXT, true),
     actual = clean(raw.actual, M.MAX_TEXT, true),
     fails = fails,
+    fails_total = fails_total,
   }
 end
 
@@ -668,7 +694,7 @@ end
 ---@return Testing.State.Case
 local function from_ir(c)
   local message, expected, actual
-  local fails
+  local fails, failed = nil, 0
   for _, a in ipairs(c.assertions or {}) do
     if a.ok == false then
       if not message then
@@ -676,11 +702,14 @@ local function from_ir(c)
         expected, actual = a.expected, a.actual
       end
       fails = fails or {}
+      failed = failed + 1
       if #fails < M.MAX_FAILS then
         fails[#fails + 1] = { line = a.line, msg = clean(first_line(a.msg), M.MAX_TEXT) }
       end
     end
   end
+  -- the list is cut at MAX_FAILS; the count of all of them is kept apart so a report never says "20" for 32
+  local fails_total = (fails and failed > #fails) and math.min(failed, M.MAX_FAILS_TOTAL) or nil
   if not message and c.error then
     message = first_line(c.error.message)
   end
@@ -707,6 +736,7 @@ local function from_ir(c)
     expected = clean(expected, M.MAX_TEXT, true),
     actual = clean(actual, M.MAX_TEXT, true),
     fails = fails,
+    fails_total = fails_total,
   }
 end
 
@@ -791,6 +821,7 @@ local function to_json(st)
       expected = c.expected,
       actual = c.actual,
       fails = c.fails,
+      fails_total = c.fails_total,
     }
   end
   return {

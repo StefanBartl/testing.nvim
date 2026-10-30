@@ -454,6 +454,135 @@ return function(H)
   eq(m.files["TESTS/d_spec.lua"], nil, "hostile: a record of the wrong type")
   has(m.notes[1], "3 unusable file record(s) ignored", "hostile: counted")
 
+  -- the failing assertions of a whole-file case (`fails`, `fails_total`) in a hostile result file ----------------------------
+  local function fails_of(extra)
+    local k = {
+      id = "TESTS/f_spec.lua::f",
+      file = "TESTS/f_spec.lua",
+      status = "fail",
+      duration_ms = 1,
+    }
+    for key, v in pairs(extra) do
+      k[key] = v
+    end
+    local one = load_with(vim.json.encode({ v = state.VERSION, cases = { k }, files = {} }))
+    return one.cases[1]
+  end
+  local fc = fails_of({
+    fails = {
+      { line = 1.5, msg = "float line" },
+      { line = "3", msg = "string line" },
+      { line = 1e12, msg = "huge line" },
+      { line = -4, msg = "negative line" },
+      { line = 0, msg = "zero line" },
+      { line = 7, msg = "good line" },
+      { msg = "no line" },
+    },
+  })
+  eq(#fc.fails, 7, "fails: every table entry is kept")
+  for i = 1, 5 do
+    eq(fc.fails[i].line, nil, "fails: a bad line is dropped (entry " .. i .. ")")
+  end
+  eq(fc.fails[5].msg, "zero line", "fails: ... and its message stays")
+  eq(fc.fails[6].line, 7, "fails: a good line stays")
+  eq(fc.fails[7].line, nil, "fails: no line stays no line")
+  fc = fails_of({
+    fails = {
+      { msg = { "a", "table" } },
+      { msg = 12 },
+      { msg = "a\27[31mb\nsecond line" },
+      { msg = ("m"):rep(5000) },
+      "a string",
+      5,
+      { line = 2, msg = "last" },
+    },
+  })
+  eq(#fc.fails, 5, "fails: entries that are no table are skipped")
+  eq(fc.fails[1].msg, nil, "fails: a table message is dropped")
+  eq(fc.fails[2].msg, nil, "fails: a number message is dropped")
+  eq(fc.fails[3].msg, "a?[31mb", "fails: control characters are replaced, the first line only")
+  eq(#fc.fails[4].msg, state.MAX_TEXT, "fails: a long message is cut")
+  eq(fc.fails[5].msg, "last", "fails: the entry after the skipped ones")
+  for what, value in pairs({
+    object = { a = { line = 1, msg = "x" } },
+    ["a string"] = "boom",
+    ["true"] = true,
+    ["a number"] = 5,
+  }) do
+    eq(
+      fails_of({ fails = value }).fails,
+      nil,
+      "fails: " .. what .. " in place of the list is ignored"
+    )
+  end
+  local crowd = {}
+  for i = 1, 100000 do
+    crowd[i] = { line = i, msg = "m" }
+  end
+  fc = fails_of({ fails = crowd })
+  eq(#fc.fails, state.MAX_FAILS, "fails: 100000 entries keep " .. state.MAX_FAILS)
+  eq(fc.fails_total, nil, "fails: and no count nobody wrote")
+  fc = fails_of({ fails = crowd, fails_total = 100000 })
+  eq(fc.fails_total, 100000, "fails_total: the written count of the 100000")
+  local twenty = vim.list_slice(crowd, 1, 20)
+  local few = vim.list_slice(crowd, 1, 5)
+  for what, case in pairs({
+    ["a float"] = { fails = twenty, fails_total = 21.5 },
+    ["a negative number"] = { fails = twenty, fails_total = -99 },
+    ["a string"] = { fails = twenty, fails_total = "99" },
+    ["a table"] = { fails = twenty, fails_total = { 99 } },
+    ["above the cap"] = { fails = twenty, fails_total = state.MAX_FAILS_TOTAL + 1 },
+    ["a huge number"] = { fails = twenty, fails_total = 1e300 },
+    ["equal to what is kept"] = { fails = twenty, fails_total = 20 },
+    ["below what is kept"] = { fails = few, fails_total = 3 },
+    ["without a list"] = { fails_total = 99 },
+    ["a list without a single assertion"] = { fails = { "x", 5 }, fails_total = 99 },
+  }) do
+    eq(fails_of(case).fails_total, nil, "fails_total: " .. what .. " is dropped")
+  end
+  eq(
+    fails_of({ fails = twenty, fails_total = 99 }).fails_total,
+    99,
+    "fails_total: a good count stays"
+  )
+  eq(
+    fails_of({ fails = twenty, fails_total = state.MAX_FAILS_TOTAL }).fails_total,
+    state.MAX_FAILS_TOTAL,
+    "fails_total: the cap itself is allowed"
+  )
+  -- ... and a run with more failing assertions than the store keeps writes the count and reads it back
+  local fres = result.new({ root = root, id = "run-fails" })
+  local fcase = result.new_case({ file = spec_a, name = "whole" })
+  fcase.status = "fail"
+  fcase.duration_ms = 2
+  for i = 1, 33 do
+    fcase.assertions[i] = { ok = false, kind = "ok", msg = "bad " .. i, line = i }
+  end
+  result.add_case(fres, fcase)
+  result.finalize(fres)
+  local fopts = { state_dir = vim.fs.normalize(vim.fn.tempname()) }
+  state.record(root, fres, { ran_files = { [spec_a] = true } }, fopts)
+  local round = state.load(root, fopts).cases[1]
+  eq(#round.fails, state.MAX_FAILS, "fails: a run keeps " .. state.MAX_FAILS)
+  eq(round.fails_total, 33, "fails_total: a run records the real count and it survives the file")
+  eq(round.fails[20].msg, "bad 20", "fails: the first ones are the ones kept")
+  -- a count above the cap is cut to it (the cap is read when the run is applied)
+  local cap = state.MAX_FAILS_TOTAL
+  state.MAX_FAILS_TOTAL = 25
+  local capped_opts = { state_dir = vim.fs.normalize(vim.fn.tempname()) }
+  state.record(root, fres, { ran_files = { [spec_a] = true } }, capped_opts)
+  state.MAX_FAILS_TOTAL = cap
+  eq(
+    state.load(root, capped_opts).cases[1].fails_total,
+    25,
+    "fails_total: a count above the cap is cut to it when the run is recorded"
+  )
+
+  -- a title the way the store keeps it ---------------------------------------------------------------------------------------
+  eq(state.title("a\27[1mb"), "a?[1mb", "title: control characters are replaced")
+  eq(#state.title(("x"):rep(400)), 300, "title: cut to 300 bytes")
+  eq(state.title(5), nil, "title: no string, no title")
+
   -- a record that cannot be written is reported, never raised ------------------------
   local blocker = vim.fs.normalize(vim.fn.tempname())
   write(blocker, "a file where the state directory should be")
