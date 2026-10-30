@@ -68,6 +68,11 @@ pipe on Windows, a socket in the private `XDG_RUNTIME_DIR` elsewhere), nothing h
   `kill()` and when the process ended. `HOME` stays real (git needs it). On Windows the base is
   taken in its long form (`fs_realpath`): a parent `TEMP` in the 8.3 short form (`C:\Users\STEFAN~1\...`)
   would otherwise reach the child, and `glob()` finds nothing below such a path.
+* **Clipboard**: `+` and `*` are two stores inside the child (`testing.child.clipboard`, installed
+  before the project's `minit`; a `minit` that sets `g:clipboard` itself wins). Without it the editor
+  finds a clipboard tool on the first register access (`win32yank` ships with the Windows build) and a
+  spec's `setreg("+", ...)` overwrites the developer's system clipboard. The headless CLI host gets the
+  same stores before the `minit` of an in-process run; an editor with a UI keeps its clipboard.
 * **Isolated home** (opt-in: `isolate_home = true`, `--isolate-home`): the sandbox gets a `home`
   directory; `HOME`, `USERPROFILE` point there, `APPDATA`/`LOCALAPPDATA` below it, `HOMEDRIVE`/`HOMEPATH`
   name it too (Windows; libuv would otherwise copy the parent's into the child) or are removed. `~` and

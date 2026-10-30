@@ -72,6 +72,16 @@ for _, dir in ipairs(job.rtp or {}) do
   vim.opt.rtp:append(dir)
 end
 
+-- a throwaway editor never writes the user's clipboard: `+`/`*` stay in this process (the minit may replace it)
+do
+  local cok, clip = pcall(require, "testing.child.clipboard")
+  if cok then
+    clip.install()
+  else
+    io.stderr:write("testing child: the fake clipboard is not available: ", tostring(clip), "\n")
+  end
+end
+
 -- prompts: cancelled, counted
 ---@type string[]
 local prompts = {}

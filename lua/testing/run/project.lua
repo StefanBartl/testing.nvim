@@ -162,12 +162,15 @@ local function minit_path(root, cfg)
   return path
 end
 
----Run the `minit` file of the project, if there is one.
+---Run the `minit` file of the project, if there is one. A headless runner (the CLI host) keeps `+`/`*` in
+---the process first (`testing.child.clipboard`; the minit may replace it); an editor with a UI is the user's
+---and keeps its clipboard.
 ---@param root string
 ---@param cfg Testing.ProjectConfig
 ---@return boolean ok
 ---@return string|nil err
 local function run_minit(root, cfg)
+  require("testing.child.clipboard").install()
   local path = minit_path(root, cfg)
   if not path then
     return true, nil

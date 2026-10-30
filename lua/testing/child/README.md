@@ -15,6 +15,7 @@ Two kinds of child editor live here:
 |--------|---------|
 | [`testing.child`](init.lua) | `build` (argv, environment, sandbox, job; pure), `environment` (sandbox + env, shared with `testing.rpc`), `prepare`, `spawn` (also the RPC mode: `on_stdout`), `kill_tree`, `cleanup`, `describe_exit` |
 | [`testing.child.env`](env.lua) | The environment allowlist, the determinism variables and the sandbox variables (pure) |
+| [`testing.child.clipboard`](clipboard.lua) | An in-memory `+`/`*` provider for a throwaway editor, installed before the project's minit by `boot`, `rpc_init` and the headless in-process host: a spec never writes the user's system clipboard |
 | [`testing.child.fragment`](fragment.lua) | The result file a child writes (NDJSON) and the validation of it |
 | [`testing.child.boot`](boot.lua) | Runs INSIDE a per-file child: reads the job, sets the editor up, runs the file, reports |
 | [`testing.child.runner`](runner.lua) | Runs ONE spec file and writes its records (selector, `--lf`, timeouts, the guard layer of the job, soft isolation): shared by `boot` and the warm pool |
