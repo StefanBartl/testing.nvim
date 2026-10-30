@@ -117,11 +117,11 @@ end
 ---@class Testing.Ci.Matcher
 ---@field feed fun(line: string) Match one output line.
 ---@field list Testing.Ci.Finding[] The findings so far (at most `MAX_FINDINGS`).
----@field total fun(): integer Every line that matched.
----@field matched fun(): integer Every line that matched, also those `keep` dropped.
+---@field total fun(): integer Every finding that matched and was kept, each distinct one once.
+---@field matched fun(): integer Every finding that matched, also those `keep` dropped, each distinct one once.
 
 ---A matcher for an error format (one item or a list of alternatives), fed line by line as the output arrives:
----nothing but the findings is kept, and the total counts every match. Each line is normalised first
+---nothing but the findings is kept, and the total counts every distinct match. Each line is normalised first
 ---(`M.normalize_line`), each file name too (`M.normalize_file`). A finding seen before (same file, line, column and
 ---text) is neither kept nor counted again: lua-language-server's pretty output can list a file's block twice.
 ---@param efm string|string[]|nil

@@ -458,7 +458,8 @@ and `%%`; any other item is an error; several alternatives per preset): `luachec
 LuaLS prints `lua\my dir\a.lua:2:3 ...`). Each output line is matched as it arrives, without its colour escapes and,
 for a line that redraws itself with carriage returns (LuaLS' progress text), only its last part; a relative file
 name is written with forward slashes and without a leading `./`, and the **findings** (file, line, column, text; at most
-200 are listed, all are counted) go into the document. The suite's findings come from its Result-IR (one per case
+200 are listed, all are counted; a finding the output lists twice, as LuaLS' pretty output can, is listed and counted
+once) go into the document. The suite's findings come from its Result-IR (one per case
 that is not green, at the failed assertion, with the first line of its message), so they do not depend on the
 reporter the suite printed with; a `--json` of yours after `--` is used for that, otherwise a temporary one. A
 repository step has no error format and no findings, only its last output lines.

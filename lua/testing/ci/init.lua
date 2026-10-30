@@ -438,7 +438,8 @@ end
 ---@field errors string[] The last lines of the output (up to 20).
 ---@field findings? Testing.Ci.Finding[]
 ---@field findings_total? integer
----@field matched? integer Process steps: every finding the error format matched, also those a `keep` dropped.
+---@field matched? integer Process steps: every distinct finding the error format matched, also those a `keep`
+---dropped.
 ---@field partial? boolean The suite's own verdict was `green-partial`.
 ---@field notes? string[] What the step output said about how it ran (`Testing.Ci.Planned.notes`, `testing lint`).
 
