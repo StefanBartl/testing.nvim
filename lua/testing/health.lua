@@ -565,7 +565,8 @@ function M.check()
       )
     elseif status.state == "not registered" then
       health.info(
-        "hover.nvim is installed but testing.nvim is not registered: call require('testing').setup()"
+        "hover.nvim is installed but testing.nvim is not registered yet: it registers once hover.nvim is loaded "
+          .. "(VimEnter, LazyLoad, VeryLazy or the first :Testing hover); require('testing').setup() must have run"
       )
     else
       health.info("hover.nvim is not installed; `:Testing hover` shows the same text in a float")

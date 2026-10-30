@@ -571,7 +571,7 @@ function M.discover(root, opts)
   local function is_root_spec(path)
     path = slashes(path)
     local rel = rel_of(root, path)
-    if M.NEVER_SPECS[vim.fs.basename(path)] and is_root_dir(vim.fs.dirname(rel)) then
+    if M.NEVER_SPECS[vim.fs.basename(path)] and is_root_dir(vim.fs.dirname(rel) or "") then
       return false
     end
     for _, pattern in ipairs(patterns) do
@@ -657,7 +657,8 @@ function M.discover(root, opts)
       path = slashes(path)
       -- the same file under two spellings (`tests/` is `TESTS/` on a case-insensitive file system, a root
       -- `TESTS/sandbox` lies below the legacy `tests/`): the directory is compared by its real path
-      local dir_key = realpath(vim.fs.dirname(path)) or vim.fs.dirname(path)
+      local spec_dir = vim.fs.dirname(path) or ""
+      local dir_key = realpath(spec_dir) or spec_dir
       local key = fold(slashes(dir_key) .. "/" .. vim.fs.basename(path))
       if not seen_path[key] then
         seen_path[key] = true
