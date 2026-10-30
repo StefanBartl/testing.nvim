@@ -357,6 +357,11 @@ function M.main(argv, services)
     err("testing conformance: internal error: " .. tostring(report))
     return M.EXIT_INFRA
   end
+  -- exit 2 says why on stderr like every other command (a refused root: `:Testing conformance` recognizes the
+  -- refusal there and asks); the report below still carries it in its problems
+  if report.config_error then
+    err("testing conformance: " .. tostring(report.config_error))
+  end
 
   local render = require("testing.conformance.render")
   local atomic = require("lib.nvim.fs.write.atomic")

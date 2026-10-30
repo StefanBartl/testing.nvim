@@ -507,13 +507,16 @@ return function(H)
   put(foreign .. "/TESTS/minimal_init.lua", touch:format("minit"))
   put(foreign .. "/TESTS/a_spec.lua", touch:format("spec") .. "return function() end\n")
   local cli = require("testing.cli")
-  local said = {}
+  local said, said_err = {}, {}
   local function sink(s)
     said[#said + 1] = s
   end
   local sv = {
     out = sink,
-    err = sink,
+    err = function(s)
+      said[#said + 1] = s
+      said_err[#said_err + 1] = s
+    end,
     trust = { env = {}, store = foreign .. "-state/trust.json" },
   }
   for _, argv in ipairs({
@@ -525,13 +528,14 @@ return function(H)
     { "conformance", foreign },
     { "surface", foreign },
   }) do
-    said = {}
+    said, said_err = {}, {}
     local code = cli.main(argv, sv)
     local label = table.concat(argv, " "):gsub(vim.pesc(foreign), "<foreign>")
     eq(code, 2, "untrusted: `" .. label .. "` is exit 2")
+    -- on stderr: that is where `:Testing <cmd>` (bindings.trust_prompt) looks for it before it asks
     ok(
-      table.concat(said, "\n"):find(trust.REFUSED, 1, true),
-      "untrusted: `" .. label .. "` names the refusal"
+      table.concat(said_err, "\n"):find(trust.REFUSED, 1, true),
+      "untrusted: `" .. label .. "` names the refusal on stderr"
     )
     eq(
       vim.uv.fs_stat(marker),
