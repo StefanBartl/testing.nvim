@@ -93,6 +93,14 @@ hover ~
     Size of the hover over a test (`:Testing hover`, hover.nvim `:Hover show`):
     longest line in display columns, most lines, lines of a failure diff.
 
+                                                        *testing-surface_view*
+surface_view ~
+    Type: { keys?: { jump?, status?, kind?, export? } }, each an lhs or false.
+    Default: `{ keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } }`.
+    Keys of the matrix view (|testing-matrix-view|), only in that view;
+    `false` leaves a key out. Legend, `?` cheatsheet and keymaps come from
+    this one table.
+
 ==============================================================================
 5. Commands                                                      *testing-commands*
 
@@ -132,7 +140,19 @@ hover ~
         no digest fails the run (exit 1). `--matrix` shows entries x spec
         files, `--csv` a tab separated table; `binding:`/`command:` tags and
         `-- @covers` headers of passing cases count as exercised (not with
-        `--no-tags`).
+        `--no-tags`). `--matrix` alone opens the matrix view (see
+        |testing-matrix-view|).
+
+                                                        *testing-matrix-view*
+The matrix view of `:Testing surface --from={ir.json} --matrix` is a ui.kit
+viewer, one line per entry, one column per spec file. Its keys (buffer-local,
+from |testing-surface_view|):
+    <CR>    on a spec file column: that spec file; elsewhere on a row: the
+            source of the entry at its line
+    s       status filter: all, hit, missing, untracked, ignored
+    t       kind filter: all, binding, command, autocmd
+    e       export the shown rows as a tab separated file (asks for a path)
+    ?       the cheatsheet; q and <Esc> close
 :Testing budget [{root}] [--update] [--factor={x}] [--allow-new]
         Measure the performance budgets of the runner. A measured case
         without a baseline entry compared nothing: exit 2 unless

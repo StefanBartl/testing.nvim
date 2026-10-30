@@ -14,8 +14,12 @@ local M = {}
 --- config object, which keeps the merge, `get()` and `reset()` the same as in every other plugin.
 local cfg = require("lib.lua.config").new(DEFAULTS, {
   name = "testing",
-  schema = { keymaps = "table|false", ci = "table", hover = "table" },
+  schema = { keymaps = "table|false", ci = "table", hover = "table", surface_view = "table" },
 })
+
+---The actions of the matrix view whose key `surface_view.keys` sets (`testing.surface.view`).
+---@type table<string, true>
+local VIEW_ACTIONS = { jump = true, status = true, kind = true, export = true }
 
 ---Per-key type check; the single source of truth for which keys exist.
 ---@type table<string, fun(v: any): boolean>
@@ -33,6 +37,31 @@ local CHECKS = {
     for _, key in ipairs({ "max_width", "max_height", "max_diff_lines" }) do
       local n = v[key]
       if n ~= nil and (type(n) ~= "number" or n ~= math.floor(n) or n < 1 or n > 1000) then
+        return false
+      end
+    end
+    return true
+  end,
+  surface_view = function(v)
+    if type(v) ~= "table" then
+      return false
+    end
+    for key in pairs(v) do
+      if key ~= "keys" then
+        return false
+      end
+    end
+    if v.keys == nil then
+      return true
+    end
+    if type(v.keys) ~= "table" then
+      return false
+    end
+    for action, lhs in pairs(v.keys) do
+      if not VIEW_ACTIONS[action] then
+        return false
+      end
+      if lhs ~= false and (type(lhs) ~= "string" or lhs == "") then
         return false
       end
     end

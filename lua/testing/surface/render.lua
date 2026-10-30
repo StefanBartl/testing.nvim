@@ -309,18 +309,27 @@ function M.json(report, matrix)
   }
   if matrix and cov and report.hits then
     doc.matrix = require("testing.surface.coverage").matrix(cov, report.hits)
+    -- the cells of `--matrix --csv`, ready to show: the view of `:Testing surface --matrix` computes nothing
+    local header, data, meta = M.matrix_rows(report)
+    doc.table = { header = header, rows = data, files = meta.files, src = meta.src }
   end
   return encode(doc) .. "\n"
 end
+
+---What `matrix_rows` knows beyond the cells: where a row and a file column point to (the matrix view jumps there).
+---@class Testing.Surface.MatrixMeta
+---@field files string[] The spec files of the file columns as the IR named them (not cleaned): column `3 + i` is `files[i]`.
+---@field src string[] Per row, the `src` (`path:line`) of its entry; `""` when it has none.
 
 ---The matrix entries x spec files as a header and rows of cells (strings), `nil` without a tracked run.
 ---Columns: KIND, STATUS, ID, one per spec file (cases that exercised the entry), TOTAL.
 ---@param report table
 ---@return string[]|nil header
 ---@return string[][] rows
+---@return Testing.Surface.MatrixMeta meta
 function M.matrix_rows(report)
   if not (report.coverage and report.hits) then
-    return nil, {}
+    return nil, {}, { files = {}, src = {} }
   end
   local m = require("testing.surface.coverage").matrix(report.coverage, report.hits)
   local header = { "KIND", "STATUS", "ID" }
@@ -328,10 +337,11 @@ function M.matrix_rows(report)
     header[#header + 1] = clean(f)
   end
   header[#header + 1] = "TOTAL"
-  local rows_out = {}
-  local tagged = {}
+  local rows_out, src = {}, {}
+  local tagged, src_of = {}, {}
   for _, e in ipairs(report.coverage.entries) do
     tagged[e.id] = e.tagged
+    src_of[e.id] = e.src
   end
   for _, r in ipairs(m.rows) do
     local row = { clean(r.kind), r.status .. (tagged[r.id] and " (tag)" or ""), clean(r.id) }
@@ -340,8 +350,23 @@ function M.matrix_rows(report)
     end
     row[#row + 1] = r.total > 0 and tostring(r.total) or ""
     rows_out[#rows_out + 1] = row
+    src[#src + 1] = type(src_of[r.id]) == "string" and src_of[r.id] or ""
   end
-  return header, rows_out
+  return header, rows_out, { files = vim.deepcopy(m.files), src = src }
+end
+
+---Tab separated lines of a header and rows whose cells went through `clean` (a control character is `?`, so a
+---tab or a line break inside a cell cannot split a column or a row): the `--csv` output and the export of the
+---matrix view (`testing.surface.view`).
+---@param header string[]
+---@param data string[][]
+---@return string
+function M.tsv(header, data)
+  local lines = { table.concat(header, "\t") }
+  for _, r in ipairs(data) do
+    lines[#lines + 1] = table.concat(r, "\t")
+  end
+  return table.concat(lines, "\n") .. "\n"
 end
 
 ---Tab separated table: the entry list, or with `matrix` the matrix. Tabs and line breaks inside a cell
@@ -359,16 +384,7 @@ function M.csv(report, matrix)
   else
     header, data = { "KIND", "STATUS", "HITS", "ID", "SRC" }, rows(report)
   end
-  local lines = {}
-  local function put(r)
-    -- every cell went through `clean` (control characters are `?`): a tab or a line break cannot split a row
-    lines[#lines + 1] = table.concat(r, "\t")
-  end
-  put(header)
-  for _, r in ipairs(data) do
-    put(r)
-  end
-  return table.concat(lines, "\n") .. "\n"
+  return M.tsv(header, data)
 end
 
 ---The matrix as a text table (or markdown).

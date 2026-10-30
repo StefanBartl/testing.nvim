@@ -232,15 +232,33 @@ Limits of the claims:
 testing surface . --from out.json                    # the list; "not covered" names each entry: `binding:<leader>slt - no feature test`
 testing surface . --from out.json --matrix           # entries x spec files, cases that exercised the entry per file
 testing surface . --from out.json --matrix --csv     # the same as a tab separated table (tabs and line breaks in a cell become `?`)
-testing surface . --from out.json --matrix --json    # `matrix = { files, rows = { { id, kind, status, cells, total } } }`
+testing surface . --from out.json --matrix --json    # `matrix = { files, rows = { { id, kind, status, cells, total } } }` and `table = { header, rows, files, src }`
 testing surface . --from out.json --write-ir annotated.json   # the IR with the aggregate as its own `surface` section
 ```
 
 `--matrix` needs a tracked run (`--from` or `--hits`): without one it prints why and exits `2`, like `--write-ir`
-without `--from`. An entry no case exercised has `cells = {}` in the JSON. `:Testing surface --matrix` shows the
-same table in the viewer (`--csv` and `--no-tags` are flags of the route too). The `surface` section of the IR holds the
-totals, the ratio per kind and per spec file, `missing`, `untracked` and `tagged`. A view built on
-`ui.kit` is tracked separately (`binding-coverage-ui-view`).
+without `--from`. An entry no case exercised has `cells = {}` in the JSON. The `table` section of the JSON holds
+the cells of `--matrix --csv` (`render.matrix_rows`) plus, per file column, the spec file as the IR named it
+(`files`) and, per row, the `src` of the entry (`""` when it has none). The `surface` section of the IR holds the
+totals, the ratio per kind and per spec file, `missing`, `untracked` and `tagged`.
+
+### The matrix view (`:Testing surface --matrix`)
+
+`:Testing surface --from=out.json --matrix` asks the child for `--matrix --json` and shows its `table` in a
+lib.nvim ui.kit viewer (`testing.surface.view`): one line per entry, one column per spec file. The view shows the
+cells as the child wrote them; it recomputes nothing. With `--csv` or `--markdown` the text goes to the output viewer
+as before; without a tracked run the reason is shown instead of a view.
+
+| Key | Does |
+| --- | --- |
+| `<CR>` | On a spec file column: open that spec file. Anywhere else on a row: open the `src` of the entry at its line (an entry whose source is a module or unknown says so, the view stays). |
+| `s` | Status filter, round: all, hit (a `hit (tag)` row is a hit), missing, untracked, ignored (`--ignore`). |
+| `t` | Kind filter, round: all, binding, command, autocmd. |
+| `e` | Export the shown rows (with the filters) as a tab separated file, the format of `--matrix --csv`; asks for the path (default `<root>/surface-matrix.csv`). |
+| `?` | The cheatsheet. `q` / `<Esc>` close. |
+
+The keys are buffer-local to the view and come from `surface_view.keys` of `setup()` (`false` leaves one out,
+[CONFIG.md](CONFIG.md)); the winbar legend, the `?` cheatsheet and the keymaps are built from that one list.
 
 ## Gating a repository by baseline
 
@@ -297,7 +315,8 @@ Pilot: fileops.nvim (`surface.baseline.json`, the "Surface baseline gate" step o
 | `testing.surface.track` | the tracking layer: `install`, `hook_runner`, `unwrap` |
 | `testing.surface.coverage` | pure: `compute`, `by_file`, `thresholds`, `check`, `baseline`, `diff`, `matrix`, `from_ir`, `from_sink`, `annotate_ir` |
 | `testing.surface.tags` | `is_id`, `ids_of_tags`, `parse_covers`, `file_covers`, `apply`: the claims of passing cases (tags, `-- @covers`) |
-| `testing.surface.render` | text, markdown, JSON |
+| `testing.surface.render` | text, markdown, JSON, `matrix_rows`, `tsv` |
+| `testing.surface.view` | the matrix view of `:Testing surface --matrix`: `parse`, `filter`, `lines`, `cell_at`, `target`, `export_text` (pure), `open`, `show_verdict` |
 
 ## Integration: what is wired and what is not
 
@@ -343,7 +362,8 @@ owner of the named file; `testing.surface` exposes the API.
 2. **CLI** (`cli.lua`): `testing surface <args>` is dispatched before the run options are parsed, like
    `migrate`: `local code, text = require("testing.surface").main(rest, { cwd = vim.fn.getcwd() })`, text to
    stdout (stderr for code 2), the code is the exit code.
-3. **`:Testing surface`** (`bindings/usrcmds.lua`): the same call, the text in the viewer.
+3. **`:Testing surface`** (`bindings/usrcmds.lua`): the same call, the text in the viewer; `--matrix` alone adds
+   `--json` and hands the verdict to `testing.surface.view.show_verdict`.
 4. **Tracking in the runner** (`child/boot.lua`, `child/rpc_init.lua`, `run/guards.lua`, `run/inproc.lua`):
    with `surface.track` the job carries `surface = { api = { plugin } }`;
    the child installs `track.install(job.surface)` before the minit; `Session:open` calls

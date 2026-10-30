@@ -22,6 +22,21 @@ require("testing").setup({
 
 `keymaps = false` binds nothing at all.
 
+### Keys of the matrix view
+
+`:Testing surface --from=<ir.json> --matrix` opens a view with keys of its own, buffer-local to that view and bound
+only while it is open. Each can be moved or dropped with `surface_view = { keys = { <action> = "<lhs>" | false } }`;
+the winbar legend and the `?` cheatsheet are built from the same table.
+
+| Action | Default | Does |
+| --- | --- | --- |
+| `jump` | `<CR>` | On a spec file column: open that spec file; elsewhere on a row: open the source of the entry at its line. |
+| `status` | `s` | Status filter, round: all, hit, missing, untracked, ignored. |
+| `kind` | `t` | Kind filter, round: all, binding, command, autocmd. |
+| `export` | `e` | Write the shown rows as a tab separated file (asks for the path). |
+
+`?` shows the cheatsheet, `q` and `<Esc>` close the view.
+
 ## User commands
 
 | Command | Arguments | Description |
@@ -36,7 +51,7 @@ require("testing").setup({
 | `:Testing init [<root>]` | `--force`, `--plugin=<name>`, `--hooks` | Generate `.testing.lua`, `TESTS/minimal_init.lua`, `TESTS/<plugin>/load_spec.lua`, `scripts/test.sh`, `.github/workflows/ci.yml`, `stylua.toml`, `.luacheckrc` and `.gitattributes` in `<root>` (default: the working directory). An existing file is never overwritten, it is reported as kept; `--force` replaces it. With `--hooks` it writes the hook recipes instead (`scripts/hooks/{_testing.sh,pre-push,pre-commit,claude-stop}`, never over an existing file, `--force` does not apply) and prints the three commands that are left to you (`git add`, `git update-index --chmod=+x` for `pre-push` and `pre-commit` so that a clone on Linux, macOS or WSL runs them, `git config core.hooksPath`): [HOOKS.md](HOOKS.md). |
 | `:Testing migrate [<mode>] [<root>]` | `--fleet-root=<dir>` | `<mode>` is `dry-run` or `apply`. Plan the move of a plugin repository from plenary / busted / a hand-written runner to testing.nvim, specs unchanged ([MIGRATING.md](MIGRATING.md)). `dry-run` (the default) writes nothing: it opens the plan (analysis, the new `.testing.lua`, `scripts/test.sh`, `TESTS/minimal_init.lua`, the CI workflow as a diff, notes, risks) in a viewer. `apply` writes it, and refuses a repository with uncommitted changes. The first word is the mode when it is `dry-run` or `apply`, else it is the root. `--fleet-root` is the directory with the sibling `*.nvim` repositories used to map `require`s to dependencies (default: the parent of `<root>`). |
 | `:Testing conformance [<root>]` | `--gate`, `--only=<ids>`, `--skip=<ids>`, `--bridge`, `--markdown` | Run the conformance checks K1..K15 on the project in a headless child Neovim and show the report ([CONFORMANCE.md](CONFORMANCE.md)). Report only unless `--gate` (or `conformance.gate` in `.testing.lua`); a failed gate is a warning with the report, not an error. |
-| `:Testing surface [<root>]` | `--from=<ir.json>`, `--threshold=<n>`, `--markdown`, `--matrix`, `--csv`, `--no-tags` | List the plugin's keymaps, commands, autocmds and how much of it the specs exercised ([SURFACE.md](SURFACE.md)). Without `--from` (the IR of a tracked run) nothing is measured and the report says so. `--matrix`: entries x spec files; `--csv`: a tab separated table. |
+| `:Testing surface [<root>]` | `--from=<ir.json>`, `--threshold=<n>`, `--markdown`, `--matrix`, `--csv`, `--no-tags` | List the plugin's keymaps, commands, autocmds and how much of it the specs exercised ([SURFACE.md](SURFACE.md)). Without `--from` (the IR of a tracked run) nothing is measured and the report says so. `--matrix`: entries x spec files in an interactive view (filters, jumps, export; [Keys of the matrix view](#keys-of-the-matrix-view)), as text with `--csv` (a tab separated table) or `--markdown`. |
 | `:Testing budget [<root>]` | `--update`, `--allow-new`, `--factor=<x>` | Measure the performance budgets of the runner and compare them with the baseline ([PERFORMANCE.md](PERFORMANCE.md)). |
 | `:Testing ci [<profile>]` | `--step=<a,b>`, `--keep-going`, `--reuse`, `--root=<dir>` | Run the pipeline of the `ci` section of `.testing.lua` ([CI.md](CI.md)) in a headless child: the output streams into the buffer `testing-ci://<repo>` (a split opens when it is not visible), the verdict is notified, and a red run fills the quickfix list with the findings of the red steps (opened only on red). The editor never blocks. `<profile>` and `--step=` complete from the project (`testing ci list`, run in a child: the editor does not execute `.testing.lua`). |
 | `:Testing ci repos` | `--force`, `--jobs=<n>`, `--profile=<name>`, `--refresh`, `--keep-going`, `--reuse`, `--repos-root=<dir>` | Run the pipelines of the repositories of the setting `ci.repos` one after the other, `verify` first ([CI.md](CI.md#several-repositories)); the output streams into the buffer `testing-ci://repos-<hash>` below a live table of the repositories, red findings go to the quickfix list. |

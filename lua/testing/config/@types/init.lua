@@ -21,6 +21,18 @@
 ---@field max_height? integer
 ---@field max_diff_lines? integer
 
+---@class Testing.SurfaceViewKeys
+---@field jump string|false `<CR>`: a row to the `src` of its entry, a spec file column to that file.
+---@field status string|false `s`: the status filter, round (all, hit, missing, untracked, ignored).
+---@field kind string|false `t`: the kind filter, round (all, binding, command, autocmd).
+---@field export string|false `e`: write the filtered table as a tab separated file.
+
+---@class Testing.SurfaceViewConfig
+---@field keys Testing.SurfaceViewKeys
+
+---@class Testing.SurfaceViewConfigOptions
+---@field keys? { jump?: string|false, status?: string|false, kind?: string|false, export?: string|false }
+
 ---@class Testing.CiRepos
 ---@field roots string[] Directories whose sub-directories with a `ci` section are run by `:Testing ci repos` (env variables are expanded).
 ---@field include string[] Of the found ones only these directory names (empty: all).
@@ -38,6 +50,7 @@
 ---@field keymaps Testing.KeymapsConfig Named keymap actions to rebind or drop; empty by default.
 ---@field hover Testing.HoverConfig The hover over a test (`testing.hover`).
 ---@field ci Testing.CiConfig `:Testing ci` from the editor.
+---@field surface_view Testing.SurfaceViewConfig The keys of the matrix view of `:Testing surface --matrix`.
 ---@field project Testing.ProjectConfig Defaults of a project's `.testing.lua`; not settable through `setup()`.
 
 -- #####################################################################
@@ -172,5 +185,6 @@
 ---@field keymaps? Testing.KeymapsConfig
 ---@field hover? Testing.HoverConfigOptions
 ---@field ci? Testing.CiConfigOptions
+---@field surface_view? Testing.SurfaceViewConfigOptions
 
 return {}

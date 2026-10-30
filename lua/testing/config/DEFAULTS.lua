@@ -18,6 +18,9 @@ local DEFAULTS = {
   -- Size of the hover over a test (hover.nvim `:Hover show` and `:Testing hover`): longest line in display
   -- columns, most lines, lines of a failure diff. Bind `keymaps = { hover = "<lhs>" }` for a key (none by default).
   hover = { max_width = 80, max_height = 20, max_diff_lines = 12 },
+  -- Keys of the matrix view of `:Testing surface --matrix` (buffer-local, only in that view): an lhs, or
+  -- false to leave the key out. The winbar legend and the `?` cheatsheet are built from the same table.
+  surface_view = { keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } },
   -- `testing ci` from the editor. `repos`: the repositories `:Testing ci repos` runs one after the other
   -- (docs/CI.md): `roots` are directories whose sub-directories with a `ci` section count ("$VAR" is expanded),
   -- `include` / `exclude` narrow them by directory name.

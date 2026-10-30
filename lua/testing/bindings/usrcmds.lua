@@ -10,7 +10,7 @@
 ---   :Testing init [<root>] [--force] [--plugin=<name>] [--hooks]   generate the test setup of a plugin repo (--hooks: the git and agent hook recipes instead, never over an existing file)
 ---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
 ---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
----   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   keymaps/commands/... and how much the specs exercised
+---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown] [--matrix] [--csv] [--no-tags]   keymaps/commands/... and how much the specs exercised (`--matrix` alone: the interactive view, testing.surface.view)
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
 ---   :Testing ci [<profile>] [--step=a,b] [--keep-going] [--reuse]   the pipeline of the ci section: live view, quickfix on red (docs/CI.md)
 ---   :Testing ci status | verify | hook install | hook remove   the last result, the proof of this state, the pre-push hook
@@ -212,9 +212,10 @@ end
 
 ---@param sub "run"|"list"|"doctor"|"conformance"|"surface"|"budget"
 ---@param opts Testing.Child.Opts
-local function start(sub, opts)
+---@param on_done? fun(verdict: Testing.Child.Verdict) Default: the notification, the quickfix list, the viewer.
+local function start(sub, opts, on_done)
   local notify = require("testing.notify").get()
-  local ok, err = require("testing.bindings.child").start(sub, opts)
+  local ok, err = require("testing.bindings.child").start(sub, opts, on_done)
   if not ok then
     notify.error(("cannot start the test process: %s"):format(tostring(err)))
     return
@@ -726,7 +727,7 @@ function M.routes()
         {
           name = "matrix",
           bool = true,
-          desc = "Show the matrix entries x spec files instead of the entry list",
+          desc = "Entries x spec files in an interactive view (text with --csv/--markdown)",
         },
         {
           name = "csv",
@@ -740,15 +741,21 @@ function M.routes()
         },
       },
       run = function(ctx)
-        start("surface", {
-          root = M.resolve_root(ctx.args.root),
-          flags = {
-            raw = raw_args(ctx.flags, {
-              bool = { "markdown", "matrix", "csv", "no-tags" },
-              value = { "from", "threshold" },
-            }),
-          },
+        local root = M.resolve_root(ctx.args.root)
+        local raw = raw_args(ctx.flags, {
+          bool = { "markdown", "matrix", "csv", "no-tags" },
+          value = { "from", "threshold" },
         })
+        -- `--matrix` alone is the interactive view: the child prints the report as JSON and the view shows its
+        -- table; with `--csv` or `--markdown` the text goes to the output viewer as before
+        local on_done
+        if ctx.flags.matrix and not ctx.flags.csv and not ctx.flags.markdown then
+          raw[#raw + 1] = "--json"
+          on_done = function(verdict)
+            require("testing.surface.view").show_verdict(verdict, root)
+          end
+        end
+        start("surface", { root = root, flags = { raw = raw } }, on_done)
       end,
     },
     {

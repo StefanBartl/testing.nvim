@@ -105,11 +105,12 @@ function M.build_argv(sub, opts)
   return argv
 end
 
----`<REPO>/x`, a relative path or an absolute one, as an absolute path below `root`.
+---`<REPO>/x`, a relative path or an absolute one, as an absolute path below `root` (the quickfix list of a run, the
+---jumps of the matrix view).
 ---@param file string
 ---@param root string
 ---@return string
-local function resolve_path(file, root)
+function M.resolve_path(file, root)
   if file:sub(1, 6) == "<REPO>" then
     return root .. file:sub(7)
   end
@@ -155,7 +156,7 @@ function M.failure_items(ir, root)
       end
       if type(file) == "string" and file ~= "" then
         items[#items + 1] = {
-          filename = resolve_path(file, root),
+          filename = M.resolve_path(file, root),
           lnum = type(line) == "number" and line or 1,
           text = one_line(("[%s] %s%s"):format(case.status, case.id, why and (": " .. why) or "")),
           type = "E",
