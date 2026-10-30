@@ -53,6 +53,17 @@ return function(H)
   r.env.PATH = "changed"
   eq(parent.PATH, "/usr/bin", "the parent table is not modified")
 
+  -- PowerShell's module analysis cache is passed on: the GitHub windows images point it at a prebuilt
+  -- cache, and without it every cmdlet in a child took about 20 s (each call re-analysed all modules)
+  local ps = env.sanitize({
+    PSModuleAnalysisCachePath = "C:\\PSModuleAnalysisCachePath\\ModuleAnalysisCache",
+  })
+  eq(
+    ps.env.PSModuleAnalysisCachePath,
+    "C:\\PSModuleAnalysisCachePath\\ModuleAnalysisCache",
+    "PSModuleAnalysisCachePath is kept"
+  )
+
   -- matching is case-insensitive (Windows spells Path / PATH either way)
   local ci = env.sanitize({ Path = "p", home = "h", github_token = "t" })
   eq(ci.env.Path, "p", "Path matches PATH")

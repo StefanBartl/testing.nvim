@@ -66,6 +66,10 @@ M.ALLOW = {
   "COMMONPROGRAMFILES",
   "COMMONPROGRAMFILES(X86)",
   "COMMONPROGRAMW6432",
+  -- Windows PowerShell's module analysis cache. The GitHub windows images point it at a cache built
+  -- into the image; without it every `powershell -Command <cmdlet>` re-analyses every module on
+  -- PSModulePath (the image ships Az) and takes about 20 s instead of 0.3 s.
+  "PSMODULEANALYSISCACHEPATH",
   -- locale, terminal, time
   "LANG",
   "LANGUAGE",
