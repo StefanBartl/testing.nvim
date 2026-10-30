@@ -261,17 +261,32 @@ local function title(model, f, n)
   )
 end
 
+---The path the user typed, as a file to write: `~` and `$VAR` expanded, a relative path below `root`
+---(the default is there too), never against the editor's current directory.
+---@param path string
+---@param root string
+---@return string
+function M.export_path(path, root)
+  local p = vim.fs.normalize(path, { expand_env = true })
+  local absolute = p:sub(1, 1) == "/" or p:match("^%a:/") ~= nil
+  if not absolute then
+    p = vim.fs.normalize(root .. "/" .. p)
+  end
+  return p
+end
+
 ---Where the export asks for a file name: the kit's input (a seam for specs is the kit's dialog hook).
 ---@param default string
+---@param root string
 ---@param cb fun(path: string)
-local function ask_path(default, cb)
+local function ask_path(default, root, cb)
   require("lib.nvim.ui.kit").input({
     prompt = "Export the shown rows (tab separated) to",
     default = default,
     completion = "file",
     on_submit = function(path)
       if type(path) == "string" and vim.trim(path) ~= "" then
-        cb(vim.trim(path))
+        cb(M.export_path(vim.trim(path), root))
       end
     end,
   })
@@ -367,7 +382,7 @@ function M.open(model, opts)
       run = function()
         local text = M.export_text(model, shown)
         local n = #shown
-        ask_path(root .. "/surface-matrix.csv", function(path)
+        ask_path(root .. "/surface-matrix.csv", root, function(path)
           local ok, written, werr = pcall(require("lib.nvim.fs.write.atomic"), path, text)
           if ok and written == true then
             notify.info(("surface matrix: %d row(s) written to %s"):format(n, path))

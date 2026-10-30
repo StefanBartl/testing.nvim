@@ -230,6 +230,17 @@ function M.interpret(sub, res, opts)
       }
     end
     if code ~= 0 then
+      -- `--json` with exit 2/3 writes the report document to stderr: that is output for the viewer (its
+      -- notes say why), not a message (one line of JSON, often kilobytes long)
+      local err_text = vim.trim(res.stderr or "")
+      if (#lines == 0 or lines[1] == "") and err_text:sub(1, 1) == "{" then
+        return {
+          level = "error",
+          message = ("testing %s failed (exit %d)"):format(sub, code),
+          items = {},
+          lines = vim.split(err_text, "\n", { plain = true }),
+        }
+      end
       return {
         level = "error",
         message = ("testing %s failed (exit %d)\n%s"):format(sub, code, stderr),

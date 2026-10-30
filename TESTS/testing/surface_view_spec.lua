@@ -264,6 +264,23 @@ return function(H)
     end)
     kit.set_dialog_hook(real_hook)
     eq(asked, tmp .. "/surface-matrix.csv", "e: the default path is in the root")
+    -- what the user types: `~` and `$VAR` expanded, a relative name below the root (not the cwd)
+    local home = vim.fs.normalize("~")
+    eq(view.export_path("~/m.tsv", "/r"), home .. "/m.tsv", "export path: ~ is the home directory")
+    vim.env.TESTING_VIEW_PROBE = "/probe"
+    eq(
+      view.export_path("$TESTING_VIEW_PROBE/m.tsv", "/r"),
+      "/probe/m.tsv",
+      "export path: $VAR expanded"
+    )
+    vim.env.TESTING_VIEW_PROBE = nil
+    eq(
+      view.export_path("sub/m.tsv", "/r"),
+      "/r/sub/m.tsv",
+      "export path: relative is below the root"
+    )
+    eq(view.export_path("/abs/m.tsv", "/r"), "/abs/m.tsv", "export path: absolute stays")
+    eq(view.export_path("C:\\x\\m.tsv", "/r"), "C:/x/m.tsv", "export path: a drive path stays")
     local f = assert(io.open(out, "rb"))
     local exported = f:read("*a")
     f:close()
@@ -358,6 +375,16 @@ return function(H)
   eq(#problems, 1, "config: a number is refused")
   problems = config.setup({ surface_view = { other = true } })
   eq(#problems, 1, "config: an unknown key of surface_view is refused")
+  problems = config.setup({ surface_view = { keys = { kind = "s" } } })
+  eq(#problems, 1, "config: a key that collides with a default one (status = s) is refused")
+  problems = config.setup({ surface_view = { keys = { jump = "<cr>", export = "<CR>" } } })
+  eq(#problems, 1, "config: two actions on the same key (<cr> is <CR>) are refused")
+  for _, reserved in ipairs({ "?", "q", "<esc>" }) do
+    problems = config.setup({ surface_view = { keys = { export = reserved } } })
+    eq(#problems, 1, "config: the viewer's own key " .. reserved .. " is refused")
+  end
+  problems = config.setup({ surface_view = { keys = { status = false, kind = "s" } } })
+  eq(#problems, 0, "config: a key freed by false may be taken by another action")
   config.reset()
   eq(
     config.get().surface_view.keys,
@@ -398,6 +425,38 @@ return function(H)
     }, tmp)
     eq(shown, nil, "show_verdict: no table, no view")
     H.has(table.concat(said, "\n"), "--matrix needs a tracked run", "show_verdict: the reason")
+    -- the real route: with --json and exit 2 the CLI writes the document to STDERR; the notification is the
+    -- reason, not the kilobytes of JSON
+    said = {}
+    local via_child = child.interpret(
+      "surface",
+      { code = 2, stdout = "", stderr = no_run .. "\n" },
+      {}
+    )
+    eq(
+      via_child.message,
+      "testing surface failed (exit 2)",
+      "interpret: the JSON on stderr is no message"
+    )
+    eq(view.show_verdict(via_child, tmp), nil, "show_verdict via interpret: no table, no view")
+    local told = table.concat(said, "\n")
+    H.has(told, "--matrix needs a tracked run", "show_verdict via interpret: the reason")
+    ok(
+      not told:find('"table"', 1, true) and not told:find("{", 1, true),
+      "show_verdict via interpret: no JSON"
+    )
+    -- a plain usage error on stderr stays the message
+    local plain = child.interpret(
+      "surface",
+      { code = 2, stdout = "", stderr = "unknown flag --x\n" },
+      {}
+    )
+    H.has(
+      plain.message,
+      "unknown flag --x",
+      "interpret: a text error on stderr is still the message"
+    )
+    eq(plain.lines, nil, "interpret: and no viewer lines")
     local h = view.show_verdict(
       { level = "info", message = "testing surface done", items = {}, lines = { json } },
       tmp

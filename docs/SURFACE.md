@@ -254,7 +254,7 @@ as before; without a tracked run the reason is shown instead of a view.
 | `<CR>` | On a spec file column: open that spec file. Anywhere else on a row: open the `src` of the entry at its line (an entry whose source is a module or unknown says so, the view stays). |
 | `s` | Status filter, round: all, hit (a `hit (tag)` row is a hit), missing, untracked, ignored (`--ignore`). |
 | `t` | Kind filter, round: all, binding, command, autocmd. |
-| `e` | Export the shown rows (with the filters) as a tab separated file, the format of `--matrix --csv`; asks for the path (default `<root>/surface-matrix.csv`). |
+| `e` | Export the shown rows (with the filters) as a tab separated file, the format of `--matrix --csv`; asks for the path (default `<root>/surface-matrix.csv`; `~` and `$VAR` are expanded, a relative path is below the root). |
 | `?` | The cheatsheet. `q` / `<Esc>` close. |
 
 The keys are buffer-local to the view and come from `surface_view.keys` of `setup()` (`false` leaves one out,
@@ -316,7 +316,7 @@ Pilot: fileops.nvim (`surface.baseline.json`, the "Surface baseline gate" step o
 | `testing.surface.coverage` | pure: `compute`, `by_file`, `thresholds`, `check`, `baseline`, `diff`, `matrix`, `from_ir`, `from_sink`, `annotate_ir` |
 | `testing.surface.tags` | `is_id`, `ids_of_tags`, `parse_covers`, `file_covers`, `apply`: the claims of passing cases (tags, `-- @covers`) |
 | `testing.surface.render` | text, markdown, JSON, `matrix_rows`, `tsv` |
-| `testing.surface.view` | the matrix view of `:Testing surface --matrix`: `parse`, `filter`, `lines`, `cell_at`, `target`, `export_text` (pure), `open`, `show_verdict` |
+| `testing.surface.view` | the matrix view of `:Testing surface --matrix`: `parse`, `filter`, `lines`, `cell_at`, `target`, `export_text`, `export_path` (pure), `open`, `show_verdict` |
 
 ## Integration: what is wired and what is not
 

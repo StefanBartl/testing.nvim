@@ -188,7 +188,7 @@ require("testing").setup({
 | `notify_prefix` | non-empty string | `"[testing]"` | Prefix of every message the plugin shows. |
 | `keymaps` | `table<string, string\|string[]\|false>` or `false` | `{}` | Moves or drops named keymap actions; `false` binds no key at all. See [BINDINGS.md](BINDINGS.md). The one action, `hover`, has no default key. |
 | `hover` | `{ max_width?, max_height?, max_diff_lines? }` | `{ 80, 20, 12 }` | Size of the hover over a test (`:Testing hover`, hover.nvim): longest line in display columns, most lines, lines of a failure diff. Positive integers. |
-| `surface_view` | `{ keys?: { jump?, status?, kind?, export? } }`, each an lhs or `false` | `{ keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } }` | Keys of the matrix view of `:Testing surface --matrix`, buffer-local to that view; `false` leaves one out. The winbar legend and the `?` cheatsheet are built from the same table ([SURFACE.md](SURFACE.md#the-matrix-view-testing-surface---matrix)). |
+| `surface_view` | `{ keys?: { jump?, status?, kind?, export? } }`, each an lhs or `false` | `{ keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } }` | Keys of the matrix view of `:Testing surface --matrix`, buffer-local to that view; `false` leaves one out. Two actions on the same key (with the defaults counted, `<cr>` is `<CR>`) or one on the view's own `?`, `q`, `<Esc>` is refused. The winbar legend and the `?` cheatsheet are built from the same table ([SURFACE.md](SURFACE.md#the-matrix-view-testing-surface---matrix)). |
 
 A key with the wrong type, and any unknown key, is dropped and reported with a warning; the
 default stays in place.

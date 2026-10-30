@@ -65,6 +65,25 @@ local CHECKS = {
         return false
       end
     end
+    -- the keys as they will be bound (defaults plus these) must not collide with each other or with the
+    -- viewer's own `?`, `q` and `<Esc>` (bound after the actions, so they would silently win)
+    local seen = {}
+    for _, reserved in ipairs({ "?", "q", "<Esc>" }) do
+      seen[vim.api.nvim_replace_termcodes(reserved, true, true, true)] = true
+    end
+    for action in pairs(VIEW_ACTIONS) do
+      local lhs = v.keys[action]
+      if lhs == nil then
+        lhs = DEFAULTS.surface_view.keys[action]
+      end
+      if type(lhs) == "string" then
+        local code = vim.api.nvim_replace_termcodes(lhs, true, true, true)
+        if seen[code] then
+          return false
+        end
+        seen[code] = true
+      end
+    end
     return true
   end,
   ci = function(v)
