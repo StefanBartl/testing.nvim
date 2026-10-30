@@ -223,6 +223,7 @@ function M.report(root, opts)
       plugin = plugin,
       minit = minit,
       deps = project.deps,
+      env_allow = project.env_allow,
       setup = project.setup,
       setup_chunk = surf_cfg.setup_chunk,
     })

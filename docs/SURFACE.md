@@ -67,7 +67,9 @@ has no action name; its identity is the lhs.
 
 `testing.surface.read` runs in the editor after the plugin's `setup()`; `testing.surface.collect` does
 exactly that in a **child editor** (`testing.rpc`, sandbox, guards on), with the minit, the dependencies
-and the `setup` options of `.testing.lua`. The runner's own editor never loads the plugin.
+and the `setup` options of `.testing.lua`. The child gets the same environment as a test run: every
+dependency of `deps` as `$<NAME>_DIR`, `REPOS_DIR` and the names of `env_allow`, so a minit that finds a
+dependency through its variable works here too. The runner's own editor never loads the plugin.
 
 | Kind | Source | Details |
 | --- | --- | --- |

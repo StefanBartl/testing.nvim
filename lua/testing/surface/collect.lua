@@ -7,7 +7,8 @@
 ---
 --- What happens in the child, in this order:
 ---   1. the project's minimal init (`minit`) runs as the `-u` init and puts the project and its
----      dependencies on the runtimepath (plus `opts.deps`, resolved with `testing.deps`);
+---      dependencies on the runtimepath (plus `opts.deps`, resolved with `testing.deps`; each one is also
+---      set as `$<NAME>_DIR`, and `REPOS_DIR` and `opts.env_allow` are inherited, as in a test run);
 ---   2. `opts.setup_chunk` (a Lua chunk) runs, or else `require(<plugin>).setup(<opts.setup>)` when
 ---      the module has a `setup` function (`.testing.lua` `setup` are the options);
 ---   3. `testing.surface.read.read` returns the surface.
@@ -62,7 +63,8 @@ return surface
 ---@class Testing.Surface.CollectOpts
 ---@field plugin string Lua module root.
 ---@field minit? string Absolute path of the project's minimal init.
----@field deps? string[] Directory names of dependencies put on the runtimepath (`testing.deps`).
+---@field deps? string[] Directory names of dependencies put on the runtimepath and passed as `$<NAME>_DIR` (`testing.deps`).
+---@field env_allow? string[] Extra environment names the child may inherit (`.testing.lua` `env_allow`; `REPOS_DIR` always).
 ---@field setup? table Options for `setup()`.
 ---@field setup_chunk? string Lua chunk that sets the plugin up instead of `setup()`.
 ---@field kinds? string[]
@@ -78,34 +80,49 @@ function M.collect(root, opts)
   local deps = require("testing.deps")
   local rtp = { root }
   local notes = {}
-  for _, name in ipairs(opts.deps or {}) do
-    local r, why = deps.resolve(name, root)
-    if name == "lib.nvim" or name == "testing.nvim" then
-      -- provided from the running checkout below
-      if r then
-        rtp[#rtp + 1] = r.dir
-      end
-    elseif r then
-      rtp[#rtp + 1] = r.dir
-    else
-      notes[#notes + 1] = tostring(why):match("^[^\n]*")
-    end
-  end
   -- testing.nvim and lib.nvim come from the running checkout, not from the layout around the project
   local self_dir = deps.self_dir()
   local prepend, extra_env = { self_dir }, {}
+  local own = { ["testing.nvim"] = true, ["lib.nvim"] = true }
+  -- every other dependency reaches the child twice: on the runtimepath and as `$<NAME>_DIR`, since the
+  -- child's environment is an allowlist and a minit that asks for its dependency by the variable would
+  -- otherwise find nothing (`testing.child.env`)
+  local others = {}
+  for _, name in ipairs(opts.deps or {}) do
+    if own[name] then
+      -- provided from the running checkout below; a copy around the project still goes on the rtp
+      local r = deps.resolve(name, root)
+      if r then
+        rtp[#rtp + 1] = r.dir
+      end
+    else
+      others[#others + 1] = name
+    end
+  end
+  local resolved, failures = deps.resolve_all(others, root)
+  for _, r in ipairs(resolved) do
+    rtp[#rtp + 1] = r.dir
+    extra_env[deps.env_name(r.name)] = r.dir
+  end
+  for _, why in ipairs(failures) do
+    notes[#notes + 1] = tostring(why):match("^[^\n]*")
+  end
   extra_env[deps.env_name("testing.nvim")] = self_dir
   local lib = deps.resolve("lib.nvim", self_dir)
   if lib then
     prepend[#prepend + 1] = lib.dir
     extra_env[deps.env_name("lib.nvim")] = lib.dir
   end
+  -- `REPOS_DIR` (the layout a minit falls back to) and the project's `env_allow`, as in a test run
+  local env_allow = { "REPOS_DIR" }
+  vim.list_extend(env_allow, opts.env_allow or {})
   local spawn = opts.spawn or require("testing.rpc").spawn
   local child, err = spawn({
     root = root,
     minit = opts.minit,
     rtp_prepend = prepend,
     extra_env = extra_env,
+    env_allow = env_allow,
     rtp = rtp,
     call_timeout_ms = opts.call_timeout_ms or 30000,
     boot_timeout_ms = 30000,
