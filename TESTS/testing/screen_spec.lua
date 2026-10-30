@@ -88,6 +88,18 @@ return function(H)
       local p = screen.normalize(s, { masks = { { pattern = "o." } } })
       eq(p.text[1], "time 12:34 ##", "{ pattern = p } is a Lua pattern")
 
+      local anchored = shot({ chars("123 abc 456") }, { "           " })
+      eq(
+        screen.normalize(anchored, { masks = { "^%d" } }).text[1],
+        "#23 abc 456",
+        "^ anchors at the row start once, not again after each match"
+      )
+      eq(
+        screen.normalize(anchored, { masks = { "%d" } }).text[1],
+        "### abc ###",
+        "an unanchored pattern still masks every match"
+      )
+
       local okm, errm = pcall(screen.normalize, s, { masks = { { row = 0 } } })
       ok(
         not okm and tostring(errm):find("positive integer", 1, true) ~= nil,
@@ -131,6 +143,12 @@ return function(H)
       })
       eq(n.text[1], "ab日c", "characters from lines")
       eq(n.attrs[1], "  ab", "attributes from attrs")
+      local comb = screen.normalize({ lines = { "e\204\129xy" }, attrs = { "abc" } })
+      eq(comb.text[1], "e\204\129xy", "a composing character stays with its base")
+      eq(comb.attrs[1], "abc", "so the attributes after it keep their cells")
+      local sizeless = screen.normalize({ lines = { "abc", "de" } }, { masks = { { row = 1 } } })
+      eq(sizeless.text[1], "###", "without a size a row mask still covers the row (widest row)")
+      eq(sizeless.size.cols, 3, "the width is the widest row")
     end
 
     -- cursor and mode are part of the snapshot unless switched off
@@ -190,6 +208,12 @@ return function(H)
         fp ~= nil and fp:find("/TESTS/__snapshots__/testing/screen_spec/found.snap", 1, true) ~= nil,
         "without file: the spec on the call stack (" .. tostring(fp) .. ")"
       )
+      local cwd = vim.fn.getcwd()
+      vim.fn.chdir(repo)
+      local _, rel_dot = screen.path("x", { root = ".", file = this })
+      local _, rel_abs = screen.path("x", { root = repo, file = this })
+      vim.fn.chdir(cwd)
+      eq(rel_dot, rel_abs, "a relative root names the same file as the absolute one")
     end
 
     -- ===================================================================

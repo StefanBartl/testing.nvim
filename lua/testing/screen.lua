@@ -46,11 +46,11 @@ local LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 local MAX_DIFF_ROWS = 12
 
 ---@class Testing.Screen.Shot
----@field size { rows: integer, cols: integer }
+---@field size? { rows: integer, cols: integer } Default: the row count and the widest row.
 ---@field cursor? { row: integer, col: integer }
 ---@field mode? string
 ---@field lines string[]
----@field attrs string[]
+---@field attrs? string[]
 ---@field cells? string[][] One entry per screen column, `""` for the second cell of a wide character.
 ---@field cell_attrs? string[] One attribute letter per screen column.
 
@@ -98,9 +98,8 @@ local function row_cells(shot, r)
     return cells, marks
   end
   local line, attr = shot.lines[r] or "", shot.attrs and shot.attrs[r] or ""
-  local i = 0
-  for ch in line:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-    i = i + 1
+  -- `\zs` splits by character and keeps a composing character with its base, like `screenstring`
+  for i, ch in ipairs(vim.fn.split(line, [[\zs]])) do
     cells[i] = ch
     local m = attr:sub(i, i)
     marks[i] = m ~= "" and m or " "
@@ -180,10 +179,12 @@ local function mask_text(grid, pat, plain)
       pos = pos + #s
     end
     local text = table.concat(parts)
+    -- `^` anchors at `init` in Lua, not at the row start: an anchored pattern is looked for once
+    local anchored = not plain and pat:sub(1, 1) == "^"
     local init = 1
     while init <= #text do
       local s, e = text:find(pat, init, plain)
-      if not s then
+      if not s or (anchored and init > 1) then
         break
       end
       if e >= s then
@@ -256,12 +257,15 @@ end
 function M.normalize(shot, opts)
   opts = opts or {}
   local nrows = shot.size and shot.size.rows or #shot.lines
-  local ncols = shot.size and shot.size.cols or 0
-  local grid = {}
+  local ncols = shot.size and shot.size.cols
+  local grid, widest = {}, 0
   for r = 1, nrows do
     local cells, marks = row_cells(shot, r)
     grid[r] = { cells = cells, marks = marks }
+    widest = math.max(widest, #cells)
   end
+  -- a shot without a size (hand-made): the widest row, as `nrows` falls back to the row count
+  ncols = ncols or widest
   for _, m in ipairs(opts.masks or {}) do
     if type(m) == "string" then
       mask_text(grid, m, false)
@@ -380,7 +384,8 @@ function M.path(name, opts)
         tostring(name)
       )
   end
-  local root = norm_path(opts.root or vim.fn.getcwd())
+  -- absolute like the spec path below, or "." and the cwd would name different files
+  local root = norm_path(vim.fn.fnamemodify(opts.root or vim.fn.getcwd(), ":p"))
   local spec = opts.file or spec_on_stack()
   if not spec then
     return nil, "no *_spec.lua on the call stack: pass opts.file"
