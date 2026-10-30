@@ -113,13 +113,16 @@ return {
   ---@param root string
   ---@param extra? string[]
   ---@return table res, table|nil ir
+  -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
   local function run(root, extra)
     local ir_path = S.new_dir() .. "/ir.json"
     local argv =
       { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry, root }
     vim.list_extend(argv, { "--json", ir_path })
     vim.list_extend(argv, extra or {})
-    local res = vim.system(argv, { text = true, env = { TESTING_AGENT = "0" } }):wait(180000)
+    local res = vim
+      .system(argv, { text = true, env = { TESTING_AGENT = "0", TESTING_TRUST = "1" } })
+      :wait(180000)
     local f = io.open(ir_path, "rb")
     local ir
     if f then
@@ -201,7 +204,7 @@ return {
         root,
         "--from",
         ir_path,
-      }, { text = true, env = { TESTING_AGENT = "0" } })
+      }, { text = true, env = { TESTING_AGENT = "0", TESTING_TRUST = "1" } })
       :wait(180000)
     ok(sres.code == 0, "testing surface works through the command line: " .. tostring(sres.stderr))
     has(sres.stdout, "command:FxOpen", "the report lists the command")

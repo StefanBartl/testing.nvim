@@ -33,7 +33,10 @@ return function(H)
   local function run(argv)
     local cmd = { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry }
     vim.list_extend(cmd, argv)
-    local res = vim.system(cmd, { text = true, env = { TESTING_AGENT = "0" } }):wait(120000)
+    -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
+    local res = vim
+      .system(cmd, { text = true, env = { TESTING_AGENT = "0", TESTING_TRUST = "1" } })
+      :wait(120000)
     return res.code, res.stdout or "", res.stderr or ""
   end
   local function project(files)

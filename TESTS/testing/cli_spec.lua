@@ -246,11 +246,18 @@ return function(H)
   -- =====================================================================
   -- child processes
   local entry = repo .. "/scripts/testing.lua"
+  -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
   local function run(argv, env)
     local cmd = { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry }
     vim.list_extend(cmd, argv)
     local res = vim
-      .system(cmd, { text = true, env = vim.tbl_extend("keep", env or {}, { TESTING_AGENT = "0" }) })
+      .system(
+        cmd,
+        {
+          text = true,
+          env = vim.tbl_extend("keep", env or {}, { TESTING_AGENT = "0", TESTING_TRUST = "1" }),
+        }
+      )
       :wait(60000)
     return res.code, res.stdout or "", res.stderr or ""
   end

@@ -63,7 +63,13 @@ return function(H)
     vim.list_extend(cmd, extra)
     return vim.system(cmd, {
       text = true,
-      env = { LIB_NVIM_DIR = lib_root, XDG_STATE_HOME = state, TESTING_REPORTER = "term" },
+      env = {
+        LIB_NVIM_DIR = lib_root,
+        XDG_STATE_HOME = state,
+        TESTING_REPORTER = "term",
+        -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
+        TESTING_TRUST = "1",
+      },
     })
   end
 

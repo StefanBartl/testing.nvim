@@ -95,6 +95,7 @@ return {
     )
 
     -- ---------------------------------------------------------------- the run
+    -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
     local ir_path = S.new_dir() .. "/ir.json"
     local res = vim
       .system({
@@ -110,7 +111,7 @@ return {
         root,
         "--json",
         ir_path,
-      }, { text = true, env = { TESTING_AGENT = "0" } })
+      }, { text = true, env = { TESTING_AGENT = "0", TESTING_TRUST = "1" } })
       :wait(180000)
     ok(
       res.code == 0,
@@ -198,7 +199,7 @@ end
     res = vim
       .system(
         { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry, root },
-        { text = true, env = { TESTING_AGENT = "0" } }
+        { text = true, env = { TESTING_AGENT = "0", TESTING_TRUST = "1" } }
       )
       :wait(180000)
     ok(

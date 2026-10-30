@@ -227,6 +227,8 @@ return function(H)
       XDG_CACHE_HOME = tmp .. "/xdg-cache",
       XDG_CONFIG_HOME = tmp .. "/xdg-config",
       TESTING_NVIM_DIR = "",
+      -- TESTING_TRUST: the temp projects are this spec's own, trusted explicitly (not through scripts/test.sh)
+      TESTING_TRUST = "1",
     }
     local function sh(root, argv)
       local res = vim.system(argv, { cwd = root, text = true, env = env }):wait(120000)
