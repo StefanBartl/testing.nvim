@@ -467,7 +467,19 @@ return function(H)
     -- the real thing, when rules.nvim is a sibling checkout: an unconfigured ruleset is a clear n/a
     local found = require("testing.deps").resolve("rules.nvim", S.repo)
     local saved_rtp = vim.o.runtimepath
+    -- rules.nvim loads lib.nvim.fs.roots (through lib.nvim.cross.fs.expand_path), which exports
+    -- $NVIM_CONFIG_DIR / $LIB_NVIM_ROOTS_EXPORTED when it is loaded: a leak of this spec, so opt out
+    local saved_no_export = vim.g.lib_nvim_roots_no_export
+    local env_before = { vim.env.NVIM_CONFIG_DIR, vim.env.LIB_NVIM_ROOTS_EXPORTED }
+    vim.g.lib_nvim_roots_no_export = true
     local real = bridge.run(root, {})
+    vim.g.lib_nvim_roots_no_export = saved_no_export
+    -- checked here: the state guard does not measure a file with one case (its editor ends with it)
+    eq(
+      { vim.env.NVIM_CONFIG_DIR, vim.env.LIB_NVIM_ROOTS_EXPORTED },
+      env_before,
+      "the bridge leaves $NVIM_CONFIG_DIR and $LIB_NVIM_ROOTS_EXPORTED as they were"
+    )
     vim.o.runtimepath = saved_rtp -- the bridge puts a found checkout of rules.nvim on the runtimepath
     if found then
       ok(real.available == false, "rules.nvim without a ruleset is not a run")
