@@ -108,6 +108,31 @@ return function(H)
     local capped, total = report.findings(luacheck, many)
     eq(#capped, report.MAX_FINDINGS, "the list is capped")
     eq(total, report.MAX_FINDINGS + 5, "the total is not")
+
+    -- lua-language-server's pretty output can list a file's block twice: the same finding counts once, also for
+    -- the `matched` count `testing lint` reads; a different column or text is another finding
+    local luals = presets.get("luals").efm
+    local block = {
+      "lua/a.lua:2:28 [Warning] Undefined global `x`. (undefined-global)",
+      "lua/a.lua:5:1 [Warning] Unused local `y`. (unused-local)",
+    }
+    local m = report.matcher(luals)
+    for _ = 1, 2 do
+      for _, line in ipairs(block) do
+        m.feed(line)
+      end
+    end
+    m.feed("lua/a.lua:5:2 [Warning] Unused local `y`. (unused-local)")
+    m.feed("lua/a.lua:5:1 [Warning] Unused local `z`. (unused-local)")
+    eq(m.total(), 4, "luals: a block listed twice counts once")
+    eq(m.matched(), 4, "luals: matched counts it once too")
+    eq(#m.list, 4, "luals: listed once")
+    eq(m.list[2], {
+      file = "lua/a.lua",
+      line = 5,
+      col = 1,
+      text = "[Warning] Unused local `y`. (unused-local)",
+    }, "luals: the first occurrence is kept")
   end
 
   -- --------------------------------------------------------- golden reports

@@ -122,7 +122,8 @@ end
 
 ---A matcher for an error format (one item or a list of alternatives), fed line by line as the output arrives:
 ---nothing but the findings is kept, and the total counts every match. Each line is normalised first
----(`M.normalize_line`), each file name too (`M.normalize_file`).
+---(`M.normalize_line`), each file name too (`M.normalize_file`). A finding seen before (same file, line, column and
+---text) is neither kept nor counted again: lua-language-server's pretty output can list a file's block twice.
 ---@param efm string|string[]|nil
 ---@param keep? fun(f: Testing.Ci.Finding): boolean Only these findings are kept and counted (`testing lint` keeps
 ---those of the files it checks).
@@ -141,6 +142,8 @@ function M.matcher(efm, keep)
     compiled[#compiled + 1] = { pat = pat, fields = fields }
   end
   local list, total, matched = {}, 0, 0
+  ---@type table<string, true>
+  local seen = {}
   local function feed(line)
     if #compiled == 0 then
       return
@@ -155,6 +158,11 @@ function M.matcher(efm, keep)
         end
         if f.file and f.file ~= "" then
           f.file = M.normalize_file(f.file)
+          local key = table.concat({ f.file, tostring(f.line), tostring(f.col), f.text }, "\0")
+          if seen[key] then
+            return
+          end
+          seen[key] = true
           matched = matched + 1
           if
             keep and not keep(f --[[@as Testing.Ci.Finding]])
