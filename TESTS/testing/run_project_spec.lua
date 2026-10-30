@@ -313,6 +313,10 @@ return function(H)
 
   -- =====================================================================
   -- timeouts from flags and from .testing.lua
+  -- The hang spec always runs into its deadline, whatever its size; what must NOT run into one is the other file (and
+  -- the other `it`), whose time grows with the load of the machine. So the deadline that is meant to stop nothing
+  -- stays far away from the work it covers: 1 s per file (a few ms of work when idle), and a file deadline of a minute
+  -- beside the case deadline (a 300 ms file deadline left the `it` after a 250 ms case timeout 50 ms: red under load).
   local troot = new_root()
   write(
     troot .. "/TESTS/hang_spec.lua",
@@ -321,18 +325,18 @@ return function(H)
   write(troot .. "/TESTS/after_spec.lua", PASS_A:format("after"))
   local t0 = vim.uv.hrtime()
   local tir = troot .. "/out/t.json"
-  r = go({ troot, "--file-timeout", "300", "--json", tir })
+  r = go({ troot, "--file-timeout", "1000", "--json", tir })
   eq(r.code, 1, "a hanging spec: exit 1, the run finished" .. both(r))
   ok((vim.uv.hrtime() - t0) / 1e6 < 30000, "and did not hang")
   local tdec = assert(json.decode(slurp(tir)))
   eq(tdec.summary.timeout, 1, "one timeout in the IR")
   eq(tdec.summary.pass, 1, "the other file ran and passed")
   has(r.out, "timeout", "the report says timeout")
-  write(troot .. "/.testing.lua", "return { timeouts = { file_ms = 300 } }\n")
+  write(troot .. "/.testing.lua", "return { timeouts = { file_ms = 1000 } }\n")
   r = go({ troot, "--json", tir })
   eq(r.code, 1, ".testing.lua timeouts.file_ms is honored" .. both(r))
   eq(assert(json.decode(slurp(tir))).summary.timeout, 1, "a timeout again")
-  write(troot .. "/.testing.lua", "return { timeouts = { file_ms = 300 } }\n")
+  write(troot .. "/.testing.lua", "return { timeouts = { file_ms = 60000 } }\n")
   write(
     troot .. "/TESTS/hang_spec.lua",
     "describe('h', function()\n  it('spins', function() while true do end end)\n  it('fine', function() assert.are.equal(1, 1) end)\nend)\n"

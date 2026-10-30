@@ -743,6 +743,46 @@ return function(H)
     ok(not vim.uv.fs_stat(out_file), "--out: no file either")
   end
 
+  -- ================================================================ a touched input with the same content is no change
+  -- the keys hash CONTENT (size and mtime only decide whether a file is read again): a process that rewrites a module
+  -- byte for byte (an editor that saves, a checkout, line endings normalized back) moves its mtime, not its key, and
+  -- must not refuse the stamp with "an input changed"
+  do
+    local touch_root = tmp .. "/touched"
+    local toucher = (
+      "return function(H)\n"
+      .. "  H.ok(require('proj.mod').value == 1, 'the module')\n"
+      .. "  local f = assert(io.open(%q, 'wb'))\n"
+      .. "  f:write('return { value = 1 }\\n')\n"
+      .. "  f:close()\n"
+      .. "  local later = os.time() + 7\n"
+      .. "  assert(vim.uv.fs_utime(%q, later, later))\n"
+      .. "end\n"
+    ):format(touch_root .. "/lua/proj/mod.lua", touch_root .. "/lua/proj/mod.lua")
+    -- the toucher reads the clock (no key of its own); b_spec has a key that covers the module
+    local before_root = project(
+      "touched",
+      { ["a_spec.lua"] = PURE, ["b_spec.lua"] = USES_MOD, ["c_spec.lua"] = toucher }
+    )
+    eq(before_root, touch_root, "(the path the spec touches)")
+    local mtime0 = assert(vim.uv.fs_stat(touch_root .. "/lua/proj/mod.lua")).mtime.sec
+    local touched = run({ "stamp", touch_root })
+    ok(
+      assert(vim.uv.fs_stat(touch_root .. "/lua/proj/mod.lua")).mtime.sec > mtime0,
+      "(the spec moved the mtime of the module)"
+    )
+    eq(touched.code, 0, "same content, new mtime: the stamp is written\n" .. touched.err)
+    lacks(touched.err, "an input changed", "no input counts as changed")
+    ok(vim.uv.fs_stat(stamp.path(touch_root, { state_dir = state_dir })), "the stamp is on disk")
+    local b_key
+    for _, f in ipairs(stamp_of(touch_root).files) do
+      if f.file == "TESTS/b_spec.lua" then
+        b_key = f.key
+      end
+    end
+    ok(b_key ~= nil, "(the spec that requires the module has a key in the stamp)")
+  end
+
   -- ================================================================ keys are computed after the minit of the project
   -- a minit puts a directory on the runtime path that no `deps` entry names; the keys of a run look at that path, so
   -- `verify` and `explain` have to run the minit too, or they compute other keys than the run (always `changed`)
