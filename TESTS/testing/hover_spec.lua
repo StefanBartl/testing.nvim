@@ -104,6 +104,7 @@ return function(H)
   ok(hover.ago(nil, 5) == "at an unknown time", "ago: unknown")
 
   -- a green case ----------------------------------------------------------------------
+  ---@type Testing.Hover.Content|nil
   local c = hover.content(st, spec, 3, now)
   has(text(c), "is pass", "green: current wording")
   has(text(c), "12 ms", "green: the duration")
@@ -626,6 +627,8 @@ return function(H)
     pcall(hover.file_preview, { path = root .. "/" .. nested }, {}, 0),
     "file_preview never raises"
   )
+  -- a malformed target on purpose
+  ---@diagnostic disable-next-line: param-type-mismatch
   ok(hover.file_preview("not a table", {}, 0) == nil, "file_preview: a malformed target declines")
   ok(
     hover.file_preview({ path = root .. "/notes.md" }, {}, 0) == nil,
@@ -751,6 +754,7 @@ return function(H)
   close_floats()
   local fwin = float.open({ lines = { "one", "two" }, title = "t" }, nil)
   ok(fwin ~= nil and vim.api.nvim_win_is_valid(fwin), "float: opens through lib.nvim.window")
+  ---@cast fwin integer
   ok(
     vim.api.nvim_win_get_config(fwin).relative ~= "editor",
     "float: anchored at the cursor (nvim reports it relative to the window)"
@@ -765,12 +769,13 @@ return function(H)
   for _, event in ipairs({ "InsertEnter", "BufLeave" }) do
     fwin = float.open({ lines = { "one" }, title = "t" }, nil)
     ok(fwin ~= nil and vim.api.nvim_win_is_valid(fwin), "float: opens again")
+    ---@cast fwin integer
     vim.api.nvim_exec_autocmds(event, { modeline = false })
     ok(not vim.api.nvim_win_is_valid(fwin), "float: closes on " .. event)
   end
   -- ... and its first line carries the verdict colour, with a group that exists
   local function first_line_group(content_in)
-    local w = float.open(content_in, nil)
+    local w = assert(float.open(content_in, nil), "float: opens")
     local b = vim.api.nvim_win_get_buf(w)
     local marks = vim.api.nvim_buf_get_extmarks(
       b,

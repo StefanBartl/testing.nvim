@@ -379,6 +379,8 @@ return function(H)
   eq(#problems, 1, "config: an unknown action is refused")
   problems = config.setup({ surface_view = { keys = { jump = "" } } })
   eq(#problems, 1, "config: an empty lhs is refused")
+  -- a number where a lhs belongs, on purpose
+  ---@diagnostic disable-next-line: assign-type-mismatch
   problems = config.setup({ surface_view = { keys = { jump = 1 } } })
   eq(#problems, 1, "config: a number is refused")
   problems = config.setup({ surface_view = { other = true } })

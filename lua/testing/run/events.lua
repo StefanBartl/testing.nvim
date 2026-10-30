@@ -129,6 +129,9 @@ end
 ---@field alive boolean
 ---@field started? boolean A `run_start` was written.
 ---@field finished? boolean A `run_done` was written.
+---@field start fun(self: Testing.Events.Emitter, info: { project?: string, files_total?: integer, files_selected?: integer, files?: string[], estimates?: table<string, integer> })
+---@field file_start fun(self: Testing.Events.Emitter, file: string)
+---@field file_end fun(self: Testing.Events.Emitter, file: string)
 ---@field emit fun(self: Testing.Events.Emitter, kind: string, fields?: table)
 ---@field case fun(self: Testing.Events.Emitter, case: Testing.Result.Case, cached?: boolean)
 ---@field done fun(self: Testing.Events.Emitter, exit_code: integer, res?: Testing.Result)

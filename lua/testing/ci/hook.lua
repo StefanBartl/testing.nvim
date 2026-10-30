@@ -95,7 +95,7 @@ function M.hooks_dir(dir)
     { "git", "-C", dir, "rev-parse", "--git-path", "hooks" },
     { text = true }
   )
-  local res = ok and obj:wait(10000) or nil
+  local res = ok and obj and obj:wait(10000) or nil
   local out = res and vim.trim(res.stdout or "") or ""
   if not res or res.code ~= 0 or out == "" then
     return nil

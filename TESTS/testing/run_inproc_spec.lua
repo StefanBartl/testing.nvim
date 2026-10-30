@@ -4,6 +4,10 @@
 -- busted files, --maxfail, timeouts (file and case), strict mode, the IR on disk (validated,
 -- placeholders, no user name, kernel redaction), list/dry run.
 
+-- the soft isolation session and the guard configuration are partial stand-ins on purpose: the driver reads only
+-- what the case needs
+---@diagnostic disable: missing-fields
+
 return function(H)
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply (their original harness did)
@@ -549,6 +553,8 @@ return function(H)
     local guards_mod = require("testing.run.guards")
     local real_install = guards_mod.install
     local uninstalled = false
+    -- a test double of the guard layer, restored afterwards
+    ---@diagnostic disable-next-line: duplicate-set-field
     guards_mod.install = function()
       return {
         active = false,

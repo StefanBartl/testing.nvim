@@ -2,6 +2,9 @@
 -- list and a statusline read): the round trip, the merge over partial runs, staleness against the file system,
 -- `prev.json` for "newly red", and a result file that is untrusted input (corrupt, hostile, huge).
 
+-- the case body is the guard: an assertion before each use proves the value, and a nil raises and fails the case
+---@diagnostic disable: need-check-nil
+
 return function(H)
   local ok = H.ok
   -- dialect A's `eq` is strict `==`; these specs compare tables deeply
@@ -88,6 +91,8 @@ return function(H)
     -- the validator refuses a real home path in the root (the temp directory of a Windows runner is one)
     res.run.root = "<REPO>"
     ok(result.validate(res), "IR: a result with the new fields validates")
+    -- an invalid IR on purpose: the validator must name it
+    ---@diagnostic disable-next-line: assign-type-mismatch
     res.cases[1].describe = "not a list"
     local valid, problems = result.validate(res)
     ok(

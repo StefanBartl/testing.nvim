@@ -3,6 +3,8 @@
 -- reads them back as the options they stand for. The child process itself is a seam (`bindings.child.start`).
 
 ---@diagnostic disable: duplicate-set-field, param-type-mismatch, missing-parameter, undefined-field, missing-fields
+-- the case body is the guard: an assertion before each use proves the value, and a nil raises and fails the case
+---@diagnostic disable: need-check-nil
 
 return function(H)
   local ok = H.ok

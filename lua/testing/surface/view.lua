@@ -388,11 +388,9 @@ function M.open(model, opts)
             notify.info(("surface matrix: %d row(s) written to %s"):format(n, path))
             return
           end
-          local why = written
-          if ok then
-            why = werr or "write failed"
-          end
-          notify.error(("cannot write %s: %s"):format(path, tostring(why)))
+          -- not ok: `written` is the error the call raised
+          local why = ok and (werr or "write failed") or tostring(written)
+          notify.error(("cannot write %s: %s"):format(path, why))
         end)
       end,
     },

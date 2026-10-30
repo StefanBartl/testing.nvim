@@ -58,6 +58,7 @@ M.EXIT_INFRA = 3
 ---@field color? boolean Overrides the colour decision of the terminal reporter.
 ---@field env? table<string, string|nil> The environment names that choose the reporter (`TESTING_REPORTER`, `TESTING_AGENT`, `AI_AGENT`, `CLAUDECODE`); only the entry script sets it.
 ---@field script? string Path of the entry script, for the `rerun:` line of the agent reporter.
+---@field trust? Testing.Trust.Ctx Arms the workspace trust gate for one `testing.cli.main` (only the entry script).
 
 local guard_count = 0
 

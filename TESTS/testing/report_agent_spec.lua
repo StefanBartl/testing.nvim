@@ -831,7 +831,9 @@ return function(H)
     sr.run.time_regressions = {
       { file = "TESTS/slow_spec.lua", ms = 4200, median = 1000, runs = 4 },
       { file = "TESTS/ev\27]0;il_spec.lua", ms = 9000, median = 1000, runs = 3 },
-      { file = 7, ms = "x", median = 1 }, -- a broken entry is skipped, never raised
+      -- a broken entry on purpose: it is skipped, never raised
+      ---@diagnostic disable-next-line: missing-fields, assign-type-mismatch
+      { file = 7, ms = "x", median = 1 },
     }
     local text = joined(agent.render(sr, { command = CMD }))
     has(text, "warning: 2 file(s) slower than usual (over 3x their median): ", "slower: text")

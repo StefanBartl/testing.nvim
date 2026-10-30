@@ -634,6 +634,21 @@ os.exit(code)
     })
     local all = run(ls, "luals", "--all", "--json")
     eq(all.code, 1, "luals: red (" .. all.err .. ")")
+    -- the check runs with the merged configuration (testing.ci.luarc): the library the editor gives LuaLS
+    local call = last_call()
+    local config_path = call:match("%-%-configpath=(%S+)")
+    ok(config_path ~= nil, "luals: the tool gets --configpath (" .. call .. ")")
+    local config = config_path and vim.json.decode(read(config_path)) or {}
+    eq(
+      (config["workspace.library"] or {})[1],
+      vim.fs.normalize(vim.env.VIMRUNTIME) .. "/lua",
+      "luals: the merged configuration has the runtime in its library"
+    )
+    has(
+      table.concat(check_of(all.doc, "luals").notes or {}, "\n"),
+      "library:",
+      "luals: the document says what the check ran with"
+    )
     eq(
       finding_files(check_of(all.doc, "luals")),
       { "lua/my dir/sp.lua", "lua/proj/bad.lua" },

@@ -97,10 +97,11 @@ end
 ---@return Testing.Result.Case
 function M.new_case(opts)
   local describe
-  if type(opts.describe) == "string" then
-    describe = { opts.describe }
-  elseif type(opts.describe) == "table" and #opts.describe > 0 then
-    describe = vim.list_slice(opts.describe)
+  local given = opts.describe
+  if type(given) == "string" then
+    describe = { given }
+  elseif type(given) == "table" and #given > 0 then
+    describe = vim.list_slice(given)
   end
   return {
     id = M.case_id(opts),

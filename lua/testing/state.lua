@@ -99,8 +99,8 @@ local uv = vim.uv or vim.loop
 ---@field files table<string, Testing.State.File>
 ---@field cases Testing.State.Case[]
 ---@field notes string[]
----@field private _by_id table<string, Testing.State.Case>
----@field private _subs (fun(state: Testing.State, event: string))[]
+---@field package _by_id table<string, Testing.State.Case> Only this module (its functions take the state, they are no methods).
+---@field package _subs (fun(state: Testing.State, event: string))[]
 
 -- =========================================================
 -- Text
@@ -173,23 +173,28 @@ local function inside(file)
   return not (file == ".." or file:find("^%.%./") or file:find("/%.%./") or file:find("/%.%.$"))
 end
 
+---Where the state of a project lives. A named class, not an inline `{ state_dir?: string }`: LuaLS cannot pass a
+---parameter of an inline type with an optional key on to a parameter of the same inline type.
+---@class Testing.State.Opts
+---@field state_dir? string Replaces `stdpath('state')`.
+
 ---The state directory of a project (the one `runs.jsonl` is in).
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return string
 function M.dir(root, opts)
   return require("testing.history").dir(root, opts)
 end
 
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return string
 function M.path(root, opts)
   return M.dir(root, opts) .. "/last.json"
 end
 
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return string
 function M.prev_path(root, opts)
   return M.dir(root, opts) .. "/prev.json"
@@ -465,7 +470,7 @@ end
 ---Load the last result of a project. Always returns a state: an empty one when there is no file or it is not
 ---usable, with the reason in `notes`.
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return Testing.State
 function M.load(root, opts)
   local ok, st, notes = pcall(read_file, root, M.path(root, opts))
@@ -481,7 +486,7 @@ end
 
 ---The result before the last one, or nil.
 ---@param root string
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return Testing.State|nil
 function M.load_prev(root, opts)
   local ok, st = pcall(read_file, root, M.prev_path(root, opts))
@@ -836,7 +841,7 @@ end
 
 ---Write the state (and keep the previous one as `prev.json`). Call it while the lock of `last.json` is held.
 ---@param st Testing.State
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return boolean ok
 ---@return string|nil err
 function M.write_locked(st, opts)
@@ -869,7 +874,7 @@ end
 ---@param root string
 ---@param res Testing.Result
 ---@param info? Testing.State.ApplyInfo
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return boolean ok
 ---@return string|nil err
 ---@return Testing.State|nil state

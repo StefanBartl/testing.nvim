@@ -4,6 +4,8 @@
 -- gate is armed by the entry only and `--trust` stores, and `testing trust list|check|add|revoke` behave as documented.
 
 ---@diagnostic disable: missing-fields
+-- the case body is the guard: an assertion before each use proves the value, and a nil raises and fails the case
+---@diagnostic disable: need-check-nil
 
 return function(H)
   local trust = require("testing.trust")

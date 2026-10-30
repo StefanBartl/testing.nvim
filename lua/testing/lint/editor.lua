@@ -356,7 +356,10 @@ function M.run(o)
       local function report()
         if doc and o.fix then
           -- the files the fix rewrote: buffers without changes of their own are reloaded
-          pcall(vim.cmd, "silent! checktime")
+          -- the closure form: `vim.cmd` is a callable table, no function (LLS-32)
+          pcall(function()
+            vim.cmd("silent! checktime")
+          end)
         end
         if doc then
           M.apply(doc, seq)

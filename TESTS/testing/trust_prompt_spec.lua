@@ -3,6 +3,8 @@
 -- no (or a cancelled question) leaves the refusal, a headless nvim is never asked, a second refusal is not asked about.
 
 ---@diagnostic disable: missing-fields, need-check-nil
+-- test doubles replace functions of the module under test (and vim.ui.*) on purpose, each restored afterwards
+---@diagnostic disable: duplicate-set-field
 
 return function(H)
   local eq, ok, has = H.eq, H.ok, H.has
@@ -27,6 +29,7 @@ return function(H)
     progress = editor.progress,
   }
   local questions = 0
+  ---@type string|nil
   local answer = prompt.YES
   local ui = true
   vim.ui.select = function(items, opts, cb)
@@ -94,6 +97,7 @@ return function(H)
     -- ------------------------------------------------------------------- :Testing run, yes
     reset()
     local system, calls = scripted({ { code = 2, stderr = REFUSAL }, { code = 0, stderr = "" } })
+    ---@type Testing.Child.Verdict|nil
     local verdict
     eq(
       child.start("list", { root = proj, system = system }, function(v)
@@ -125,6 +129,7 @@ return function(H)
     eq(questions, 1, "run/no: asked once")
     eq(calls.n, 1, "run/no: not started again")
     eq(trusted(), false, "run/no: nothing stored")
+    ---@cast verdict Testing.Child.Verdict
     eq(verdict.level, "error", "run/no: the refusal is an error")
     has(verdict.message, trust.REFUSED, "run/no: ... with the gate's message")
 
@@ -153,6 +158,7 @@ return function(H)
     end, "run/twice: the verdict")
     eq(questions, 1, "run/twice: the second refusal is not asked about")
     eq(calls.n, 2, "run/twice: two runs, no third")
+    ---@cast verdict Testing.Child.Verdict
     eq(verdict.level, "error", "run/twice: the second refusal is reported")
 
     -- ------------------------------------------------------------------- headless run: the refusal as before
@@ -168,6 +174,7 @@ return function(H)
     end, "run/headless: the verdict")
     eq(questions, 0, "run/headless: no question")
     eq(calls.n, 1, "run/headless: one run")
+    ---@cast verdict Testing.Child.Verdict
     has(verdict.message, "exit 2", "run/headless: exit 2 as before")
 
     -- ------------------------------------------------------------------- :Testing ci (streamed stderr)
@@ -181,6 +188,7 @@ return function(H)
     reset()
     editor.system, calls =
       scripted({ { code = 2, stderr = REFUSAL }, { code = 2, stderr = REFUSAL } })
+    ---@type Testing.Ci.Verdict|nil
     local ci_verdict
     eq(
       editor.run({
@@ -213,6 +221,7 @@ return function(H)
       return ci_verdict ~= nil
     end, "ci/no: the verdict")
     eq(calls.n, 1, "ci/no: not started again")
+    ---@cast ci_verdict Testing.Ci.Verdict
     eq(ci_verdict.level, "error", "ci/no: the refusal is an error")
   end)
 

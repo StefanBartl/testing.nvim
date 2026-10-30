@@ -73,7 +73,7 @@ function M.child_argv(root, args)
 end
 
 ---The argument list of a pipeline run.
----@param o { root: string, json: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean }
+---@param o { root: string, json: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, events?: string }
 ---@return string[]
 function M.run_argv(o)
   local args = { "ci", "--no-agent", "--json=" .. o.json }
@@ -139,14 +139,21 @@ function M.live_status(view, live)
       current = live.current,
     }))
   end
-  timer:start(1000, 1000, vim.schedule_wrap(tick))
+  if not timer then
+    -- no timer (the event loop is out of handles): the run goes on, its status line says so once instead of ticking
+    view.status("   ... running (no timer: this line is not updated)")
+  else
+    timer:start(1000, 1000, vim.schedule_wrap(tick))
+  end
   return function()
     if stopped then
       return
     end
     stopped = true
-    timer:stop()
-    timer:close()
+    if timer then
+      timer:stop()
+      timer:close()
+    end
     view.status(nil)
   end
 end
@@ -246,14 +253,20 @@ function M.tail_file(path, on_data)
   end
   local timer = vim.uv.new_timer()
   local stopped = false
-  timer:start(200, 200, vim.schedule_wrap(poll))
+  -- without a timer (the event loop is out of handles) nothing arrives while the file is written; `stop` and `poll`
+  -- still read all of it
+  if timer then
+    timer:start(200, 200, vim.schedule_wrap(poll))
+  end
   return function()
     if stopped then
       return
     end
     stopped = true
-    timer:stop()
-    timer:close()
+    if timer then
+      timer:stop()
+      timer:close()
+    end
     poll()
   end,
     poll
@@ -299,12 +312,18 @@ function M.items(doc, root)
   return items
 end
 
+---What the user is told when a run has ended.
+---@class Testing.Ci.Verdict
+---@field level "info"|"warn"|"error"
+---@field message string One notification text.
+---@field items table[] Quickfix items of the findings (empty when none).
+
 ---What the user is told when the child has ended.
 ---@param doc table|nil The document it wrote (nil: none could be read).
 ---@param code integer The child's exit code.
 ---@param root string
 ---@param stderr? string
----@return { level: "info"|"warn"|"error", message: string, items: table[] }
+---@return Testing.Ci.Verdict
 function M.verdict(doc, code, root, stderr)
   if type(doc) ~= "table" or doc.schema ~= "testing-ci/1" then
     return {
@@ -500,10 +519,16 @@ function M.show_view(root)
   return true
 end
 
+---@class Testing.Ci.View
+---@field buf integer
+---@field header fun(lines: string[]) Replaces the block at the top (the table of a multi-repository run).
+---@field status fun(text: string|nil) The last line: what is going on right now (nil removes it).
+---@field append fun(lines: string[]) Adds below the header, above the status line.
+
 ---The live buffer of a project: one per root, cleared at the start of a run, shown in a split when it is not visible.
 ---`header(lines)` replaces a block at the top of the buffer (the table of a multi-repository run), `append` adds below.
 ---@param root string
----@return { buf: integer, append: fun(lines: string[]), header: fun(lines: string[]) }
+---@return Testing.Ci.View
 function M.open_view(root)
   local name = M.view_name(root)
   local buf = vim.fn.bufnr(name)
@@ -878,7 +903,7 @@ function M.run_repos(o)
 end
 
 ---Start a pipeline run. Returns false with a reason when one is already running or the child cannot start.
----@param o { root: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, on_done?: fun(verdict: table), trust_asked?: boolean }
+---@param o { root: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, on_done?: fun(verdict: Testing.Ci.Verdict), trust_asked?: boolean }
 ---@return boolean started
 ---@return string|nil err
 function M.run(o)
@@ -1123,7 +1148,7 @@ end
 ---Profiles and steps of the project (`testing ci list`, cached until what it reads changes). Never waits: a miss
 ---starts the child in the background and returns what is known (the earlier list, or nil), so the next <Tab> has it.
 ---@param root string
----@return { default: string, profiles: table<string, string[]>, steps: string[] }|nil
+---@return { default: string, profiles: table<string, string[]>, steps: string[], lint?: string[] }|nil
 function M.list(root)
   local stamp = list_stamp(root)
   if not stamp then

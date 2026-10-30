@@ -569,6 +569,7 @@ end
 ---@field case_id? string CASE mode: the case this child runs.
 ---@field note? string Note for the first case of the file (isolation degraded).
 ---@field not_first? boolean A further case child of a file already counted.
+---@field announced? boolean `on_file_start` was called for this file.
 ---@field label? string Header of its output.
 ---@field handle? Testing.Child.Handle
 ---@field plan? Testing.Child.Plan

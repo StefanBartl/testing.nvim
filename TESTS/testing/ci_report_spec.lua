@@ -112,6 +112,8 @@ return function(H)
 
   -- --------------------------------------------------------- golden reports
 
+  -- a document as read back from JSON: its fields are untyped (a `reason` is vim.NIL or a text)
+  ---@type table<string, any>
   local RED = {
     schema = "testing-ci/1",
     profile = "full",

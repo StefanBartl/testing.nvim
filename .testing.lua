@@ -63,11 +63,14 @@ return {
   },
   -- `scripts/test.sh ci` (docs/CI.md): the pipeline of this repository, run locally. `full` checks what the CI
   -- workflow checks (stylua, luacheck with the workflow's paths, the specs, the conformance gate); `fast` is the
-  -- quick check before a push.
+  -- quick check before a push. `strict` adds the LuaLS diagnostics (`luals`, held at zero, measured with the library
+  -- the editor gives LuaLS: docs/CI.md): about a minute more, so not in `full`, which the pre-push hook and the
+  -- proofs run.
   ci = {
     profiles = {
       fast = { "stylua", "luacheck" },
       full = { "fast", "suite", "conformance" },
+      strict = { "full", "luals" },
     },
     steps = {
       luacheck = { preset = "luacheck", args = { "lua", "TESTS", "scripts", "plugin" } },

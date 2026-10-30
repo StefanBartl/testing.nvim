@@ -49,6 +49,7 @@
 ---@field jobs integer Parallelism (1 = serial).
 ---@field duration_ms number Wall time of the whole run.
 ---@field argv string[] The effective command-line arguments.
+---@field time_regressions? Testing.Timings.Regression[] Files that took more than three times their median (`testing.run.timings`, the agent report's warning).
 
 ---@class Testing.Result.Assertion
 --- One recorded assertion. Passing assertions carry no `expected`/`actual` (keeps big suites cheap).

@@ -25,6 +25,12 @@ local M = {}
 ---@field checks? Testing.Conformance.CheckResult[] The results to compare with (K15's `rule_status`).
 ---@field loader? fun(root: string, families: string[], rulesets: string[]|nil): table[]|nil, string|nil Replaces rules.nvim (specs).
 
+---What the bridge calls of rules.nvim. A soft dependency outside this workspace's library: LuaLS resolves the bare
+---name `rules` to conformance/rules/init.lua, so the module is typed here. `check_family_json` answers
+---`nil, nil, nil, err` when the project's settings cannot be used (a broken `.rules.json`).
+---@class Testing.Conformance.RulesApi
+---@field check_family_json fun(family_prefix: string, path?: string): (string|nil), (integer|nil), (table|nil), (string|nil)
+
 ---Make `require("rules")` possible: when it is not on the runtimepath, look for a checkout the way
 ---dependencies are found.
 ---@param root string
@@ -74,13 +80,21 @@ local function load_entries(root, families, rulesets)
     return nil,
       "rules.nvim has no ruleset configured (set `conformance.rules_bridge.rulesets` in .testing.lua)"
   end
-  local rules = require("rules")
+  local rules = require("rules") --[[@as Testing.Conformance.RulesApi]]
   local entries = {}
   for _, family in ipairs(families) do
-    local ok, json = pcall(rules.check_family_json, family, root)
+    local ok, json, _, _, why = pcall(rules.check_family_json, family, root)
     if not ok then
       return nil,
         ("rules.nvim failed on family %s: %s"):format(family, tostring(json):match("^[^\n]*"))
+    end
+    if json == nil then
+      -- rules.nvim says why it did not check (the project's settings): that is the reason, not "unreadable JSON"
+      return nil,
+        ("rules.nvim did not check family %s: %s"):format(
+          family,
+          tostring(why or "no result"):match("^[^\n]*")
+        )
     end
     local dok, decoded = pcall(vim.json.decode, json)
     if not dok or type(decoded) ~= "table" then

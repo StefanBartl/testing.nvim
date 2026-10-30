@@ -65,7 +65,7 @@ end
 
 ---The report as terminal lines.
 ---@param report Testing.Conformance.Report
----@param opts? { verbose?: boolean, manual?: boolean }
+---@param opts? Testing.Conformance.TerminalOpts
 ---@return string[]
 function M.terminal(report, opts)
   return require("testing.conformance.render").terminal(report, opts)

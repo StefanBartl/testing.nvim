@@ -85,7 +85,16 @@ local EVAL_BUDGET = 200000
 local LIB_HINT =
   "testing.nvim needs lib.nvim >= 6304829 (fs.write.atomic) and >= 89cb912 (safe_call keeps non-string errors)"
 
----@param health table `vim.health`
+---The surface of `vim.health` the checks report through: `error` and `warn` take an advice list, `ok` and `info` do
+---not (LLS-29), so a hint passed to them is never shown.
+---@class Testing.Health.Reporter
+---@field start fun(name: string)
+---@field ok fun(msg: string)
+---@field info fun(msg: string)
+---@field warn fun(msg: string, advice?: string|string[])
+---@field error fun(msg: string, advice?: string|string[])
+
+---@param health Testing.Health.Reporter `vim.health`
 ---@return boolean lib_ok Every required module loaded.
 local function check_lib(health)
   health.start("testing.nvim: lib.nvim")
@@ -142,7 +151,7 @@ local function check_lib(health)
   return true
 end
 
----@param health table
+---@param health Testing.Health.Reporter
 local function check_kernel(health)
   health.start("testing.nvim: kernel")
   for _, name in ipairs(KERNEL) do
@@ -167,7 +176,7 @@ local function check_kernel(health)
   end
 end
 
----@param health table
+---@param health Testing.Health.Reporter
 local function check_registries(health)
   health.start("testing.nvim: dialects and reporters")
   local dok, dialect = pcall(require, "testing.dialect")
@@ -263,7 +272,7 @@ local function sandbox_eval(path)
   return true, res
 end
 
----@param health table
+---@param health Testing.Health.Reporter
 ---@return table|nil project The project's configuration when `.testing.lua` evaluated to a table here.
 local function check_project(health)
   health.start("testing.nvim: project (.testing.lua)")
@@ -321,7 +330,7 @@ local ISOLATION_MODULES = {
 }
 
 ---Guards and the warm pool as the project configures them (read-only: nothing is started).
----@param health table
+---@param health Testing.Health.Reporter
 ---@param project table|nil The project's `.testing.lua` table when it could be evaluated here.
 local function check_isolation(health, project)
   health.start("testing.nvim: guards and warm pool")
@@ -418,7 +427,7 @@ end
 
 ---The result cache, the affected selection, the conformance suite and the surface report: are they
 ---available, and is what they read and write in order?
----@param health table
+---@param health Testing.Health.Reporter
 local function check_extensions(health)
   health.start("testing.nvim: cache, affected selection, conformance, surface")
   local root = vim.fs.normalize(M.project_dir())
@@ -511,7 +520,7 @@ local function check_extensions(health)
   end
 end
 
----@param health table
+---@param health Testing.Health.Reporter
 local function check_deps(health)
   health.start("testing.nvim: dependency resolution (command line)")
   local deps = require("testing.deps")
@@ -587,7 +596,7 @@ end
 ---A missing tool is a warning only when a lint step of the current project's pipeline needs it; otherwise the
 ---linter is optional and its absence is information. The version processes are started together and collected
 ---afterwards (as `testing ci` does).
----@param health table
+---@param health Testing.Health.Reporter
 ---@param project table|nil The project's `.testing.lua` table when it could be evaluated here.
 local function check_lint(health, project)
   health.start("testing.nvim: lint tools (testing lint, :Testing lint)")
@@ -654,6 +663,7 @@ end
 
 ---@return nil
 function M.check()
+  ---@type Testing.Health.Reporter
   local health = vim.health
 
   health.start("testing.nvim")

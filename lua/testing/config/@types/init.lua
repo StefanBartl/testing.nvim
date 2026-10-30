@@ -177,6 +177,7 @@
 ---@field watch Testing.ProjectConfig.Watch
 ---@field budget Testing.ProjectConfig.Budget
 ---@field backends Testing.ProjectConfig.Backends
+---@field ci? table The pipeline of `testing ci` (validated there: `testing.ci.schema`, docs/CI.md); nil: derived.
 
 ---@class Testing.ProjectConfig.Loaded
 --- Result of `testing.config.project.load`.

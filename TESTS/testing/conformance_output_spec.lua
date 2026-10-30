@@ -423,6 +423,27 @@ return function(H)
     })
     ok(absent.available == false and absent.status == "n/a", "no rules.nvim: a clear n/a")
     has(absent.reason, "rules.nvim", "and the reason")
+    -- rules.nvim that cannot use the project's settings answers `nil, nil, nil, err`: its reason is the bridge's
+    -- (not "unreadable JSON", which hid it). A stand-in module for the two calls the bridge makes.
+    local saved_rules, saved_config = package.loaded["rules"], package.loaded["rules.config"]
+    package.loaded["rules"] = {
+      check_family_json = function()
+        return nil, nil, nil, "the .rules.json of this project is not valid JSON"
+      end,
+    }
+    package.loaded["rules.config"] = {
+      get = function()
+        return { rulesets = { "gates" } }
+      end,
+    }
+    local unusable = bridge.run(root, { families = { "NEW" } })
+    package.loaded["rules"], package.loaded["rules.config"] = saved_rules, saved_config
+    eq(unusable.status, "n/a", "rules.nvim without a result: n/a")
+    has(
+      unusable.reason,
+      "the .rules.json of this project is not valid JSON",
+      "rules.nvim without a result: its own reason"
+    )
     eq(
       conformance.run(root, { probe = probe, only = { "K7" } }).bridge,
       nil,

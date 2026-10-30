@@ -48,9 +48,15 @@ local function where(f)
   return f.line and ("%s:%d"):format(c(f.file), f.line) or c(f.file)
 end
 
+---What the terminal rendering shows besides the verdicts. A named class, not an inline type with optional keys:
+---LuaLS cannot pass such a parameter on to a parameter of the same inline type (`testing.conformance.terminal`).
+---@class Testing.Conformance.TerminalOpts
+---@field verbose? boolean
+---@field manual? boolean
+
 ---Terminal lines: one line per check, its findings below, a summary.
 ---@param report Testing.Conformance.Report
----@param opts? { verbose?: boolean, manual?: boolean }
+---@param opts? Testing.Conformance.TerminalOpts
 ---@return string[]
 function M.terminal(report, opts)
   opts = opts or {}

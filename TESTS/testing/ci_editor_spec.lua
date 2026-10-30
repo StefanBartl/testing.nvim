@@ -3,6 +3,8 @@
 -- time), `testing ci list`, and one real run in a child.
 
 ---@diagnostic disable: need-check-nil, param-type-mismatch, missing-fields
+-- test doubles replace functions of the module under test (and vim.ui.*) on purpose, each restored afterwards
+---@diagnostic disable: duplicate-set-field
 
 return function(H)
   local ok = H.ok
@@ -263,6 +265,7 @@ return function(H)
     vim.fn.setqflist({}, "r")
     local system, seen = fake({ "== stylua\n-- stylua: gr", "een (0.1 s)\n== luacheck\n" }, RED, 1)
     editor.system = system
+    ---@type Testing.Ci.Verdict|nil
     local done
     local started = editor.run({
       root = root,
@@ -716,6 +719,40 @@ return function(H)
       captured()
       vim.wait(100)
       eq(calls, { "<removed>" }, "live_status: nothing after the stop: " .. vim.inspect(calls))
+
+      -- no timer (the event loop is out of handles): the run's status line and the tail of a file still work, they
+      -- only do not tick; an unchecked `new_timer()` raised here
+      local no_timer = {}
+      local tailed = vim.fn.tempname()
+      local f = assert(io.open(tailed, "wb"))
+      f:write("one\n")
+      f:close()
+      local got = {}
+      vim.uv.new_timer = function()
+        return nil
+      end
+      local ok_status, stop_no_timer = pcall(editor.live_status, {
+        status = function(text)
+          no_timer[#no_timer + 1] = text == nil and "<removed>" or text
+        end,
+      }, { files_done = 0 })
+      local ok_tail, stop_tail = pcall(editor.tail_file, tailed, function(data)
+        got[#got + 1] = data
+      end)
+      vim.uv.new_timer = real_new_timer
+      ok(ok_status, "live_status without a timer: no error (" .. tostring(stop_no_timer) .. ")")
+      ok(ok_tail, "tail_file without a timer: no error (" .. tostring(stop_tail) .. ")")
+      if ok_status and ok_tail then
+        stop_no_timer()
+        stop_tail()
+        eq(
+          no_timer,
+          { "   ... running (no timer: this line is not updated)", "<removed>" },
+          "live_status without a timer: says so once, removed at the stop"
+        )
+        eq(got, { "one\n" }, "tail_file without a timer: the stop reads what was written")
+      end
+      os.remove(tailed)
     end
     ok(
       vim.wait(2000, function()
@@ -782,6 +819,7 @@ return function(H)
       end),
       "green: finishes"
     )
+    ---@cast done Testing.Ci.Verdict
     eq(done.level, "info", "green: info")
     eq(vim.fn.getqflist({ size = 1 }).size, 0, "green: the quickfix list stays empty")
     has(said(), "all 1 steps green", "green: notified")
@@ -804,6 +842,7 @@ return function(H)
       end),
       "no document: finishes"
     )
+    ---@cast done Testing.Ci.Verdict
     eq(done.level, "error", "no document: an error")
     eq(editor.state[root].running, false, "no document: not stuck in running")
 
@@ -1389,6 +1428,7 @@ return function(H)
     vim.notify = function(msg, level)
       messages[#messages + 1] = { msg = tostring(msg), level = level }
     end
+    ---@type Testing.Ci.Verdict|nil
     local done
     local started = editor.run({
       root = root,

@@ -418,14 +418,14 @@ CI runs the same on three operating systems and uploads the JSON result and the 
 it fails; a second job runs lib.nvim's whole suite, unchanged, through the runner.
 
 Formatting and lint are CI gates (`stylua --check .`, `luacheck lua TESTS scripts plugin`).
-`lua-language-server --check` is deliberately **not** a CI gate: a CI runner has no Neovim runtime
-types, so the check there reports every use of `vim` as an undefined global (about 3600 findings
-here), and handing it the runtime as `workspace.library` in `.luarc.json` would replace the editor's
-own library injection and make the local numbers and the CI numbers different measurements. With
-`vim` declared as a bare global it still reports about 100 findings that come from the missing `uv`
-and tree-sitter types (`uv.uv_pipe_t`, `TSNode`) and from the spec shims, not from the code. Run it
-locally, with the runtime your editor injects, as a measure before and after a change:
-`testing lint luals --all` runs it (the preset `luals`, [docs/CI.md](docs/CI.md#testing-lint-the-linters-on-the-changed-files)).
+The LuaLS diagnostics (`lua-language-server --check`) are held at zero, measured the way the editor
+measures: the preset `luals` hands LuaLS the library an editor injects (the Neovim runtime, the
+`${3rd}` meta libraries, lib.nvim) in a configuration it builds for the run, so `.luarc.json` itself
+sets no `workspace.library` ([docs/CI.md](docs/CI.md#the-luals-preset-the-library-the-editor-gives-luals)).
+A run takes about a minute, so it is a profile of its own and no part of `full` or the pre-push
+hook: `scripts/test.sh ci --profile=strict` (the whole pipeline plus `luals`), or
+`testing lint luals --all` alone. The CI workflow does not run it (the runner has no
+`lua-language-server`).
 
 ## License
 

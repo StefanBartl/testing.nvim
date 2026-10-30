@@ -63,12 +63,17 @@ local NAME = "^[%a_][%w_%-]*$"
 ---@field efm? string|string[] The preset's error format (quickfix, findings); alternatives as a list.
 ---@field version_argv? string[] How to ask the tool for its version.
 
----@class Testing.Ci.Pipeline
+---What a run is planned from (`testing.ci` internals): the steps, and what a step's command line may need. `testing
+---lint` plans single steps with only this.
+---@class Testing.Ci.Steps
+---@field steps table<string, Testing.Ci.Step>
+---@field derived? table<string, string> Derived steps (`testing.ci.derive`) and why; nil for a written pipeline.
+---@field deps? string[] The project's `deps` (`.testing.lua`): the library of a `luals` step (`testing.ci.luarc`).
+
+---@class Testing.Ci.Pipeline : Testing.Ci.Steps
 ---@field profiles table<string, string[]> Each profile expanded into step names, in order, without duplicates.
 ---@field default string
----@field steps table<string, Testing.Ci.Step>
 ---@field digest_input table What the pipeline hash is taken over (the resolved definition).
----@field derived? table<string, string> Derived steps (`testing.ci.derive`) and why; nil for a written pipeline.
 
 ---@param v any
 ---@return string
@@ -226,8 +231,10 @@ local function resolve_step(step_name, raw, problems)
       preset.name
     )
   elseif raw.timeout ~= nil then
-    timeout_ms = M.duration(raw.timeout)
-    if not timeout_ms then
+    local ms = M.duration(raw.timeout)
+    if ms then
+      timeout_ms = ms
+    else
       problems[#problems + 1] = ('%s.timeout: expected milliseconds or "30s", "2m", got %s'):format(
         where,
         show(raw.timeout)
@@ -498,7 +505,11 @@ function M.load(root)
       return nil,
         { "ci.skip: only a section without `profiles` (a derived pipeline) can leave steps out" }
     end
-    return M.resolve(raw)
+    local written, written_problems = M.resolve(raw)
+    if written then
+      written.deps = loaded.config.deps
+    end
+    return written, written_problems
   end
   raw = raw or {}
   local problems = {}
@@ -579,6 +590,7 @@ function M.load(root)
     end
   end
   pipeline.derived = derived
+  pipeline.deps = loaded.config.deps
   return pipeline, resolve_problems
 end
 

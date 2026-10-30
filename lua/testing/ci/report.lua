@@ -129,7 +129,14 @@ end
 ---@return Testing.Ci.Matcher
 function M.matcher(efm, keep)
   local compiled = {}
-  for _, item in ipairs(type(efm) == "table" and efm or (efm and { efm } or {})) do
+  ---@type string[]
+  local items = {}
+  if type(efm) == "table" then
+    items = efm
+  elseif efm then
+    items = { efm }
+  end
+  for _, item in ipairs(items) do
     local pat, fields = M.compile(item)
     compiled[#compiled + 1] = { pat = pat, fields = fields }
   end

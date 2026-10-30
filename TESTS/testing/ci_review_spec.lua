@@ -254,6 +254,8 @@ return function(H)
     local real_main = cli_mod.main
     local stale = tmp .. "/stale-ir.json"
     write(stale, vim.json.encode({ run = { verdict = { kind = "green" } }, cases = {} }))
+    -- a test double of the CLI entry, restored afterwards
+    ---@diagnostic disable-next-line: duplicate-set-field
     cli_mod.main = function(argv, services)
       if argv[1] == "run" then
         return 0 -- like `--help`: exit 0, no result written

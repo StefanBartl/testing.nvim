@@ -195,7 +195,7 @@ end
 ---Build a step from a preset (or nil for a repo step) and the step's own keys (already validated).
 ---@param name string
 ---@param preset Testing.Ci.Preset|nil
----@param own { run?: string[], args?: string[], needs?: string[], env?: table<string,string>, timeout_ms: integer, os?: table<string,boolean>, stamp?: boolean }
+---@param own { run?: string[], args?: string[], needs?: string[], env?: table<string,string>, timeout_ms: integer, os?: table<string,boolean>, stamp?: boolean, skip_exit?: integer }
 ---@return Testing.Ci.Step
 function M.step(name, preset, own)
   ---@type Testing.Ci.Step

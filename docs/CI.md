@@ -115,7 +115,7 @@ decision of its own.
 | --- | --- | --- |
 | `stylua` | `stylua --check .` (`--check` is fixed, `args` replaces `.`: a step never turns into a formatter) | `stylua` |
 | `luacheck` | `luacheck --formatter plain --codes .` (`args` replaces `.`) | `luacheck` |
-| `luals` | `lua-language-server --checklevel=Warning --check_format=pretty --check=.` (`args` replaces `--check=.`, e.g. `{ "--check=lua" }`; a single file is not checked by LuaLS, name a directory). Never derived: a repo names it in a profile or runs `testing lint luals` | `lua-language-server` |
+| `luals` | `lua-language-server --checklevel=Warning --check_format=pretty --check=. --configpath=<merged>` (`args` replaces `--check=.`, e.g. `{ "--check=lua" }`; a single file is not checked by LuaLS, name a directory; the configuration is built for the run, [below](#the-luals-preset-the-library-the-editor-gives-luals)). Never derived: a repo names it in a profile or runs `testing lint luals` | `lua-language-server` |
 | `suite` | the suite, in this process (`testing stamp <root>`, or `testing run` with `stamp = false`) | |
 | `conformance` | `testing conformance <root> --gate` in this process (a gate: without `--gate` it only reports) | |
 | `surface` | `testing surface <root>` in this process | |
@@ -126,6 +126,46 @@ each carries a `lint` descriptor (`files`: the tool takes the files to check, el
 the findings are filtered; `fix`: the command `--fix` runs, only `stylua`; `ext`: the files it reads, `lua`;
 `on_save = false`: never on save, `luals`). One description of a linter for the pipeline, the command line and the
 editor.
+
+### The `luals` preset: the library the editor gives LuaLS
+
+`lua-language-server --check` reads only the `.luarc.json` of the workspace. The editor reads it too, but on top of
+what its LSP setup injects: the Neovim runtime, LuaLS' own meta libraries and the `lua/` folder of every plugin the
+code requires. Without that, `vim` is an undefined global and every type of a dependency is unknown: thousands of
+findings the editor never shows (testing.nvim: about 6250, against 180 with the library). So every run of the preset
+(a `testing ci` step, `testing lint luals`) writes a merged configuration into the project's state directory
+(`stdpath("state")/testing/<project>-<hash>/luals.luarc.json`, below `--state-dir` when one is given) and passes it with
+`--configpath=<file>`:
+
+- **the keys of the repository's own file** (`.luarc.json`, else `.luarc.jsonc`), kept as they are. Comments and
+  trailing commas are accepted; a key may be written flat (`"workspace.library"`), nested
+  (`"workspace": { "library": ... }`), with or without the `Lua.` prefix, the forms LuaLS reads itself;
+- **`workspace.library`**, when the repository does not set it: `$VIMRUNTIME/lua`, `${3rd}/luv/library`,
+  `${3rd}/busted/library`, `${3rd}/luassert/library`, and `<dir>/lua` of every dependency the runner resolves for the
+  project: the `deps` of `.testing.lua` (found the way `deps` are, docs/CONFIG.md) and lib.nvim, which the runner
+  always needs. Never the project itself (LLS-02: a library is foreign code), never the root of a dependency (its
+  `TESTS/` would answer a `require("harness")` of this project);
+- **`workspace.ignoreDir`**: the repository's entries and `.claude`, `.deps`, `.git` (places that hold copies of
+  the workspace).
+
+A repository that sets `workspace.library` itself keeps it unchanged, and the step output says so: the key
+**replaces** what an editor injects, so what the check sees is then the repository's responsibility (rule LLS-01:
+a `.luarc.json` does not set `workspace.library`). A step whose own `args` name a `--configpath` keeps it. A missing
+`$VIMRUNTIME` (the check runs from Neovim: `testing ci`, `testing lint`) or a dependency that cannot be found is a
+problem of the run, exit `3`, never a smaller library; a `.luarc.json` that is no JSON is exit `2`. The step output
+names the library (`library: $VIMRUNTIME/lua, ${3rd} luv busted luassert, lib.nvim; ignoreDir: ...`), and
+`testing lint --json` carries it as the check's `notes`.
+
+A `luals` step takes about a minute on a repository of this size (the runtime is indexed every time), so it does not
+belong in a profile that runs before every push. testing.nvim keeps it in a profile of its own,
+`strict = { "full", "luals" }`, next to `full` (the pre-push hook and the proofs) and `fast`:
+`testing ci --profile=strict` is the whole pipeline with the LuaLS diagnostics held at zero.
+
+**Another repository to zero** (the fleet): no `workspace.library` in its `.luarc.json` (only `runtime.version`,
+`workspace.checkThirdParty`, `workspace.ignoreDir` and its own diagnostics settings), every plugin it requires as a
+dependency in `deps` of `.testing.lua`, then `testing lint luals --all` until it reports nothing (the measurement
+is noisy: two runs in a row at zero, LLS-06/07), and a profile `strict = { "full", "luals" }` that keeps it there.
+The findings themselves are worked off with the rules of the LuaLS diagnostics (LLS-01 .. LLS-46 of the rules vault).
 
 The in-process presets do not start `nvim -l` inside `nvim -l`: they run through `testing.cli` in the same process
 and with the same services. The suite step is green only when its Result-IR says so: exit `0` without a result is
@@ -382,7 +422,7 @@ The lint checks without the rest of the pipeline, for the files that changed, th
   `verdict`, `exit`, `deciding`, `problems` and per check `name`, `preset`, `state` (`green`, `red`, `skipped`,
   `error`, `infra`), `exit`, `ext`, `files` (`null` for `--all`), `findings` (`file`, `line`, `col`, `message`,
   `check`), `findings_total`, `fixed`, `no_fix`, `missing`, `nothing` (no file in scope), `not_checked`, `reason`,
-  `errors`.
+  `errors`, `notes` (how the check ran: the library of `luals`).
 - **`--on-save`**: the default set leaves out the checks whose preset says `on_save = false` (`luals`); this is what
   the editor's check on save runs.
 

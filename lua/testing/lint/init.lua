@@ -253,6 +253,7 @@ end
 ---@field not_checked? string[] Files of the scope outside the paths of the check's args.
 ---@field reason? string
 ---@field errors string[]
+---@field notes? string[] How the check ran (the library of `luals`, `testing.ci.luarc`).
 
 ---The checks a call names, or every lint step of the pipeline.
 ---@param pipeline Testing.Ci.Pipeline|nil
@@ -449,14 +450,19 @@ function M.within(paths, rel)
   return false
 end
 
+---@class Testing.Lint.Context
+---@field derived? table<string, string> The derived steps of the pipeline.
+---@field deps? string[] The project's `deps` (nil: no pipeline, read from the configuration).
+---@field state_dir? string Where the merged LuaLS configuration goes.
+
 ---Run one check over `files` (nil: its own args) and read its findings.
 ---@param check Testing.Lint.Check
 ---@param files string[]|nil
 ---@param root string
----@param derived table|nil
+---@param ctx Testing.Lint.Context
 ---@return Testing.Ci.StepResult result
 ---@return boolean|nil missing A tool it needs is missing.
-local function run_check(check, files, root, derived)
+local function run_check(check, files, root, ctx)
   local internal = require("testing.ci").internal
   local lint = check.preset.lint --[[@as Testing.Ci.PresetLint]]
   local step = vim.deepcopy(check.step)
@@ -484,9 +490,10 @@ local function run_check(check, files, root, derived)
     end
   end
   local planned, code, problems = internal.plan(
-    { steps = { [check.name] = step }, derived = derived } --[[@as Testing.Ci.Pipeline]],
+    { steps = { [check.name] = step }, derived = ctx.derived, deps = ctx.deps },
     { check.name },
-    root
+    root,
+    { state_dir = ctx.state_dir }
   )
   if not planned then
     local why = table.concat(problems or {}, "; ")
@@ -502,6 +509,7 @@ local function run_check(check, files, root, derived)
   local t0 = vim.uv.hrtime()
   local r = internal.run_process(p, root, { out = quiet, err = quiet }, { keep = keep })
   r.ms = math.floor((vim.uv.hrtime() - t0) / 1e6)
+  r.notes = p.notes
   for _, f in ipairs(r.findings or {}) do
     f.file = M.relative(root, f.file) or f.file
     if (f.text or "") == "" and lint.message then
@@ -548,7 +556,7 @@ local function run_fix(check, targets, all, root)
   end
   step.argv, step.efm, step.version_argv = argv, nil, nil
   local planned, _, problems = internal.plan(
-    { steps = { [check.name] = step } } --[[@as Testing.Ci.Pipeline]],
+    { steps = { [check.name] = step } },
     { check.name },
     root
   )
@@ -634,6 +642,7 @@ function M.document(o)
       not_checked = r.not_checked or {},
       reason = null(r.reason),
       errors = r.errors,
+      notes = r.notes or {},
     }
   end
   local x = o.exit
@@ -826,6 +835,9 @@ function M.term(doc)
         what = ("%d file%s"):format(#c.files, #c.files == 1 and "" or "s")
       end
       lines[#lines + 1] = ("== %s (%s)"):format(c.name, what)
+      for _, note in ipairs(c.notes or {}) do
+        lines[#lines + 1] = "   " .. clean(note)
+      end
       for _, f in ipairs(c.findings) do
         lines[#lines + 1] = "  " .. finding_line(f)
       end
@@ -913,6 +925,12 @@ function M.main(argv, sv)
     return stop(code, tostring(scope_problem))
   end
 
+  ---@type Testing.Lint.Context
+  local ctx = {
+    derived = pipeline and pipeline.derived,
+    deps = pipeline and pipeline.deps,
+    state_dir = sv.state_dir,
+  }
   ---@type Testing.Lint.Result[]
   local results = {}
   for _, check in ipairs(checks) do
@@ -937,14 +955,19 @@ function M.main(argv, sv)
     if mine and #mine == 0 then
       r = {
         name = check.name,
+        preset = check.preset.name,
         state = "skipped",
         ms = 0,
+        ext = lint.ext,
+        findings = {},
+        findings_total = 0,
+        fixed = {},
         reason = "no file in scope",
         nothing = true,
         errors = {},
-      } --[[@as Testing.Lint.Result]]
+      }
     else
-      local res, missing = run_check(check, mine, root, pipeline and pipeline.derived)
+      local res, missing = run_check(check, mine, root, ctx)
       r = res --[[@as Testing.Lint.Result]]
       r.missing = missing
       if args.fix and not missing then
@@ -965,7 +988,7 @@ function M.main(argv, sv)
           local changed, fix_problem = run_fix(check, targets, mine == nil, root)
           local ms = r.ms
           -- what is still wrong decides
-          r = run_check(check, mine, root, pipeline and pipeline.derived) --[[@as Testing.Lint.Result]]
+          r = run_check(check, mine, root, ctx) --[[@as Testing.Lint.Result]]
           r.ms = r.ms + ms
           r.fixed = changed
           if fix_problem and r.state ~= "green" then

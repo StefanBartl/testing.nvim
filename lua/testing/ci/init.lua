@@ -66,6 +66,7 @@ M.USAGE = table.concat({
 ---@field junit? string
 ---@field state_dir? string
 ---@field ["suite-events"]? string
+---@field events? string The events file of the run (`--events`).
 ---@field agent? boolean nil: decided by the environment.
 ---@field root string
 ---@field suite_args string[]
@@ -188,6 +189,9 @@ end
 ---@field argv? string[] The final command line; process steps: `argv[1]` is the path the needs check found.
 ---@field env table<string, string>
 ---@field skip? string Why the step does not run on this system.
+---@field write? { path: string, text: string } A file the step reads, written just before it starts (the merged
+---configuration of `luals`, `testing.ci.luarc`).
+---@field notes? string[] What the step output says about how the step runs (the library of `luals`).
 
 ---Look up a tool.
 ---@param name string
@@ -235,16 +239,54 @@ end
 ---Characters cmd.exe interprets inside the arguments of a batch file (libuv does not quote for cmd.exe).
 local CMD_META = '[&|<>%^%%!"]'
 
+---A `luals` step runs with the merged configuration (`testing.ci.luarc`): `--configpath=<file>` joins its command
+---line and the file is written when the step starts. A step whose own args name a `--configpath` keeps it.
+---@param p Testing.Ci.Planned
+---@param pipeline Testing.Ci.Steps
+---@param root string
+---@param state_dir string|nil
+---@return string[] problems
+---@return boolean infra
+local function luals_config(p, pipeline, root, state_dir)
+  local argv = p.argv --[[@as string[] ]]
+  for k = 2, #argv do
+    if argv[k] == "--configpath" or argv[k]:find("^%-%-configpath=") then
+      p.notes = { "the step names its own --configpath: the merged configuration is not used" }
+      return {}, false
+    end
+  end
+  local deps = pipeline.deps
+  if deps == nil then
+    -- a check of `testing lint` in a project without a pipeline: the dependencies of its configuration
+    deps = require("testing.config.project").load(root).config.deps or {}
+  end
+  local luarc = require("testing.ci.luarc")
+  local built, why, infra = luarc.build(root, { deps = deps })
+  if not built then
+    local problems = {}
+    for _, w in ipairs(why) do
+      problems[#problems + 1] = ("step %s: %s"):format(p.step.name, w)
+    end
+    return problems, infra
+  end
+  local path = luarc.path(root, state_dir)
+  argv[#argv + 1] = "--configpath=" .. path
+  p.write = { path = path, text = luarc.encode(built.config) }
+  p.notes = { ("%s (%s)"):format(built.note, path) }
+  return {}, false
+end
+
 ---Prepare the selected steps: placeholders, interpreters, the `needs` check. The path the check finds is the path
 ---that is started: a relative command with a separator is a file below the root, a bare name is looked up on PATH
 ---(`bash` and `pwsh` through their own lookup, so a `bash` step never starts the WSL launcher).
----@param pipeline Testing.Ci.Pipeline
+---@param pipeline Testing.Ci.Steps
 ---@param names string[]
 ---@param root string
+---@param o? { state_dir?: string } `state_dir`: where a step's generated file goes (default: stdpath('state')).
 ---@return Testing.Ci.Planned[]|nil planned
 ---@return integer|nil code
 ---@return string[] problems
-local function plan(pipeline, names, root)
+local function plan(pipeline, names, root, o)
   local os_name = this_os()
   local deps_cache = {}
   local planned, problems, infra = {}, {}, false
@@ -350,6 +392,14 @@ local function plan(pipeline, names, root)
           seen[first] = true
           argv[1] = need(name, first) or first
         end
+        -- a `luals` step gets its merged configuration (`--configpath=<file>`) before the check below: that
+        -- argument goes through cmd.exe as well when the tool is a batch shim
+        p.argv = argv
+        if step.preset == "luals" then
+          local why, luals_infra = luals_config(p, pipeline, root, o and o.state_dir)
+          vim.list_extend(problems, why)
+          infra = infra or luals_infra
+        end
         -- a batch file runs through cmd.exe, which reads `&`, `|`, `%`, ... in its arguments: no such argument
         if argv[1]:lower():match("%.bat$") or argv[1]:lower():match("%.cmd$") then
           for k = 2, #argv do
@@ -362,7 +412,6 @@ local function plan(pipeline, names, root)
             end
           end
         end
-        p.argv = argv
       end
       for _, tool in ipairs(step.needs) do
         if not seen[tool] then
@@ -391,6 +440,7 @@ end
 ---@field findings_total? integer
 ---@field matched? integer Process steps: every finding the error format matched, also those a `keep` dropped.
 ---@field partial? boolean The suite's own verdict was `green-partial`.
+---@field notes? string[] What the step output said about how it ran (`Testing.Ci.Planned.notes`, `testing lint`).
 
 local MAX_ERRORS = 20
 
@@ -442,6 +492,12 @@ local function run_process(planned, root, sv, o)
     matcher.feed(line)
   end
   local argv = planned.argv --[[@as string[] ]]
+  if planned.write then
+    local ok_w, why = require("testing.ci.luarc").write(planned.write.path, planned.write.text)
+    if not ok_w then
+      return { name = step.name, state = "infra", ms = 0, errors = {}, reason = why }
+    end
+  end
   local handle = require("lib.nvim.system.job").start({
     command = argv[1],
     args = vim.list_slice(argv, 2),
@@ -489,6 +545,8 @@ local function run_process(planned, root, sv, o)
   ---@type Testing.Ci.StepResult
   local result = {
     name = step.name,
+    -- decided below
+    state = "red",
     exit = r.code,
     ms = 0,
     errors = errors,
@@ -582,8 +640,9 @@ end
 ---@param root string
 ---@param suite_args string[]
 ---@param sv table The services of the outer run (`out`, `err`, `env`, `script`).
----@param o { selects: boolean, stamp_out?: string } `selects`: the suite options select part of the suite (a run
----that cannot earn a stamp); `stamp_out`: where the stamp goes (`--state-dir`).
+---@param o { selects: boolean, stamp_out?: string, events?: string } `selects`: the suite options select part of the
+---suite (a run that cannot earn a stamp); `stamp_out`: where the stamp goes (`--state-dir`); `events`: the suite's
+---own events file.
 ---@return Testing.Ci.StepResult
 local function run_inprocess(planned, root, suite_args, sv, o)
   local step = planned.step
@@ -700,7 +759,7 @@ local function run_inprocess(planned, root, suite_args, sv, o)
     keep_error(errors, line)
   end
   ---@type Testing.Ci.StepResult
-  local result = { name = step.name, ms = 0, errors = errors }
+  local result = { name = step.name, state = "red", ms = 0, errors = errors }
   local verdict
   if ir_path then
     local now = mtime_ns(ir_path)
@@ -812,8 +871,8 @@ local function start_versions(planned)
     local step = p.step
     if not p.skip and not step.inprocess and step.version_argv then
       -- ask the tool that will run (the found path), not a bare name: libuv cannot start a `.cmd` by name
-      local version_argv = vim.deepcopy(step.version_argv)
-      if p.argv and version_argv[1] == step.argv[1] then
+      local version_argv = vim.deepcopy(step.version_argv) --[[@as string[] ]]
+      if p.argv and step.argv and version_argv[1] == step.argv[1] then
         version_argv[1] = p.argv[1]
       end
       versions[step.name] = start(version_argv)
@@ -884,6 +943,7 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
   -- Written for every run the old script would have recorded: the whole pipeline (also when its only gap is a suite
   -- with a skipped case, which the old script called green), and a run that could not start for a missing tool
   -- (the old script: red, "<tool> missing"). Not for a narrowed run (`--step`, suite options) or a moving tree.
+  ---@type { state: string, note: string }|nil
   local legacy
   local why = type(doc.partial_why) == "string" and doc.partial_why or ""
   local narrowed = why:find("--step", 1, true) or why:find("suite options", 1, true)
@@ -906,7 +966,7 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
     end
   end
   if legacy then
-    legacy = vim.json.encode({
+    local legacy_text = vim.json.encode({
       repo = doc.repo,
       commit = type(doc.commit) == "string" and doc.commit or "unknown",
       dirty = doc.dirty == true,
@@ -914,7 +974,7 @@ local function write_doc(doc, root, json_path, state_dir, legacy_ignored)
       state = legacy.state,
       note = legacy.note,
     })
-    local ok, err = atomic(root .. "/.ci-last.json", legacy .. "\n", {})
+    local ok, err = atomic(root .. "/.ci-last.json", legacy_text .. "\n", {})
     if not ok then
       notes[#notes + 1] = ("cannot write %s/.ci-last.json: %s"):format(root, tostring(err))
     end
@@ -1134,7 +1194,7 @@ function M.main(argv, sv)
     end
   end
 
-  local planned, code, why = plan(pipeline, names, root)
+  local planned, code, why = plan(pipeline, names, root, { state_dir = state_dir })
   if not planned then
     return stop_early(code --[[@as integer]], why, profile, nil, #partial_why > 0)
   end
@@ -1144,7 +1204,8 @@ function M.main(argv, sv)
   local versions = start_versions(planned)
 
   -- the agent report replaces the streamed output: verdict first, then only the findings
-  local function quiet() end
+  ---@param _ string
+  local function quiet(_) end
   local say = agent and quiet or out
   local step_sv = agent and vim.tbl_extend("force", sv, { out = quiet, err = quiet }) or sv
   -- asked for now, before the suite step points the state directory at a scratch directory: the stamp must outlive it
@@ -1192,6 +1253,9 @@ function M.main(argv, sv)
             or ""
         )
       )
+      for _, note in ipairs(p.notes or {}) do
+        say("   " .. note)
+      end
       local t0 = vim.uv.hrtime()
       local reused = args.reuse
         and step.inprocess == "run"
@@ -1221,6 +1285,7 @@ function M.main(argv, sv)
           name = step.name,
           state = "green",
           exit = 0,
+          ms = 0,
           errors = {},
           reason = "reused: its stamp verifies",
         }

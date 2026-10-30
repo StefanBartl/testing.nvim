@@ -289,7 +289,7 @@ end
 ---The content for a buffer position, or nil when the buffer is not a test file of a project.
 ---@param bufnr integer
 ---@param row integer 1-based
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 ---@return Testing.Hover.Content|nil  Already cut to the configured size.
 function M.at(bufnr, row, opts)
   -- a buffer that is not a plain file (a `fugitive://` or `oil://` name, a terminal, a scratch) is no spec file
@@ -454,7 +454,7 @@ local function arm_retry()
 end
 
 ---`:Testing hover`: the result under the cursor (else the spec path under it) in a plain float.
----@param opts? { state_dir?: string }
+---@param opts? Testing.State.Opts
 function M.show(opts)
   opts = type(opts) == "table" and opts or {}
   if not registered then

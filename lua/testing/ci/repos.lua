@@ -455,7 +455,7 @@ function M.main(argv, sv)
   for _, dir in ipairs(repos) do
     width = math.max(width, #vim.fs.basename(dir))
   end
-  ---@type { dir: string, name: string, verify?: string, state?: string, code: integer, ms: integer }[]
+  ---@type { index: integer, dir: string, name: string, verify?: string, state?: string, code: integer, ms: integer, doc?: table }[]
   local results = {}
   for i, dir in ipairs(repos) do
     results[i] = { index = i, dir = dir, name = vim.fs.basename(dir), code = 0, ms = 0 }
