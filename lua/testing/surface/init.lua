@@ -17,8 +17,9 @@
 ---
 --- Modules: `ids` (stable `kind:name` ids), `read` (the registries -> entries, in-process), `collect`
 --- (the same in a child editor), `track` (the installable layer that counts executions),
---- `coverage` (pure: ratio, thresholds, baseline, IR), `render` (text / markdown / JSON). Full
---- documentation, limits and the integration contract: docs/SURFACE.md.
+--- `coverage` (pure: ratio, thresholds, baseline, IR), `tags` (the claims of passing cases: tags,
+--- `-- @covers`), `render` (text / markdown / JSON / tab separated), `view` (the matrix view of
+--- `:Testing surface --matrix`). Full documentation, limits and the integration contract: docs/SURFACE.md.
 ---
 --- Exit codes of `main`: 0 done (below a threshold of 0 is a report), 1 a threshold or the baseline
 --- failed, 2 usage or configuration error, 3 the surface could not be read.
@@ -679,8 +680,9 @@ function M.main(argv, services)
     text = text .. "testing surface: " .. tostring(report.error) .. "\n"
   end
   if args.out then
-    if not atomic_write(args.out, text) then
-      text = text .. "testing surface: cannot write " .. args.out .. "\n"
+    local wrote, werr = atomic_write(args.out, text)
+    if not wrote then
+      text = ("%stesting surface: cannot write %s: %s\n"):format(text, args.out, tostring(werr))
       if report.exit_code == M.EXIT_OK then
         report.exit_code = M.EXIT_INFRA
       end
