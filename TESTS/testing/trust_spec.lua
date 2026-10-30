@@ -245,6 +245,36 @@ return function(H)
     eq(cli.main({ "trust", "add", base .. "/nope" }, sv), 2, "a missing directory is 2")
     eq(cli.main({ "trust" }, sv), 2, "no subcommand is 2")
 
+    -- a store that may hold roots this reader cannot see (a JSON object of another version or shape) is never
+    -- overwritten by add / revoke (its roots would be lost); broken JSON is replaced (see above)
+    local odd_store = base .. "/odd/trust.json"
+    for label, text in pairs({
+      ["another version"] = '{"v":99,"entries":[{"root":"/kept","hash":"x","added":1}]}',
+      ["another shape"] = '{"v":1,"entries":"elsewhere"}',
+    }) do
+      put(odd_store, text)
+      local odd_added, why = trust.add(proj, ctx({ store = odd_store }))
+      eq(odd_added, false, "add on a store with " .. label .. " is refused")
+      has(tostring(why), "left as it is", "and says the file is left alone (" .. label .. ")")
+      local revoked = trust.revoke(proj, ctx({ store = odd_store }))
+      eq(revoked, false, "revoke on a store with " .. label .. " is refused")
+      local f = assert(io.open(odd_store, "rb"))
+      eq(f:read("*a"), text, "the store with " .. label .. " is unchanged")
+      f:close()
+    end
+    -- a valid store with one unusable entry is still written (the bad entry is dropped, the good one kept)
+    put(
+      odd_store,
+      ('{"v":%d,"entries":[{"root":"/kept-root","hash":"%s","added":1},{"root":7}]}'):format(
+        trust.VERSION,
+        string.rep("a", 64)
+      )
+    )
+    local added_ok = trust.add(proj, ctx({ store = odd_store }))
+    eq(added_ok, true, "add on a store with one unusable entry works")
+    local kept = trust.read(odd_store)
+    eq(#kept, 2, "the good entry is kept next to the new one")
+
     -- the real entry: a root trusted through the store stays trusted in `testing ci`, whose suite step runs
     -- in a throwaway XDG_STATE_HOME (the store is pinned before the environment moves)
     local here = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

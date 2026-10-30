@@ -205,6 +205,8 @@ end
 ---@param path? string
 ---@return Testing.Trust.Entry[] entries
 ---@return string|nil note
+---@return boolean|nil keep `true`: the file may hold roots this reader cannot see (another version, a read error,
+---not a file or too large), so `add` / `revoke` must not overwrite it. Broken JSON is not kept: it holds nothing.
 function M.read(path)
   path = path or M.path()
   local st = uv.fs_stat(path)
@@ -216,11 +218,12 @@ function M.read(path)
       ("trust store %s is not a regular file or larger than %d bytes: no root is trusted from it"):format(
         path,
         M.MAX_BYTES
-      )
+      ),
+      true
   end
   local text, rerr = require("lib.nvim.fs.read")(path)
   if not text then
-    return {}, ("trust store %s cannot be read: %s"):format(path, tostring(rerr))
+    return {}, ("trust store %s cannot be read: %s"):format(path, tostring(rerr)), true
   end
   local ok, decoded = pcall(require("lib.nvim.json").decode, text)
   if
@@ -229,11 +232,13 @@ function M.read(path)
     or decoded.v ~= M.VERSION
     or type(decoded.entries) ~= "table"
   then
+    -- a JSON object is a store of some version (keep it); anything else is garbage (the next add replaces it)
     return {},
       ("trust store %s is not a trust store of version %d: no root is trusted from it"):format(
         path,
         M.VERSION
-      )
+      ),
+      ok and type(decoded) == "table"
   end
   local out, dropped = {}, 0
   for i, e in ipairs(decoded.entries) do
@@ -286,7 +291,12 @@ end
 ---@return string|nil err
 local function update(path, fn)
   local locked, ok, err = require("testing.statelock").with(path, function()
-    local entries = M.read(path)
+    -- a store that may hold roots this reader cannot see (another version, a read error) is left as it is:
+    -- writing the new entry alone would drop every root in it without a word
+    local entries, note, keep = M.read(path)
+    if keep then
+      return false, ("%s; it is left as it is (move it away to start a new store)"):format(note)
+    end
     local new = fn(entries)
     while #new > M.MAX_ENTRIES do
       table.remove(new, 1)

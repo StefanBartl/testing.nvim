@@ -155,7 +155,11 @@ Reading it back treats it as untrusted data: a file that is not a regular file, 
 not `{ "v": 1, "entries": [...] }` counts as **empty** (no trust, a note, never an error that lets a run
 through), and each entry is checked field by field (absolute root of at most 1024 bytes without control
 characters, a lower-case sha256 or `none`, a non-negative integer time); an invalid entry is dropped and
-counted, at most 1000 are kept.
+counted, at most 1000 are kept. `add` and `revoke` replace a store that is not JSON at all, but leave a JSON
+object of another version or shape, an unreadable file, a non-file and an oversized file as they are (it may
+hold roots of a newer testing.nvim) and fail with the reason; move it away to start a new store. The store path
+is fixed when the command starts, so `testing ci` (whose suite step runs with a throwaway `XDG_STATE_HOME`)
+sees the same store.
 
 Only the entry arms the gate. A Lua caller of the library (a spec calling `testing.cli.main`, a plugin calling
 `testing.config.project.load`) chose the code it runs and is not gated. `scripts/test.sh` of other projects
