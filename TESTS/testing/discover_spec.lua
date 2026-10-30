@@ -346,31 +346,35 @@ return function(H)
     uv.fs_symlink(outside .. "/target_spec.lua", link_root .. "/TESTS/link_spec.lua")
   local made_broken, err_broken =
     uv.fs_symlink(outside .. "/nope_spec.lua", link_root .. "/TESTS/broken_spec.lua")
-  -- not skipped when symlinks cannot be made: the spec fails and says what the environment lacks
+  -- not skipped when symlinks cannot be made: the spec fails and says what the environment lacks,
+  -- then leaves out the symlink checks (they would index a nil file) and runs the blocks below
+  local made_links = made_dir and made_file and made_broken and true or false
   ok(
-    made_dir and made_file and made_broken,
+    made_links,
     ("this environment must be able to create symlinks (Windows: Developer Mode or an elevated shell): %s %s %s"):format(
       tostring(err_dir),
       tostring(err_file),
       tostring(err_broken)
     )
   )
-  found = discover.discover(link_root)
-  eq(
-    rels(found),
-    { "TESTS/link_spec.lua", "TESTS/real_spec.lua" },
-    "a symlinked directory is not entered, a symlinked file is listed, a broken link is not"
-  )
-  local link_file = found.files[1]
-  eq(link_file.symlink, true, "the symlinked file is marked")
-  local sd = findings(found, "symlink_dir")
-  eq(#sd, 1, "the symlinked directory is reported")
-  eq(sd[1].path, "TESTS/linked", "by path")
-  eq(sd[1].rule, "ERR-34", "under ERR-34")
-  has(sd[1].message, "not entered", "saying it was not entered")
-  eq(#findings(found, "symlink_file"), 1, "the symlinked file is reported")
-  eq(#findings(found, "broken_symlink"), 1, "the broken link is reported")
-  eq(findings(found, "broken_symlink")[1].severity, "error", "as an error")
+  if made_links then
+    found = discover.discover(link_root)
+    eq(
+      rels(found),
+      { "TESTS/link_spec.lua", "TESTS/real_spec.lua" },
+      "a symlinked directory is not entered, a symlinked file is listed, a broken link is not"
+    )
+    local link_file = found.files[1]
+    eq(link_file.symlink, true, "the symlinked file is marked")
+    local sd = findings(found, "symlink_dir")
+    eq(#sd, 1, "the symlinked directory is reported")
+    eq(sd[1].path, "TESTS/linked", "by path")
+    eq(sd[1].rule, "ERR-34", "under ERR-34")
+    has(sd[1].message, "not entered", "saying it was not entered")
+    eq(#findings(found, "symlink_file"), 1, "the symlinked file is reported")
+    eq(#findings(found, "broken_symlink"), 1, "the broken link is reported")
+    eq(findings(found, "broken_symlink")[1].severity, "error", "as an error")
+  end
 
   -- ------------------------------------------------------------------ spec_pattern (filetree-style names)
   local ft = project()
