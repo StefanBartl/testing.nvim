@@ -173,11 +173,16 @@ end
 ---@param path string
 ---@param text string
 ---@return boolean ok
+---@return string|nil err Why it failed.
 local function atomic_write(path, text)
-  local ok, written = pcall(function()
-    return (require("lib.nvim.fs.write.atomic")(path, text))
-  end)
-  return ok and written == true
+  local ok, written, werr = pcall(require("lib.nvim.fs.write.atomic"), path, text)
+  if not ok then
+    return false, tostring(written)
+  end
+  if written ~= true then
+    return false, tostring(werr or "write failed")
+  end
+  return true
 end
 
 ---Build the report: surface, coverage (when hits are given), thresholds, baseline diff, exit code.
@@ -195,10 +200,9 @@ function M.report(root, opts)
     end
     project = loaded.config
     for _, p in ipairs(loaded.problems or {}) do
-      -- the `surface` key of `.testing.lua` is not part of the validated schema yet
-      if not tostring(p):find("surface", 1, true) then
-        notes[#notes + 1] = "config: " .. p
-      end
+      -- a refused `surface.*` value (`tags = "no"`) is reported too: the default stays, and the reader
+      -- must not think the setting took effect
+      notes[#notes + 1] = "config: " .. p
     end
   end
   local surf_cfg = type(project.surface) == "table" and project.surface or {}
@@ -268,15 +272,31 @@ function M.report(root, opts)
   if use_tags == nil then
     use_tags = surf_cfg.tags ~= false
   end
+  local claims, tracked_hit = 0, nil
   if use_tags then
-    local claims = require("testing.surface.tags").apply(hits, root)
-    if claims > 0 then
-      notes[#notes + 1] = ("%d entry(ies) counted from tags (`binding:`/`command:` tags, `-- @covers`): claims, not tracked executions"):format(
-        claims
+    tracked_hit = vim.deepcopy(hits.hit)
+    claims = require("testing.surface.tags").apply(hits, root)
+  end
+  local cov = coverage.compute(surface, hits, { kinds = kinds, ignore = ignore })
+  if claims > 0 then
+    -- how many entries the claims alone lift into "hit": the same surface measured by the tracked run only
+    local base = coverage.compute(
+      surface,
+      vim.tbl_extend("force", hits, { hit = tracked_hit, tagged = {} }),
+      { kinds = kinds, ignore = ignore }
+    )
+    local lifted = 0
+    for i, e in ipairs(cov.entries) do
+      if e.status == "hit" and base.entries[i].status ~= "hit" then
+        lifted = lifted + 1
+      end
+    end
+    if lifted > 0 then
+      notes[#notes + 1] = ("%d entry(ies) counted as exercised only by tags (`binding:`/`command:` tags, `-- @covers`): claims, not tracked executions"):format(
+        lifted
       )
     end
   end
-  local cov = coverage.compute(surface, hits, { kinds = kinds, ignore = ignore })
   report.coverage = cov
   report.hits = hits
   report.files = coverage.by_file(cov, hits)
@@ -348,11 +368,17 @@ function M.report(root, opts)
         ok, enc = pcall(vim.json.encode, coverage.baseline(cov))
       end
       -- atomic: a baseline that is half written would lower the bar of every later run
-      local wrote = ok and atomic_write(opts.write_baseline, enc .. "\n")
+      local wrote, werr = ok, nil
+      if ok then
+        wrote, werr = atomic_write(opts.write_baseline, enc .. "\n")
+      end
       if wrote then
         notes[#notes + 1] = "baseline written: " .. opts.write_baseline
       else
-        report.error = "cannot write the baseline " .. tostring(opts.write_baseline)
+        report.error = ("cannot write the baseline %s%s"):format(
+          tostring(opts.write_baseline),
+          werr and (": " .. werr) or ""
+        )
         report.exit_code = M.EXIT_INFRA
       end
     end
@@ -396,8 +422,12 @@ function M.write_ir(src, dst, report)
   if not enc_ok then
     enc_ok, enc = pcall(vim.json.encode, ir)
   end
-  if not enc_ok or not atomic_write(dst, enc .. "\n") then
-    return "cannot write the IR " .. tostring(dst)
+  if not enc_ok then
+    return "cannot encode the IR for " .. tostring(dst)
+  end
+  local wrote, werr = atomic_write(dst, enc .. "\n")
+  if not wrote then
+    return ("cannot write the IR %s: %s"):format(tostring(dst), tostring(werr))
   end
   return nil
 end
@@ -604,6 +634,11 @@ function M.main(argv, services)
   local root =
     vim.fs.normalize(vim.fn.fnamemodify(args.root or services.cwd or vim.fn.getcwd(), ":p"))
   root = root:gsub("/+$", "")
+  -- nil leaves the decision to `surface.tags` of `.testing.lua`; `--no-tags` is the only way to say false here
+  local tags_flag
+  if args.no_tags then
+    tags_flag = false
+  end
   local report = M.report(root, {
     config = services.config,
     collect = services.collect,
@@ -616,11 +651,19 @@ function M.main(argv, services)
     fail_on_removed = args.fail_on_removed,
     require_signed_baseline = args.require_signed_baseline,
     write_baseline = args.write_baseline,
-    tags = (args.no_tags or nil) and false,
+    tags = tags_flag,
   })
   if report.error and not report.surface then
     local code = report.exit_code
     return code, "testing surface: " .. tostring(report.error) .. "\n"
+  end
+  if args.matrix and not (report.coverage and report.hits) then
+    -- the matrix is made of tracked cases: without a run there is nothing to show, which is an error of the call
+    report.notes[#report.notes + 1] =
+      "--matrix needs a tracked run: give --from <ir.json> or --hits <file>"
+    if report.exit_code == M.EXIT_OK then
+      report.exit_code = M.EXIT_USAGE
+    end
   end
   local text = render.render(report, args.format, { matrix = args.matrix })
   if args.write_ir then

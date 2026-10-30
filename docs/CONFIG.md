@@ -80,6 +80,7 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `surface.threshold` | number 0..1 | `0` | Gate on the overall ratio of `testing surface`; `0` = only report. |
 | `surface.kinds` | list of `binding`, `command`, `autocmd`, `api` | `{ "binding", "command", "autocmd" }` | The kinds counted in the ratio. |
 | `surface.ignore` | list of Lua patterns | `{}` | Entry ids that are not counted. |
+| `surface.tags` | boolean | `true` | `false`: `binding:`/`command:` tags of passing cases and `-- @covers` headers do not count as exercised (the same as `testing surface --no-tags`); the ratio is the tracked one only ([SURFACE.md](SURFACE.md#tags-a-case-names-the-entry-it-tests)). A value that is not a boolean is reported as a note of the report and `true` stays. |
 | `surface.setup_chunk` | string | absent | Lua code the surface is read after. |
 | `cache.project_key` | string | the absolute git root | Name of the cache folder (`<name>-<12 hex of sha256(name)>` below the cache base) instead of the path of the checkout: letters, digits, `_ . -`, at most 64. A name only, every entry still carries its full spec key. For a cache restored on a runner with another checkout path ([CI-CACHE.md](CI-CACHE.md)). |
 | `cache.enabled` | boolean | `false` | `true`: reuse the results of unchanged spec files without `--cached`. Ignored in CI: a default never decides there ([CACHE.md](CACHE.md)). `--no-cache` wins. |

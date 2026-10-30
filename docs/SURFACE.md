@@ -15,8 +15,8 @@ Everything reports first. A threshold of `0` (the default) never fails; it becom
 repository after the findings are triaged.
 
 ```
-testing surface [<root>] [--from ir.json] [--hits sink.jsonl] [--threshold 0.8] [--baseline b.json] [--json|--markdown]
-:Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown]   (a headless child; the report opens in a viewer)
+testing surface [<root>] [--from ir.json] [--hits sink.jsonl] [--threshold 0.8] [--baseline b.json] [--json|--markdown] [--matrix] [--csv] [--no-tags]
+:Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown] [--matrix] [--csv] [--no-tags]   (a headless child; the report opens in a viewer)
 ```
 
 ## Quick start
@@ -203,24 +203,42 @@ execution. Only a **passing** case claims; a failed or skipped case covers nothi
 | Where | How |
 | --- | --- |
 | Result-IR | a string in `cases[].tags` that is an id (`binding:<leader>ssa`, `command:Session save`); other tags such as `slow` are ignored |
-| Dialect A (busted-style) | a header comment in the first 30 lines of the spec, which claims for every case of the file: `-- @covers binding:<leader>ssa, command:Session save` (`,` or `;` between ids, `@covers:` works too; `#tag` words of titles cannot hold `<`, `>` or a space) |
+| Dialect A (busted-style) | a header comment in the first 30 lines of the spec, which claims for every case of the file: `-- @covers binding:<leader>ssa, command:Session save` (`@covers:` and `@Covers` work too; a UTF-8 byte order mark in front of line 1 is skipped; `#tag` words of titles cannot hold `<`, `>` or a space) |
 
 A claim on an id that is not in the surface is a stale tag and is listed under "exercised but not in the
-surface". A header path that leaves the project root is not read. `--no-tags` (or `surface = { tags = false }`)
-turns the claims off, so the ratio is the tracked one only; an IR without `cases[].surface` still takes the
+surface". A claim spelled another way than the entry (`binding:<Leader>a` for `binding:<leader>a`, another mode
+suffix of the same keys) counts for that entry, in the table and in the matrix. `--no-tags` (or
+`surface = { tags = false }`) turns the claims off, so the ratio is the tracked one only; an IR without `cases[].surface` still takes the
 claims (they are static), while the rest stays `untracked`.
+
+Limits of the claims:
+
+* The ids of a `-- @covers` line are separated by `,` or `;` **only when a kind follows** (`binding:`, `command:`,
+  `autocmd:`, `api:`, `config:`, `health:`), so a name may hold the separators: `-- @covers binding:;, command:Open`
+  claims `binding:;` and `command:Open`. The price: a `,` or `;` at the very end of the list belongs to the last
+  id (`binding:<leader>,` is that keymap; a trailing comma after `command:Open` makes the id `command:Open,`,
+  which is listed as a stale tag), and a misspelled kind (`bindin:a`) does not end the id before it.
+* A header is read only from a file below the project root. The path of the case must be relative and free of a
+  `..` segment, a drive or a leading slash, and the file is resolved before it is opened: a symbolic link or a
+  junction that leads out of the root (also on an intermediate directory) claims nothing. A file name that merely
+  contains two dots (`a..b_spec.lua`) is fine.
+* Only a case whose status is `pass` claims; a case without a status has not been seen to pass.
+* At most 256 tags per case are read (the rest is ignored, with a note).
+* A malformed `surface.*` value in `.testing.lua` (`tags = "no"`) is reported as a `config:` note and the default stays.
 
 ## The matrix and the report sections
 
 ```bash
 testing surface . --from out.json                    # the list; "not covered" names each entry: `binding:<leader>slt - no feature test`
 testing surface . --from out.json --matrix           # entries x spec files, cases that exercised the entry per file
-testing surface . --from out.json --matrix --csv     # the same as a tab separated table (tabs and line breaks in a cell become a space)
+testing surface . --from out.json --matrix --csv     # the same as a tab separated table (tabs and line breaks in a cell become `?`)
 testing surface . --from out.json --matrix --json    # `matrix = { files, rows = { { id, kind, status, cells, total } } }`
 testing surface . --from out.json --write-ir annotated.json   # the IR with the aggregate as its own `surface` section
 ```
 
-`:Testing surface --matrix` shows the same table in the viewer. The `surface` section of the IR holds the
+`--matrix` needs a tracked run (`--from` or `--hits`): without one it prints why and exits `2`, like `--write-ir`
+without `--from`. An entry no case exercised has `cells = {}` in the JSON. `:Testing surface --matrix` shows the
+same table in the viewer (`--csv` and `--no-tags` are flags of the route too). The `surface` section of the IR holds the
 totals, the ratio per kind and per spec file, `missing`, `untracked` and `tagged`. A view built on
 `ui.kit` is tracked separately (`binding-coverage-ui-view`).
 
@@ -285,7 +303,7 @@ Pilot: fileops.nvim (`surface.baseline.json`, the "Surface baseline gate" step o
 
 Wired by the integration step (`testing run` with `surface = { track = true }` in `.testing.lua`):
 
-* `.testing.lua`: `surface.{track, threshold, kinds, ignore, setup_chunk}` and `coverage.autocmds` are typed keys
+* `.testing.lua`: `surface.{track, threshold, kinds, ignore, tags, setup_chunk}` and `coverage.autocmds` are typed keys
   ([CONFIG.md](CONFIG.md)).
 * `testing surface ...` is dispatched by `testing.cli` with its own arguments and exit codes (`:Testing surface` in
   the editor).
@@ -319,8 +337,8 @@ What is needed so that the pieces above are wired into the runner. Everything he
 owner of the named file; `testing.surface` exposes the API.
 
 1. **`.testing.lua` schema** (`config/project.lua`, `config/DEFAULTS.lua`):
-   `surface = { track = false, threshold = 0.0, kinds = { "binding", "command", "autocmd" }, ignore = {}, setup_chunk = nil }`
-   with `track` boolean, `threshold` number in 0..1, `kinds` and `ignore` string lists (`ignore` are Lua
+   `surface = { track = false, threshold = 0.0, kinds = { "binding", "command", "autocmd" }, ignore = {}, tags = true, setup_chunk = nil }`
+   with `track` and `tags` boolean, `threshold` number in 0..1, `kinds` and `ignore` string lists (`ignore` are Lua
    patterns on ids), `setup_chunk` a string. `coverage` may additionally take `autocmds` (number 0..1).
 2. **CLI** (`cli.lua`): `testing surface <args>` is dispatched before the run options are parsed, like
    `migrate`: `local code, text = require("testing.surface").main(rest, { cwd = vim.fn.getcwd() })`, text to

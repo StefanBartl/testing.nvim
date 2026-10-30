@@ -72,6 +72,7 @@ M.MAX_BYTES = 262144
 ---@field expect string What a valid value looks like, for the warning.
 ---@field repair? fun(v: any): table|nil, { key: string, value: any, expect: string, unknown?: boolean }[] For a table value with a wrong key: what is left of it (nil: nothing, the default stays) and the refused keys.
 
+---A relative path that stays below its base: not empty, not absolute, no drive, no `..` segment, no NUL.
 ---@param v any
 ---@return boolean
 local function is_safe_relpath(v)
@@ -88,6 +89,9 @@ local function is_safe_relpath(v)
   end
   return true
 end
+
+---Exported for `testing.surface.tags` (the spec file of a case must stay below the project root).
+M.is_safe_relpath = is_safe_relpath
 
 ---@param item_check Testing.Config.Check
 ---@param min_len integer

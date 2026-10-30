@@ -345,7 +345,7 @@ function M.matrix_rows(report)
 end
 
 ---Tab separated table: the entry list, or with `matrix` the matrix. Tabs and line breaks inside a cell
----become a space, so a cell never splits a column or a row.
+---become `?` (`clean`), so a cell never splits a column or a row.
 ---@param report table
 ---@param matrix? boolean
 ---@return string
@@ -361,11 +361,8 @@ function M.csv(report, matrix)
   end
   local lines = {}
   local function put(r)
-    local cells = {}
-    for i, c in ipairs(r) do
-      cells[i] = (tostring(c):gsub("[\t\r\n]", " "))
-    end
-    lines[#lines + 1] = table.concat(cells, "\t")
+    -- every cell went through `clean` (control characters are `?`): a tab or a line break cannot split a row
+    lines[#lines + 1] = table.concat(r, "\t")
   end
   put(header)
   for _, r in ipairs(data) do

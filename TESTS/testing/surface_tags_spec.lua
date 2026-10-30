@@ -149,7 +149,11 @@ return function(H)
   has(text, "hit (tag)", "tags: an entry counted from a tag says so")
   has(text, "not covered (1):", "report: the not covered block")
   has(text, "  command:Open - no feature test", "report: the failed case's claim does not count")
-  has(text, "counted from tags", "tags: a note says they are claims")
+  has(
+    text,
+    "3 entry(ies) counted as exercised only by tags",
+    "tags: a note says how many entries only the claims lifted, and that they are claims"
+  )
   has(
     text,
     "exercised but not in the surface (1): command:Gone",
@@ -277,8 +281,17 @@ return function(H)
   local doc = vim.json.decode(text)
   eq(doc.matrix.files, { "a_spec.lua", "b_spec.lua", "c_spec.lua" }, "matrix json: files")
   eq(#doc.matrix.rows, 5, "matrix json: rows")
-  _, text = surface.main({ "--matrix" }, services)
+  code, text = surface.main({ "--matrix" }, services)
   has(text, "no matrix", "matrix without a tracked run says so instead of inventing one")
+  eq(code, 2, "matrix without a tracked run is a usage error, not a quiet success")
+  code = surface.main({ "--matrix", "--csv" }, services)
+  eq(code, 2, "matrix csv without a tracked run is a usage error")
+  code, text = surface.main({ "--matrix", "--json" }, services)
+  eq(code, 2, "matrix json without a tracked run is a usage error")
+  eq(vim.json.decode(text).matrix, nil, "and the JSON has no matrix to show")
+  has(text, "--matrix needs a tracked run", "and the notes say why")
+  code = surface.main({ "--csv" }, services)
+  eq(code, 0, "the csv list needs no tracked run")
   _, text = surface.main({ "--csv" }, services)
   eq(
     vim.split(vim.trim(text), "\n", { plain = true })[1],
@@ -323,6 +336,207 @@ return function(H)
   eq(code, 2, "write-ir without a run is a usage error")
   has(text, "--write-ir needs the IR", "write-ir: says it needs --from")
   eq(surface.parse_args({ "--write-ir" }), nil, "args: --write-ir needs a value")
+  code, text =
+    surface.main({ "--from", ir_path, "--write-ir", tmp .. "/no_such_dir/x.json" }, services)
+  eq(code, 2, "write-ir to an unwritable place is an error")
+  has(text, "cannot write the IR", "write-ir: names what failed")
+  has(text, "open failed", "write-ir: and keeps the reason the write gave")
+
+  -- ------------------------------------------------------------------ review fixes
+  -- a refused `surface.*` value of `.testing.lua` is a note (it was dropped for containing "surface")
+  vim.fn.mkdir(tmp .. "/cfgroot", "p")
+  write("cfgroot/.testing.lua", 'return { plugin = "fx", surface = { tags = "no" } }\n')
+  report = surface.report(tmp .. "/cfgroot", {
+    surface = fixed,
+    hits = { from = { ir_path } },
+  })
+  local joined = table.concat(report.notes, "\n")
+  has(joined, "config: key 'surface.tags' is invalid", "config: a refused surface key is reported")
+  -- the tracked <leader>a and the tag on `command:Fx status` (c_spec.lua's header is not below cfgroot)
+  eq(report.coverage.hit, 2, "config: and the default (tags on) is what applies")
+
+  -- the separators of `-- @covers`: a `,` or `;` ends an id only before a kind
+  eq(tags.parse_covers("-- @covers binding:;\n"), { "binding:;" }, "covers: an lhs that is `;`")
+  eq(
+    tags.parse_covers("-- @covers command:Open, binding:;, binding:<leader>,, autocmd:g:E\n"),
+    { "command:Open", "binding:;", "binding:<leader>,", "autocmd:g:E" },
+    "covers: `,` and `;` inside an lhs, the separator is the one before a kind"
+  )
+  eq(
+    tags.parse_covers("-- @covers command:A ; command:B ;command:C\n"),
+    { "command:A", "command:B", "command:C" },
+    "covers: `;` with spaces around it"
+  )
+  eq(
+    tags.parse_covers(
+      "-- @covers command:Open, command:Open,command:Open\n-- @covers command:Open\n"
+    ),
+    { "command:Open" },
+    "covers: an id is claimed once however often it is written"
+  )
+  eq(
+    tags.parse_covers("\239\187\191-- @covers command:Open\n"),
+    { "command:Open" },
+    "covers: a byte order mark in front of line 1"
+  )
+  eq(
+    tags.parse_covers("-- @Covers command:A\n-- @COVERS: command:B\n"),
+    { "command:A", "command:B" },
+    "covers: the keyword is not case sensitive"
+  )
+  ok(tags.is_id("command:" .. string.rep("x", 504)), "is_id: 512 bytes are still an id")
+  ok(not tags.is_id("command:" .. string.rep("x", 505)), "is_id: 513 bytes are not")
+  local many = {}
+  for i = 1, 300 do
+    many[i] = "command:C" .. i
+  end
+  eq(#tags.ids_of_tags(many), tags.MAX_TAGS, "ids_of_tags: a case is read up to MAX_TAGS tags")
+  local long_ir = { cases = { { id = "l::x", file = "l_spec.lua", status = "pass", tags = many } } }
+  local long_hits = coverage.from_ir(long_ir)
+  eq(#long_hits.tag_cases[1].tags, coverage.MAX_CASE_TAGS, "from_ir: the tags of a case are cut")
+  has(table.concat(long_hits.notes, "\n"), "more than 256 tags", "from_ir: and a note says so")
+
+  -- fail closed: a case without a status has not been seen to pass
+  local statusless = coverage.new_hits()
+  statusless.tag_cases = { { id = "s::x", file = "c_spec.lua", tags = { "command:Open" } } }
+  eq(tags.apply(statusless, tmp), 0, "apply: a case without a status claims nothing")
+  eq(statusless.hit, {}, "apply: and hits nothing")
+  statusless.tag_cases[1].status = "skip"
+  eq(tags.apply(statusless, tmp), 0, "apply: a skipped case claims nothing")
+
+  -- the spec path of a case: a name that merely contains two dots is fine, a path that leaves is not
+  write("a..b_spec.lua", "-- @covers command:Open\n")
+  local dots = coverage.new_hits()
+  dots.tag_cases = { { id = "d", file = "a..b_spec.lua", status = "pass", tags = {} } }
+  eq(tags.apply(dots, tmp), 1, "apply: `a..b_spec.lua` is a file name, not a parent segment")
+  for _, bad in ipairs({ "..", "sub/../../c_spec.lua", "/c_spec.lua", "C:/c_spec.lua", "" }) do
+    local h = coverage.new_hits()
+    h.tag_cases = { { id = "d", file = bad, status = "pass", tags = {} } }
+    eq(tags.apply(h, tmp), 0, "apply: the path " .. vim.inspect(bad) .. " is not read")
+  end
+  -- a junction (or symlink) that leads out of the root is not followed
+  local outside = vim.fs.normalize(vim.fn.tempname())
+  vim.fn.mkdir(outside, "p")
+  do
+    local f2 = assert(io.open(outside .. "/out_spec.lua", "wb"))
+    f2:write("-- @covers command:Open\n")
+    f2:close()
+  end
+  vim.fn.mkdir(tmp .. "/proj", "p")
+  local linked = vim.uv.fs_symlink(outside, tmp .. "/proj/link", { dir = true, junction = true })
+  if linked then
+    local viaLink = coverage.new_hits()
+    viaLink.tag_cases = { { id = "d", file = "link/out_spec.lua", status = "pass", tags = {} } }
+    eq(tags.apply(viaLink, tmp .. "/proj"), 0, "apply: a link out of the root claims nothing")
+    -- Gegenprobe: the same header, reached without a link
+    vim.fn.mkdir(tmp .. "/proj/real", "p")
+    write("proj/real/in_spec.lua", "-- @covers command:Open\n")
+    local direct = coverage.new_hits()
+    direct.tag_cases = { { id = "d", file = "real/in_spec.lua", status = "pass", tags = {} } }
+    eq(tags.apply(direct, tmp .. "/proj"), 1, "apply: a file below the root is read")
+  else
+    io.stderr:write("skip: no symbolic link or junction can be made here (surface_tags_spec)\n")
+  end
+  vim.fn.delete(outside, "rf")
+
+  -- a claim spelled another way than the entry (`<Leader>a` for `<leader>a`) counts as that entry everywhere
+  local variant_ir = {
+    cases = {
+      case("v_spec.lua::a", "v_spec.lua", "pass", { "binding:<Leader>a" }, {}),
+      case("v_spec.lua::b", "v_spec.lua", "pass", { "binding:<Leader>a" }, {}),
+    },
+  }
+  report = surface.report(tmp, {
+    config = services.config,
+    surface = fixed,
+    hits = { ir = { variant_ir } },
+  })
+  eq(report.coverage.hit, 1, "variant: the entry is a hit")
+  eq(report.coverage.extra, {}, "variant: and the claim is no stale tag")
+  local variant_entry
+  for _, e in ipairs(report.coverage.entries) do
+    if e.id == "binding:<leader>a" then
+      variant_entry = e
+    end
+  end
+  eq(variant_entry.tagged, true, "variant: the entry says it came from a tag")
+  local vm = coverage.matrix(report.coverage, report.hits)
+  eq(vm.rows[1].id, "binding:<leader>a", "variant: first row")
+  eq(vm.rows[1].cells, { ["v_spec.lua"] = 2 }, "variant: both cases are in the matrix")
+  eq(vm.rows[1].total, 2, "variant: and in the total")
+  _, text = surface.main(
+    { "--from", write("variant.json", vim.json.encode(variant_ir)), "--matrix" },
+    services
+  )
+  has(text, "hit (tag)", "variant: the status of the row says tag")
+
+  -- a hit under an alias lands in the matrix row of its entry
+  local aliased = vim.deepcopy(fixed)
+  aliased.entries[3].aliases = { "command:Op" }
+  local alias_hits = coverage.from_ir({
+    cases = { case("al::x", "al_spec.lua", "pass", {}, { "command:Op" }) },
+  })
+  local alias_cov = coverage.compute(aliased, alias_hits)
+  local alias_m = coverage.matrix(alias_cov, alias_hits)
+  local alias_row
+  for _, r in ipairs(alias_m.rows) do
+    if r.id == "command:Open" then
+      alias_row = r
+    end
+  end
+  eq(alias_row.cells, { ["al_spec.lua"] = 1 }, "alias: the matrix cell is the entry's")
+
+  -- the files of the matrix are sorted whatever the order of the cases
+  local unsorted_ir = {
+    cases = {
+      case("z::1", "z_spec.lua", "pass", {}, { "command:Open" }),
+      case("a::1", "a_spec.lua", "pass", {}, { "command:Fx status" }),
+      case("m::1", "m_spec.lua", "pass", { "autocmd:g:BufEnter" }, {}),
+    },
+  }
+  local unsorted_hits = coverage.from_ir(unsorted_ir)
+  tags.apply(unsorted_hits, tmp)
+  local unsorted_m = coverage.matrix(coverage.compute(fixed, unsorted_hits), unsorted_hits)
+  eq(
+    unsorted_m.files,
+    { "a_spec.lua", "m_spec.lua", "z_spec.lua" },
+    "matrix: the spec files are sorted, not in the order of the run"
+  )
+
+  -- JSON: a row nobody exercised has `cells` as an object
+  _, text = surface.main({ "--from", ir_path, "--matrix", "--json" }, services)
+  has(text, '"cells":{}', "matrix json: an empty cell set is an object")
+  lacks(text, '"cells":[]', "matrix json: never an array")
+
+  -- the not covered block in markdown
+  _, text = surface.main({ "--from", ir_path, "--markdown" }, services)
+  has(text, "* not covered: `command:Open` - no feature test", "markdown: the not covered line")
+  _, text =
+    surface.main({ "--from", write("run3.json", vim.json.encode(passed)), "--markdown" }, services)
+  lacks(text, "not covered", "markdown: nothing left, no block")
+
+  -- the note counts the entries the claims lifted, not stale ids and not the tracked ones
+  local tracked_claim_ir = {
+    cases = {
+      case(
+        "t::1",
+        "t_spec.lua",
+        "pass",
+        { "binding:<leader>a", "command:Gone" },
+        { "binding:<leader>a" }
+      ),
+    },
+  }
+  report = surface.report(tmp, {
+    config = services.config,
+    surface = fixed,
+    hits = { ir = { tracked_claim_ir } },
+  })
+  lacks(
+    table.concat(report.notes, "\n"),
+    "counted as exercised only by tags",
+    "note: a tracked entry and a stale id are no entry the claims lifted"
+  )
 
   vim.fn.delete(tmp, "rf")
 end

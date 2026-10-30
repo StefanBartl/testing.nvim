@@ -81,18 +81,27 @@ function M.merge(a, b)
 end
 
 ---@param v any
+---@param limit? integer Look at the first `limit` items only.
 ---@return string[]
-local function string_list(v)
-  local out = {}
+---@return boolean cut The list was longer than `limit`.
+local function string_list(v, limit)
+  local out, cut = {}, false
   if type(v) == "table" then
-    for _, s in ipairs(v) do
+    for i, s in ipairs(v) do
+      if limit and i > limit then
+        cut = true
+        break
+      end
       if type(s) == "string" then
         out[#out + 1] = s
       end
     end
   end
-  return out
+  return out, cut
 end
+
+---Largest number of `cases[].tags` of one case that are kept (a claim list is no place for a megabyte).
+M.MAX_CASE_TAGS = 256
 
 ---Hits of a Result-IR: every `cases[].surface.hit` (and `ir.surface.wrapped` when the run said so).
 ---@param ir table
@@ -103,12 +112,17 @@ function M.from_ir(ir)
     return hits
   end
   local saw = false
+  local cut_cases = 0
   for _, c in ipairs(type(ir.cases) == "table" and ir.cases or {}) do
     local s = type(c) == "table" and c.surface or nil
     if type(c) == "table" then
       hits.tag_cases = hits.tag_cases or {}
+      local case_tags, cut = string_list(c.tags, M.MAX_CASE_TAGS)
+      if cut then
+        cut_cases = cut_cases + 1
+      end
       hits.tag_cases[#hits.tag_cases + 1] =
-        { id = c.id, file = c.file, status = c.status, tags = string_list(c.tags) }
+        { id = c.id, file = c.file, status = c.status, tags = case_tags }
     end
     if type(s) == "table" then
       saw = true
@@ -119,6 +133,12 @@ function M.from_ir(ir)
       end
       hits.cases[#hits.cases + 1] = { id = c.id, file = c.file, hit = list }
     end
+  end
+  if cut_cases > 0 then
+    hits.notes[#hits.notes + 1] = ("%d case(s) list more than %d tags: the rest is ignored"):format(
+      cut_cases,
+      M.MAX_CASE_TAGS
+    )
   end
   if not saw then
     hits.not_tracked = true
@@ -320,6 +340,7 @@ end
 ---@field extra string[] hit ids of the asked kinds that are not in the surface
 ---@field by_kind table<string, { total: integer, hit: integer, ratio: number|nil, missing: string[], untracked: integer }>
 ---@field entries Testing.Surface.CoverageEntry[]
+---@field resolved table<string, string[]> hit id spelled differently from the entry it belongs to (another alias, `<Leader>` for `<leader>`) -> entry ids
 
 ---Coverage of a surface by a set of hits.
 ---@param surface Testing.Surface.Surface
@@ -366,7 +387,59 @@ function M.compute(surface, hits, opts)
   end
   local hit_lhs = binding_index(hits.hit)
   local wrapped_lhs = binding_index(hits.wrapped)
+  -- which entries a hit id belongs to: its own id or an alias, or (a binding) the same keys in a mode of the entry
+  local by_name, bindings_by_lhs = {}, {}
+  for _, e in ipairs(surface.entries) do
+    for _, name in ipairs(vim.list_extend({ e.id }, e.aliases or {})) do
+      by_name[name] = by_name[name] or {}
+      table.insert(by_name[name], e.id)
+    end
+    if e.kind == "binding" and e.detail and e.detail.lhs then
+      local k = ids.norm_lhs(e.detail.lhs)
+      bindings_by_lhs[k] = bindings_by_lhs[k] or {}
+      table.insert(bindings_by_lhs[k], e)
+    end
+  end
+  ---@param id string
+  ---@return string[]
+  local function entries_of(id)
+    local out, seen = {}, {}
+    local function put(eid)
+      if not seen[eid] then
+        seen[eid] = true
+        out[#out + 1] = eid
+      end
+    end
+    for _, eid in ipairs(by_name[id] or {}) do
+      put(eid)
+    end
+    local lhs, modes = ids.parse_binding(id)
+    if lhs then
+      for _, e in ipairs(bindings_by_lhs[ids.norm_lhs(lhs)] or {}) do
+        for _, m in ipairs(modes or {}) do
+          if vim.tbl_contains(e.detail.modes or { "n" }, m) then
+            put(e.id)
+            break
+          end
+        end
+      end
+    end
+    return out
+  end
+  local resolved, claimed = {}, {}
+  for id in pairs(hits.hit) do
+    local list = entries_of(id)
+    if #list > 0 and not (#list == 1 and list[1] == id) then
+      resolved[id] = list
+    end
+  end
+  for id in pairs(hits.tagged or {}) do
+    for _, eid in ipairs(entries_of(id)) do
+      claimed[eid] = true
+    end
+  end
   local cov = {
+    resolved = resolved,
     plugin = surface.plugin,
     kinds = vim.deepcopy(kinds),
     total = 0,
@@ -414,7 +487,7 @@ function M.compute(surface, hits, opts)
       desc = e.desc,
       status = status,
       count = hits.counts[e.id] or 0,
-      tagged = hits.tagged ~= nil and hits.tagged[e.id] == true or nil,
+      tagged = claimed[e.id] or nil,
     }
     local bk = cov.by_kind[e.kind]
     if bk then
@@ -529,6 +602,7 @@ end
 ---@param hits Testing.Surface.Hits
 ---@return Testing.Surface.Matrix
 function M.matrix(cov, hits)
+  local resolved = cov.resolved or {}
   local asked = {}
   for _, k in ipairs(cov.kinds) do
     asked[k] = true
@@ -536,7 +610,9 @@ function M.matrix(cov, hits)
   local rows, index = {}, {}
   for _, e in ipairs(cov.entries) do
     if asked[e.kind] then
-      local row = { id = e.id, kind = e.kind, status = e.status, cells = {}, total = 0 }
+      -- `vim.empty_dict()`: a row nobody exercised is `{}` in JSON, never `[]`
+      local row =
+        { id = e.id, kind = e.kind, status = e.status, cells = vim.empty_dict(), total = 0 }
       rows[#rows + 1] = row
       index[e.id] = row
     end
@@ -554,8 +630,11 @@ function M.matrix(cov, hits)
       per_case[key] = slot
       order[#order + 1] = slot
     end
+    -- a hit spelled differently from its entry (`<Leader>a`, an alias) counts for the entry
     for _, id in ipairs(list or {}) do
-      slot.set[id] = true
+      for _, eid in ipairs(resolved[id] or { id }) do
+        slot.set[eid] = true
+      end
     end
   end
   for _, c in ipairs(hits.cases) do
