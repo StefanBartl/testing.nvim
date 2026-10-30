@@ -493,12 +493,7 @@ function M.plan(report, opts)
   -- An existing TESTS/minimal_init.lua that is not the gate yet (four lookup places, fatal on a
   -- missing dependency) is replaced by it; what it set up besides the runtimepath is carried over.
   local old_minit = report.texts["TESTS/minimal_init.lua"]
-  local replace_minit = report.minimal_init.exists
-    and not (
-      old_minit
-      and old_minit:find("local MARKERS", 1, true)
-      and old_minit:find("env_name", 1, true)
-    )
+  local replace_minit = report.minimal_init.exists and not legacy_init.is_gate(old_minit)
   if not report.minimal_init.exists or replace_minit then
     local plugin_for_app = scaffold.sanitize_plugin(conf.plugin) or "plugin"
     local vars = scaffold.build_vars(plugin_for_app, dep_names, owner)
@@ -514,50 +509,10 @@ function M.plan(report, opts)
         carry_blocks, carry_from = legacy.blocks, legacy.rel
       end
       if carry_blocks then
-        local base = after
-        local section = legacy_init.section(carry_blocks, carry_from, carry_fate)
-        local tail = "return { root = root, deps = found }"
-        local at = after:find(tail, 1, true)
-        if section and at then
-          after = after:sub(1, at - 1) .. section .. "\n" .. after:sub(at)
-          for _, b in ipairs(carry_blocks) do
-            carried = carried + (b.kind == "carry" and 1 or 0)
-          end
-          -- a carried statement must neither shadow what the template defines nor break the file
-          local clash
-          for _, name in ipairs({
-            "this",
-            "root",
-            "DEPS",
-            "MARKERS",
-            "env_name",
-            "valid",
-            "found",
-            "failures",
-          }) do
-            if
-              ("\n" .. section):find("\nlocal%s+" .. name .. "[%s=,]")
-              or ("\n" .. section):find("\nlocal%s+function%s+" .. name .. "%f[^%w_]")
-            then
-              clash = name
-            end
-          end
-          if clash then
-            risk(
-              ("%s defines a local `%s` that the new TESTS/minimal_init.lua uses itself: rename it in the carried block"):format(
-                carry_from,
-                clash
-              )
-            )
-          end
-          if not loadstring(after) or section:lower():find("plenary", 1, true) then
-            after, carried = base, 0
-            risk(
-              ("what %s sets up could not be carried over safely (the result would not compile or still names the old runner): copy it into TESTS/minimal_init.lua by hand, the old text is in the diff"):format(
-                carry_from
-              )
-            )
-          end
+        local carry_risks
+        after, carried, carry_risks = legacy_init.carry(after, carry_blocks, carry_from, carry_fate)
+        for _, r in ipairs(carry_risks) do
+          risk(r)
         end
       end
       after = formatted(after, "TESTS/minimal_init.lua")

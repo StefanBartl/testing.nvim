@@ -239,6 +239,112 @@ local function run_migrate(rest, sv)
   return code
 end
 
+local INIT_USAGE =
+  "usage: testing init [<root>] [--force] [--hooks] [--plugin=<name>]\n       testing init [<root>] --update [--write [--force] | --check]"
+
+---`testing init [<root>] [--force] [--hooks] [--plugin=<name>]`: generate the test setup (`testing.scaffold`), and
+---`testing init [<root>] --update [--write [--force] | --check]`: bring `scripts/test.sh` and `TESTS/minimal_init.lua`
+---to the current templates (`testing.scaffold.update`; a preview with the diff unless `--write`; `--write` holds back a
+---file with a risk or uncommitted changes unless `--force`). Nothing of the project runs here, so the trust gate does
+---not apply (`--trust` is accepted and does nothing). Exit codes: 0 done (or up to date), 1 `--check` found code that
+---is out of date or `--write` held a file back, 2 bad usage, 3 nothing to update or a file could not be rendered or
+---written.
+---@param rest string[] The arguments after `init`.
+---@param sv Testing.Run.Services
+---@return integer exit_code
+local function run_init(rest, sv)
+  local o, root = { plugin = nil }, nil
+  for _, a in ipairs(rest) do
+    local key, value = a:match("^%-%-([%w-]+)=(.*)$")
+    if key == "plugin" then
+      o.plugin = value
+    elseif
+      a == "--force"
+      or a == "--hooks"
+      or a == "--update"
+      or a == "--write"
+      or a == "--check"
+    then
+      o[a:sub(3)] = true
+    elseif a == "-h" or a == "--help" then
+      sv.out(INIT_USAGE)
+      return 0
+    elseif a == "--trust" then
+      -- accepted like by every command; init runs nothing of the project, so there is nothing to trust
+      o.trust = true
+    elseif a:sub(1, 1) ~= "-" and root == nil then
+      root = a
+    else
+      sv.err(("testing: init: unknown argument %s\n%s"):format(a, INIT_USAGE))
+      return 2
+    end
+  end
+  root = vim.fs.normalize(vim.fn.fnamemodify(root or ".", ":p")):gsub("/+$", "")
+  local misuse = (o.write or o.check) and not o.update and "--write and --check go with --update"
+    or (o.write and o.check) and "--write and --check exclude each other"
+    or (o.update and (o.hooks or o.plugin)) and "--update takes neither --hooks nor --plugin"
+    or (o.update and o.force and not o.write)
+      and "--force goes with --update only together with --write"
+  if misuse then
+    sv.err(("testing: init: %s\n%s"):format(misuse, INIT_USAGE))
+    return 2
+  end
+  if vim.fn.isdirectory(root) ~= 1 then
+    sv.err("testing: init: not a directory: " .. root)
+    return 2
+  end
+  if o.update then
+    local update = require("testing.scaffold.update")
+    local plan = update.plan(root)
+    local written, errors, held = {}, {}, {}
+    if o.write then
+      written, errors, held = update.apply(plan, { force = o.force })
+    end
+    local shown = { diff = not o.write and not o.check, written = written, held = held }
+    for _, line in ipairs(update.lines(plan, shown)) do
+      sv.out(line)
+    end
+    for _, e in ipairs(errors) do
+      sv.err("testing: init: " .. e)
+    end
+    if #plan.errors > 0 or #errors > 0 then
+      return 3
+    end
+    if #held > 0 then
+      return 1
+    end
+    local stale, stale_code = 0, 0
+    for _, f in ipairs(plan.files) do
+      stale = stale + (f.changed and 1 or 0)
+      stale_code = stale_code + (f.code_changed and f.changed and 1 or 0)
+    end
+    -- a comment of the repository's own is not drift: a CI step must not stay red for a reason someone wrote down
+    if o.check and stale_code > 0 then
+      return 1
+    end
+    if not o.write and not o.check and stale > 0 then
+      sv.out(("%d file(s) out of date; `testing init --update --write` writes them"):format(stale))
+    end
+    return 0
+  end
+  local scaffold = require("testing.scaffold")
+  local result = scaffold.init(root, { force = o.force, hooks = o.hooks, plugin = o.plugin })
+  for _, kind in ipairs({ "created", "replaced", "skipped" }) do
+    if #result[kind] > 0 then
+      sv.out(("%s: %s"):format(kind, table.concat(result[kind], ", ")))
+    end
+  end
+  for _, e in ipairs(result.errors) do
+    sv.err("testing: init: " .. e)
+  end
+  if o.hooks and #result.created > 0 and #result.errors == 0 then
+    for _, line in ipairs(scaffold.hook_next_steps()) do
+      sv.out(line)
+    end
+  end
+  return #result.errors > 0 and 3 or 0
+end
+
 ---@param rel string
 ---@param p string A path the user typed (relative to the root, or absolute inside it).
 ---@param root string
@@ -475,6 +581,9 @@ local function execute(argv, sv)
   if argv[1] == "migrate" then
     return run_migrate(vim.list_slice(argv, 2), sv)
   end
+  if argv[1] == "init" then
+    return run_init(vim.list_slice(argv, 2), sv)
+  end
   if argv[1] == "conformance" or argv[1] == "surface" then
     return run_own(argv[1], vim.list_slice(argv, 2), sv)
   end
@@ -537,10 +646,6 @@ local function execute(argv, sv)
         args.command
       )
     )
-    return M.EXIT_USAGE
-  end
-  if args.command == "init" then
-    err("testing: `init` is not implemented yet")
     return M.EXIT_USAGE
   end
   if stamp_own and stamp_own.command == "stamp" then

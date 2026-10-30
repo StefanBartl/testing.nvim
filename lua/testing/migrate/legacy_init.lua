@@ -383,4 +383,68 @@ function M.section(blocks, from, fate)
   return table.concat(vim.list_extend(head, out), "\n") .. "\n"
 end
 
+---Names the gate `TESTS/minimal_init.lua` defines itself: a carried `local` of the same name would shadow it.
+local GATE_LOCALS = { "this", "root", "DEPS", "MARKERS", "env_name", "valid", "found", "failures" }
+
+---The last line of the gate `TESTS/minimal_init.lua` (template `minimal_init.lua.tpl`).
+M.GATE_TAIL = "return { root = root, deps = found }"
+
+---Is `text` a gate `TESTS/minimal_init.lua` already (the four-place lookup of the template)?
+---@param text string|nil
+---@return boolean
+function M.is_gate(text)
+  return text ~= nil
+    and text:find("local MARKERS", 1, true) ~= nil
+    and text:find("env_name", 1, true) ~= nil
+end
+
+---Put the carried blocks of an old init file into a freshly rendered gate `TESTS/minimal_init.lua`, as one commented
+---section before its last line (`M.GATE_TAIL`). Shared by `testing migrate` and `testing init --update`.
+---A carried `local` that shadows a name of the gate is a risk (still carried); a result that does not compile or
+---still names plenary is refused (the rendered text comes back unchanged, with a risk saying so).
+---@param after string The rendered gate.
+---@param blocks Testing.Migrate.InitBlock[] `M.split` of the old file (or the legacy init).
+---@param from string Project-relative path the blocks come from.
+---@param fate? string What happens to that file (see `M.section`).
+---@return string after
+---@return integer carried Blocks carried.
+---@return string[] risks
+function M.carry(after, blocks, from, fate)
+  local risks = {}
+  local section = M.section(blocks, from, fate)
+  local at = after:find(M.GATE_TAIL, 1, true)
+  if not (section and at) then
+    return after, 0, risks
+  end
+  local base = after
+  local out = after:sub(1, at - 1) .. section .. "\n" .. after:sub(at)
+  local carried = 0
+  for _, b in ipairs(blocks) do
+    carried = carried + (b.kind == "carry" and 1 or 0)
+  end
+  -- a carried statement must neither shadow what the template defines nor break the file
+  local clash
+  for _, name in ipairs(GATE_LOCALS) do
+    if
+      ("\n" .. section):find("\nlocal%s+" .. name .. "[%s=,]")
+      or ("\n" .. section):find("\nlocal%s+function%s+" .. name .. "%f[^%w_]")
+    then
+      clash = name
+    end
+  end
+  if clash then
+    risks[#risks + 1] = ("%s defines a local `%s` that the new TESTS/minimal_init.lua uses itself: rename it in the carried block"):format(
+      from,
+      clash
+    )
+  end
+  if not loadstring(out) or section:lower():find("plenary", 1, true) then
+    risks[#risks + 1] = ("what %s sets up could not be carried over safely (the result would not compile or still names the old runner): copy it into TESTS/minimal_init.lua by hand, the old text is in the diff"):format(
+      from
+    )
+    return base, 0, risks
+  end
+  return out, carried, risks
+end
+
 return M

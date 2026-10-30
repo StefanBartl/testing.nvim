@@ -154,7 +154,6 @@ Known limits, not hidden:
 - `effects` of a case are filled by the guards: with `process_net` off (warn is the default) no process or
   connection is seen, with `fs` off no write, and the case says so in its notes; an empty list is not a
   measurement then.
-- The `init` subcommand exists only as `:Testing init`, not on the command line.
 - The warm pool and `isolated = "soft"` restore and check what they can see (modules, globals,
   autocmds, mappings, commands, options, environment, the editor's LSP and diagnostic registries,
   running jobs and handles, the sandbox); the pool also puts back registers, abbreviations and `t:` /

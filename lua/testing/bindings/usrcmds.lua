@@ -655,9 +655,42 @@ function M.routes()
           bool = true,
           desc = "Generate the git and agent hook scripts instead of the setup",
         },
+        {
+          name = "update",
+          bool = true,
+          desc = "Bring scripts/test.sh and minimal_init to the templates (a preview)",
+        },
+        {
+          name = "write",
+          bool = true,
+          desc = "With --update: write the files that are out of date",
+        },
       },
       run = function(ctx)
         local root = ctx.args.root and abs(ctx.args.root) or abs(vim.fn.getcwd())
+        if ctx.flags.update then
+          if ctx.flags.hooks or ctx.flags.plugin then
+            notify().error("testing init: --update takes neither --hooks nor --plugin")
+            return
+          end
+          local update = require("testing.scaffold.update")
+          local plan = update.plan(root)
+          local written, errors, held = {}, {}, {}
+          if ctx.flags.write then
+            written, errors, held = update.apply(plan, { force = ctx.flags.force })
+          end
+          local lines =
+            update.lines(plan, { diff = not ctx.flags.write, written = written, held = held })
+          for _, e in ipairs(errors) do
+            lines[#lines + 1] = "error: " .. e
+          end
+          if #plan.errors + #errors > 0 then
+            notify().error(table.concat(lines, "\n"))
+          else
+            notify().info(table.concat(lines, "\n"))
+          end
+          return
+        end
         local result = require("testing.scaffold").init(
           root,
           { force = ctx.flags.force, plugin = ctx.flags.plugin, hooks = ctx.flags.hooks }

@@ -35,11 +35,45 @@ scripts/test.sh --file config      # only spec files whose name contains "config
 | `stamp` | A run that writes the green stamp after a **complete** green run (verdict `green`: nothing selected away, nothing skipped, nothing stopped): `testing stamp [<root>] [--out <file>] [--note] [options of a run]`. Options that select part of the suite are refused (exit `2`); a run that is not green writes no stamp and exits `1`. See [Stamp and verify](#stamp-and-verify). |
 | `verify` | Is the tree still the one a green stamp proved? Answers from the cache keys, runs no spec: `testing verify [<root>] [--stamp <file> \| --from-note] [--max-age 7d] [--allow-dirty] [--require-hmac] [--allow-unsigned] [--json]`. Exit `0` and the sentinel only for `verified` (every file proven). See [Stamp and verify](#stamp-and-verify). |
 | `trust` | Workspace trust: `testing trust list` (the stored roots with their state `ok`/`changed`/`missing`, the directories of `TESTING_TRUST_ROOTS`, and whether `CI` or `TESTING_TRUST` trusts everything), `testing trust check [<root>]` (exit `0` trusted, `1` not), `testing trust add [<root>]`, `testing trust revoke [<root>]` (exit `1` when it was not stored). `<root>` defaults to the current directory. Every other command refuses an untrusted root with exit `2` before any of its code runs; `--trust` (accepted by every command, before a `--`) stores the root and goes on. See [CONFIG.md](CONFIG.md#workspace-trust). |
-| `init` | Scaffold `.testing.lua`, `TESTS/minimal_init.lua`, `scripts/test.sh` and a CI job in a project. Today only as the editor command `:Testing init` ([BINDINGS.md](BINDINGS.md)); on the command line it is refused with exit code `2`. |
+| `init` | `testing init [<root>] [--force] [--hooks] [--plugin=<name>]`: scaffold `.testing.lua`, `TESTS/minimal_init.lua`, `scripts/test.sh`, a CI job and the lint configuration in a project (an existing file is kept; `--force` replaces it), or with `--hooks` the hook recipes ([HOOKS.md](HOOKS.md)). `testing init [<root>] --update [--write [--force] \| --check]`: bring `scripts/test.sh` and `TESTS/minimal_init.lua` to the current templates, see [Updating the setup](#updating-the-setup). Exit `0` done, `1` `--check` found code out of date or `--write` held a file back, `2` bad usage, `3` nothing to update (no setup) or a file could not be rendered or written. `init` runs nothing of the project, so the trust gate does not apply (`--trust` is accepted). Also the editor command `:Testing init` ([BINDINGS.md](BINDINGS.md)). |
 
 The subcommand is the first argument, when it is exactly one of those words. Any other first
 argument is the project root; a directory that is itself called `list` is spelled `./list` or
 `--root list`.
+
+### Updating the setup
+
+`testing init` never overwrites a file, so a fix in the templates (an exit code, the throwaway state directory, the
+`ci` verb) does not reach a repository set up before it. `testing init --update` renders `scripts/test.sh` and
+`TESTS/minimal_init.lua` again and shows, per file, whether it is out of date, what it keeps of the old file and the
+diff; `--write` writes the files that changed, `--check` only reports (exit `1` when the CODE of one is out of date,
+for a CI step: a comment of the repository's own is no drift). `--write` holds a file back, with its diff, when its
+plan has a risk (a block that could not be carried over, a dependency it cannot read) or when it has uncommitted
+changes (they would be gone for good); `--force` writes it anyway. `.testing.lua`, the CI job and the lint
+configuration are never touched.
+
+Kept from the existing files: the dependencies (the `DEPS=(...)` line of `scripts/test.sh`, else `deps` read from the
+TEXT of `.testing.lua`, which is never executed here), the plugin name (`plugin` of `.testing.lua`, else detected),
+the `--sentinel '<NAME>'` of the run line, a `scripts/test.sh` that does not export `NVIM_APPNAME` on purpose (with
+its own comment), and what a `TESTS/minimal_init.lua` sets up after the runtimepath. A `TESTS/minimal_init.lua` that
+is not the gate yet (no lookup in the four places) is replaced by it, carrying over what it set up besides the
+runtimepath, as `testing migrate` does. The new `TESTS/minimal_init.lua` is formatted with the repository's
+`stylua.toml`.
+
+Anything else of the repository's own is not kept: the code lines of the old file that the new one does not have
+are listed under "only in the old file" (only the exact lines an earlier template version wrote are counted
+instead), and its comment lines under "comments only in the old file" (a reason written down for a deliberate
+difference goes with them). Keep them by hand after `--write`, or leave that repository alone.
+
+```
+testing init --update E:/repos/docmap.nvim
+scripts/test.sh          out of date
+  kept: dependencies from scripts/test.sh: lib.nvim, runtime-analysis.nvim, ui.nvim
+  kept: the run line's --sentinel 'DOCMAP_TESTS_OK'
+  kept: no NVIM_APPNAME export (the file did not set one), with its own comment
+  kept: 4 line(s) of an older template version replaced
+TESTS/minimal_init.lua   up to date
+```
 
 ## Options
 
