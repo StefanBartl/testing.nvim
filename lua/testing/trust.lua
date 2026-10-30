@@ -74,7 +74,7 @@ local function is_win(ctx)
   if ctx and ctx.is_win ~= nil then
     return ctx.is_win
   end
-  return vim.fn.has("win32") == 1
+  return require("testing.platform").is_windows()
 end
 
 ---Default path of the store.
@@ -273,7 +273,7 @@ local function write(path, entries)
   if not ok then
     return false, ("cannot write %s: %s"):format(path, tostring(werr))
   end
-  if vim.fn.has("win32") ~= 1 then
+  if not require("testing.platform").is_windows() then
     pcall(uv.fs_chmod, path, 384)
   end
   return true, nil
