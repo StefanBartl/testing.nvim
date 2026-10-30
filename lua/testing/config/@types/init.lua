@@ -163,7 +163,8 @@
 ---@field config Testing.ProjectConfig Always usable: defaults plus the valid keys.
 ---@field problems string[] One warning per invalid or unknown key, each naming the key.
 ---@field path? string File that was executed; nil when the project has none.
----@field error? string Set when the file exists but cannot be used (syntax error, raise, not a table, outside the root): the caller exits 2.
+---@field error? string Set when the file exists but cannot be used (syntax error, raise, not a table, outside the root), or the root is not trusted: the caller exits 2.
+---@field untrusted? boolean The workspace trust gate refused the root (`testing.trust`); nothing of it was executed.
 
 ---@class Testing.ConfigOptions
 --- What the user passes to `setup()`: every key of `Testing.Config`, each optional.

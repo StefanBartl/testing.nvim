@@ -89,6 +89,9 @@ if [ -n "${TESTING_CACHE_HOME:-}" ]; then
   unset TESTING_CACHE_HOME
 fi
 export XDG_CACHE_HOME="$scratch/cache"
+# Workspace trust (docs/CONFIG.md): this script IS code of this repository, so running it is the trust decision; and
+# the specs run the runner on fixture projects they build in the temp directory. Every root is trusted below.
+export TESTING_TRUST=1
 
 # No `exec`: the trap must remove the scratch directory afterwards.
 if [ "${1:-}" = "conformance" ]; then

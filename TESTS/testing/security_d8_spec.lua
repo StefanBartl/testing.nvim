@@ -483,4 +483,72 @@ return function(H)
   package.loaded["testing.rpc"] = saved_rpc
   ok(sok, "the conformance session ran up to the spawn")
   eq(seen and seen.isolate_home, true, "conformance: isolate_home reaches the child editor")
+
+  -- ------------------------------------------------------------------ foreign repositories (workspace trust)
+  -- A repository nobody trusted runs NO code of its own: not its .testing.lua, not its minimal init, not a spec,
+  -- through any command of the entry (run, list, ci, conformance, surface). The gate is armed the way
+  -- `scripts/testing.lua` arms it (`services.trust`), with an empty environment and a store of its own.
+  local trust = require("testing.trust")
+  local foreign = vim.fs.normalize(vim.fn.tempname()) .. "-foreign"
+  local marker = foreign .. "-ran"
+  local function put(path, text)
+    vim.fn.mkdir(vim.fs.dirname(path), "p")
+    local f = assert(io.open(path, "wb"))
+    f:write(text)
+    f:close()
+  end
+  local touch = ("local f = io.open(%q, 'ab'); if f then f:write('%%s\\n'); f:close() end\n"):format(
+    marker
+  )
+  put(
+    foreign .. "/.testing.lua",
+    touch:format("config") .. "return { minit = 'TESTS/minimal_init.lua' }\n"
+  )
+  put(foreign .. "/TESTS/minimal_init.lua", touch:format("minit"))
+  put(foreign .. "/TESTS/a_spec.lua", touch:format("spec") .. "return function() end\n")
+  local cli = require("testing.cli")
+  local said = {}
+  local function sink(s)
+    said[#said + 1] = s
+  end
+  local sv = {
+    out = sink,
+    err = sink,
+    trust = { env = {}, store = foreign .. "-state/trust.json" },
+  }
+  for _, argv in ipairs({
+    { foreign },
+    { "list", foreign },
+    { "doctor", foreign },
+    { "ci", "--root=" .. foreign },
+    { "ci", "list", "--root=" .. foreign },
+    { "conformance", foreign },
+    { "surface", foreign },
+  }) do
+    said = {}
+    local code = cli.main(argv, sv)
+    local label = table.concat(argv, " "):gsub(vim.pesc(foreign), "<foreign>")
+    eq(code, 2, "untrusted: `" .. label .. "` is exit 2")
+    ok(
+      table.concat(said, "\n"):find(trust.REFUSED, 1, true),
+      "untrusted: `" .. label .. "` names the refusal"
+    )
+    eq(
+      vim.uv.fs_stat(marker),
+      nil,
+      "untrusted: `" .. label .. "` executed no code of the repository"
+    )
+  end
+  eq(trust.armed(), nil, "the gate is disarmed after the entry's call")
+  -- the control: the same fixture DOES execute its .testing.lua once it is trusted, so the marker above was able
+  -- to appear (a fixture that never runs would make the assertions above pass for nothing)
+  local code = cli.main(
+    { "list", foreign },
+    vim.tbl_extend("force", sv, { trust = { env = { TESTING_TRUST = "1" } } })
+  )
+  ok(code == 0 or code == 1, "trusted: list runs (" .. tostring(code) .. ")")
+  ok(vim.uv.fs_stat(marker), "trusted: the .testing.lua of the fixture ran")
+  vim.fn.delete(foreign, "rf")
+  vim.fn.delete(foreign .. "-state", "rf")
+  os.remove(marker)
 end

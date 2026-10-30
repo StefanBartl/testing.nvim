@@ -799,6 +799,15 @@ function M.load(root, opts)
     { config = vim.deepcopy(require("testing.config.DEFAULTS").project), problems = {} }
   loaded.config.plugin = derive_plugin(root)
 
+  -- workspace trust (`testing.trust`): armed by the command-line entry only. Before the file is even looked at,
+  -- and also when there is none: what follows a load (minimal init, specs) is the project's code as well.
+  local refused = require("testing.trust").check(root)
+  if refused then
+    loaded.error = refused
+    loaded.untrusted = true
+    return loaded
+  end
+
   local path
   if opts.file then
     path = vim.fs.normalize(vim.fn.fnamemodify(opts.file, ":p"))

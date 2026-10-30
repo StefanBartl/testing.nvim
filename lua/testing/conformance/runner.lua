@@ -466,6 +466,16 @@ function M.run(root, opts)
     report.summary = select(1, summarize({}, {}))
     return report
   end
+  -- workspace trust (`testing.trust`, armed by the command-line entry): the checks load the plugin and its
+  -- configuration, so an untrusted root stops here, before anything of it runs (exit 2)
+  local refused = require("testing.trust").check(root)
+  if refused then
+    report.problems[1] = refused
+    report.config_error = refused
+    report.verdict = "fail"
+    report.summary = select(1, summarize({}, {}))
+    return report
+  end
 
   local loaded = settings_mod.load(root, ids)
   if loaded.error then

@@ -57,7 +57,15 @@ for _, name in ipairs({
 }) do
   env[name] = os.getenv(name)
 end
-local ok_run, code = pcall(cli.main, arg or {}, { env = env, script = this })
+-- Workspace trust (docs/CONFIG.md, "Workspace trust"): this entry arms the gate, with the environment that decides
+-- it read here as well. `CI` set trusts every root (the fleet's workflows run unchanged); `TESTING_TRUST=1` does the
+-- same for a launcher that is the project's own code; `TESTING_TRUST_ROOTS` lists the user's own directories.
+local trust_env = {}
+for _, name in ipairs({ "CI", "TESTING_TRUST", "TESTING_TRUST_ROOTS" }) do
+  trust_env[name] = os.getenv(name)
+end
+local ok_run, code =
+  pcall(cli.main, arg or {}, { env = env, script = this, trust = { env = trust_env } })
 if not ok_run then
   die("testing: internal error: " .. tostring(code))
 end

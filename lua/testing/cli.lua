@@ -61,6 +61,7 @@ M.OWN_ARGS = { migrate = true, conformance = true, surface = true }
 ---@field state_dir? string Replaces `stdpath('state')` for the history.
 ---@field color? boolean Forces the colour decision of the terminal reporter.
 ---@field env? table<string, string|nil> Environment that chooses the reporter (`TESTING_REPORTER`, `TESTING_AGENT`, `AI_AGENT`, `CLAUDECODE`); only `scripts/testing.lua` sets it.
+---@field trust? Testing.Trust.Ctx Arms the workspace trust gate for this call (`testing.trust`); only `scripts/testing.lua` sets it, so a Lua caller of `main` is not gated. `--trust` in the arguments sets its `save`.
 ---@field script? string Path of the entry script (the `rerun:` line of the agent reporter).
 ---@field budget? table Replaces single seams of `testing budget` (`testing.budget.main`): `run`, `machine`.
 ---@field cache_dir? string Replaces `stdpath('cache')` for the result cache (specs).
@@ -481,6 +482,10 @@ local function execute(argv, sv)
   if argv[1] == "ci" then
     return require("testing.ci").main(vim.list_slice(argv, 2), sv)
   end
+  -- `testing trust list|check|add|revoke [<root>]`: the workspace trust store (docs/CLI.md)
+  if argv[1] == "trust" then
+    return require("testing.trust").main(vim.list_slice(argv, 2), { out = out, err = err })
+  end
   -- `testing explain`: its own flags (--all, --json, --parts) are taken out, the rest is a run's arguments
   local explain_own
   if argv[1] == "explain" then
@@ -713,6 +718,30 @@ function M.main(argv, services)
     end,
   }, services or {})
 
+  -- `--trust` is a flag of every command (before a `--`, after which the arguments belong to someone else): it is
+  -- taken out here, so that the commands with their own parsers (`ci`, `conformance`, `surface`) never see it
+  local cleaned, save = {}, false
+  local passthrough = false
+  for _, a in ipairs(clean_argv(argv or {})) do
+    if a == "--" then
+      passthrough = true
+    end
+    if a == "--trust" and not passthrough then
+      save = true
+    else
+      cleaned[#cleaned + 1] = a
+    end
+  end
+  -- the workspace trust gate (`testing.trust`) is armed for this call when the entry asked for it
+  local trust = require("testing.trust")
+  local trust_before
+  if sv.trust then
+    trust_before = trust.arm(vim.tbl_extend("force", {}, sv.trust, {
+      save = save or sv.trust.save or nil,
+      note = sv.trust.note or sv.err,
+    }))
+  end
+
   -- a run adds the project, its dependencies and `--rtp` to the runtimepath; an editor that hosts the
   -- run (a spec of this project calls `main`) is left as it was found
   local rtp_before = vim.o.rtp
@@ -721,7 +750,10 @@ function M.main(argv, services)
       return debug.traceback(tostring(e), 2)
     end
     return tostring(e)
-  end, clean_argv(argv or {}), sv)
+  end, cleaned, sv)
+  if sv.trust then
+    trust.arm(trust_before)
+  end
   if vim.o.rtp ~= rtp_before then
     pcall(function()
       vim.o.rtp = rtp_before

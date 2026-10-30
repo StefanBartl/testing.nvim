@@ -21,6 +21,9 @@ return {
   minit = "TESTS/minimal_init.lua",
   -- lib.nvim is resolved by the runner itself (it cannot run without it), so `deps` stays empty.
   deps = {},
+  -- Specs that start the runner on fixture projects of their own (`scripts/testing.lua <tmp>`) inherit the trust
+  -- decision of `scripts/test.sh` (`TESTING_TRUST=1`); on CI the built-in `CI` does the same (docs/CONFIG.md).
+  env_allow = { "TESTING_TRUST" },
   -- The cache folder is named after this key, not after the absolute path of the checkout, so a cache restored
   -- on a CI runner with another checkout path is found (docs/CI-CACHE.md). It is a name only: every entry still
   -- carries its full spec key.

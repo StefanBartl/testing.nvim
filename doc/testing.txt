@@ -204,6 +204,16 @@ the green stamp; `verify` answers from the cache keys, without running a spec,
 whether the tree is still the stamped one (see "Stamp and verify" below).
 `init` is available as |:Testing| init only.
 
+Workspace trust ~                                             *testing-trust*
+The runner executes a project's `.testing.lua`, minimal init and specs, so it
+runs only a trusted root; any other is exit 2 before anything of it runs. A
+root is trusted when `CI` is set (not `false`/`0`), `TESTING_TRUST=1`, the
+root lies below a directory of `TESTING_TRUST_ROOTS` (a list like PATH), or
+the store (`stdpath("state")/testing/trust.json`) has it with the hash of its
+current `.testing.lua` (a changed file asks again). `--trust` on any command
+stores the root and goes on; `testing trust list|check|add|revoke [{root}]`
+manages the store. Details: docs/CONFIG.md, "Workspace trust".
+
 Selection ~
   --file {text}      Only spec files whose file name contains {text}
                      (repeatable). `--only` is an alias.

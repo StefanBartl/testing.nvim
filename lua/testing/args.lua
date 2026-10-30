@@ -936,8 +936,10 @@ function M.usage()
     "  verify   is the tree still the one a green stamp proved? (no spec runs; exit 0 + sentinel only when every file is proven): verify <root> [--stamp <file>|--from-note] [--max-age 7d] [--allow-dirty] [--require-hmac] [--allow-unsigned] [--json]",
     "  init     scaffold .testing.lua, TESTS/minimal_init.lua, scripts/test.sh, a CI job",
     "  migrate  plan (or write) the move of a repository from plenary / busted / its own runner to testing.nvim",
+    "  trust    workspace trust: trust list | check [<root>] | add [<root>] | revoke [<root>] (docs/CONFIG.md)",
     "",
     "  <root>   project root; further positionals are paths below it",
+    "  --trust                  (every command) trust <root> and store it, then go on: an untrusted root is exit 2",
   }
   for _, o in ipairs(OPTIONS) do
     local spelled = {}

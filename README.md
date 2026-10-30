@@ -114,7 +114,8 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K15 of the gates on a
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
   keymaps, commands and autocmds and, from a run with `surface = { track = true }`, how many of them the
-  specs exercised. Both report first; neither is a gate by default.
+  specs exercised; `:Testing surface --matrix` shows entries x spec files in a view with filters, jumps to the
+  source or the spec and a tab separated export. Both report first; neither is a gate by default.
 - **The pipeline** ([docs/CI.md](docs/CI.md)): `testing ci` runs a repository's whole check pipeline locally
   (stylua, luacheck, the suite, conformance, steps of its own) from the `ci` section of `.testing.lua`: profiles,
   presets, argv steps with a deadline that kills the process tree, a missing tool is exit `3` before anything
@@ -314,6 +315,12 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua ci                   # the repository's pipeline from .testing.lua (docs/CI.md)
 ... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
 ```
+
+The runner executes the project's `.testing.lua`, minimal init and specs, so it runs only a **trusted**
+root: on CI (`CI=true`) every root is, elsewhere a root below `TESTING_TRUST_ROOTS` (your own directories,
+e.g. `$REPOS_DIR`) or one stored with `testing trust add <root>` / `--trust`; any other root is exit `2`
+before anything of it runs, and a changed `.testing.lua` asks again
+([docs/CONFIG.md](docs/CONFIG.md#workspace-trust)).
 
 All options: [docs/CLI.md](docs/CLI.md). A run looks like this (the terminal shows absolute
 paths so that they are clickable; the JSON and the reports use project-relative ones):

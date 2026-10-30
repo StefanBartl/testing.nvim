@@ -130,6 +130,44 @@ earlier CI run) that lacks what the runner needs (`fs.write.atomic`, lib.nvim >=
 blindly: the runner exits `3` and names the checkout, what is missing, the commit that has it and the four
 places. `testing doctor` prints the resolution of everything.
 
+## Workspace trust
+
+`.testing.lua`, `TESTS/minimal_init.lua` and the specs are Lua that runs with your rights. The command-line
+runner (`scripts/testing.lua`, which `:Testing` starts in a child as well) therefore runs a project only when
+its root is **trusted**; otherwise every command (`run`, `fast`, `list`, `doctor`, `budget`, `explain`, `stamp`,
+`verify`, `ci` and its subcommands, `conformance`, `surface`) stops with exit code `2` before anything of the
+project is loaded, and names the ways to trust it. A root is trusted when, in this order:
+
+| Rule | When |
+| --- | --- |
+| `ci` | `CI` is set and not empty, `false` or `0`. A CI job runs in a throwaway machine; the fleet's workflows (`bash scripts/test.sh` on GitHub Actions, where `CI=true`) run unchanged. |
+| `env` | `TESTING_TRUST=1`. For a launcher that **is** the project's own code: running it already was the decision. testing.nvim's own `scripts/test.sh` sets it (its specs also start the runner on fixture projects in the temp directory, and `env_allow = { "TESTING_TRUST" }` passes it to them). |
+| `root` | The root lies below a directory of `TESTING_TRUST_ROOTS` (a list like `PATH`: `;` on Windows, `:` elsewhere; relative entries are ignored with a note, they would depend on the working directory). For example `TESTING_TRUST_ROOTS=$REPOS_DIR` trusts all your own checkouts. |
+| `store` | The trust store has the root, and the hash it stored is the sha256 of the **current** `<root>/.testing.lua` (`none` when there is none). A changed, removed or newly created `.testing.lua` is a new question. |
+
+The store is `stdpath("state")/testing/trust.json`, filled by `testing trust add [<root>]` or by `--trust`
+on any command (store, then go on), emptied entry by entry by `testing trust revoke [<root>]`; `testing trust
+list` shows it ([CLI.md](CLI.md)). Roots are compared after resolving symlinks (and case-insensitively on
+Windows), so a link to a trusted checkout is the same checkout. The store holds only the resolved root, the
+hash and the time it was added; on POSIX it is written with mode `0600`.
+
+Reading it back treats it as untrusted data: a file that is not a regular file, larger than 1 MiB, not JSON or
+not `{ "v": 1, "entries": [...] }` counts as **empty** (no trust, a note, never an error that lets a run
+through), and each entry is checked field by field (absolute root of at most 1024 bytes without control
+characters, a lower-case sha256 or `none`, a non-negative integer time); an invalid entry is dropped and
+counted, at most 1000 are kept.
+
+Only the entry arms the gate. A Lua caller of the library (a spec calling `testing.cli.main`, a plugin calling
+`testing.config.project.load`) chose the code it runs and is not gated. `scripts/test.sh` of other projects
+(the scaffold) does not set `TESTING_TRUST`: there the gate applies on your machine unless the root is
+below `TESTING_TRUST_ROOTS` (the script redirects `stdpath("state")`, so a store entry is not seen from it),
+and on CI the `ci` rule applies.
+
+Limits, honestly: the hash covers `.testing.lua`, not the specs or the minimal init (a changed spec of a
+trusted project runs); `--config <file>` is gated by the root, its own content is not hashed. The gate stops
+**accidents** (testing a cloned foreign repository by mistake), not an attacker who can write to your state
+directory or your environment; foreign code belongs in a container or a VM.
+
 ## Plugin options (`setup()`)
 
 ```lua
@@ -137,6 +175,7 @@ require("testing").setup({
   notify_prefix = "[testing]",
   keymaps = {},
   hover = { max_width = 80, max_height = 20, max_diff_lines = 12 },
+  surface_view = { keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } },
 })
 ```
 
@@ -145,6 +184,7 @@ require("testing").setup({
 | `notify_prefix` | non-empty string | `"[testing]"` | Prefix of every message the plugin shows. |
 | `keymaps` | `table<string, string\|string[]\|false>` or `false` | `{}` | Moves or drops named keymap actions; `false` binds no key at all. See [BINDINGS.md](BINDINGS.md). The one action, `hover`, has no default key. |
 | `hover` | `{ max_width?, max_height?, max_diff_lines? }` | `{ 80, 20, 12 }` | Size of the hover over a test (`:Testing hover`, hover.nvim): longest line in display columns, most lines, lines of a failure diff. Positive integers. |
+| `surface_view` | `{ keys?: { jump?, status?, kind?, export? } }`, each an lhs or `false` | `{ keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } }` | Keys of the matrix view of `:Testing surface --matrix`, buffer-local to that view; `false` leaves one out. The winbar legend and the `?` cheatsheet are built from the same table ([SURFACE.md](SURFACE.md#the-matrix-view-testing-surface---matrix)). |
 
 A key with the wrong type, and any unknown key, is dropped and reported with a warning; the
 default stays in place.
