@@ -114,6 +114,8 @@ vim.system(cmd, { stdout = function(_, data) if data then reader:feed(data) end 
   * `cases[].flaky = true` with `retries = k`: the case failed and then passed on retry `k` (`--retry-failed`). Its `status` is
     `fail` (the run is red) unless `--allow-flaky` replaced it by the passing result (`status = pass`); either way it is never
     cached. A case that failed on every retry has `retries = n` and no `flaky`.
+  * `cases[].na` (a string, the printed `n/a  <reason>` line): the case (`status = skip`) or its rest (`status = pass`)
+    does not apply here. Counted in `run.verdict.cases.na`, never a reason for `green-partial`, red under `--strict`.
   * `cases[].cached = true`: the case was **not executed** in this run, its result comes from the result cache
     ([CACHE.md](CACHE.md)); `status` is `pass`, a note says `cached from <run id>`, and no guard or ledger saw it.
     `run.cache = { mode, files_cached, cases_cached, files_ran, stored }` summarizes it. With `--cache-audit` (a
@@ -143,7 +145,9 @@ The kind never changes an exit code (`0` green and partial, `1` red, `2` and `3`
 exactly the run that prints the sentinel. One run exits `1` without a failed case: `testing stamp` for a run that was
 not given its stamp. The stdout reporters (`term`, `agent`) show it as `red` with the reason `stamp not written` (and
 `no case failed`), so the kind they print is the exit code the process has; the report files keep the verdict of the cases. The counts are in spec files: `n from cache, m ran, k skipped on
-purpose` (`k` = files that were not selected). A skipped case is never green: it makes the run `green-partial`.
+purpose` (`k` = files that were not selected). A skipped case is never green: it makes the run `green-partial`. A case
+that does not apply here (the n/a convention: a printed `n/a  <reason>` line, `case.na` in the IR) is the exception: it
+is counted as `, j case(s) n/a here` and listed with its reason, but the run stays `green` (red under `--strict`).
 
 ```
 verdict: green (380 from cache, 32 ran, 0 skipped on purpose; 412 spec file(s))
@@ -153,7 +157,8 @@ last green run: 2026-10-07 12:00:03Z at 3f2a1b9; 2 file(s) changed since: lua/a.
 ```
 
 `run.verdict = { kind, exit_code, files = { total, selected, cached, ran, skipped, unrun }, cases = { total,
-skipped }, reasons?, last_green?, changed_since? }`. For a `red` run the driver adds `last_green = { ts, sha? }`
+skipped, na? }, reasons?, last_green?, changed_since? }` (`cases.skipped` leaves out the n/a cases, `cases.na` counts
+them and is absent at 0). For a `red` run the driver adds `last_green = { ts, sha? }`
 (the last run that was `green`, remembered in `last_green.json` beside the history) and `changed_since = { count,
 files }` (git: what differs from that commit, working tree and untracked files included, minus files that were
 already modified at the green run and have the same content now; at most 12 names, the count is complete). Both are

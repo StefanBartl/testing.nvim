@@ -169,6 +169,8 @@ return function(H)
     { "one", "two\t3\tnil", "multi", "line", "three" },
     "the outer one saw everything"
   )
+  eq(inner.own, { "two\t3\tnil", "multi", "line" }, "the inner capture's own lines are all it saw")
+  eq(outer.own, { "one", "three" }, "the outer one's own lines leave out what the inner one saw")
   eq(seen, { "one", "two 3", "multi\nline", "three" }, "the text still reached the original print")
   ok(_G.print ~= real_print, "stop() restored the previous print (here: the test's own)")
   print("after")

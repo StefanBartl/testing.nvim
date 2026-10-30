@@ -1629,6 +1629,11 @@ local function unstorable(cases, meta)
     if c.status ~= "pass" then
       return "a case is " .. tostring(c.status)
     end
+    if c.na ~= nil then
+      -- it says what this machine lacks (a platform, a tool): a replay would keep saying it after the tool is
+      -- installed, and `--strict` (part of the key) would replay as green what was red
+      return "a case does not apply here (n/a)"
+    end
     if (c.retries or 0) > 0 then
       return "a case was retried"
     end

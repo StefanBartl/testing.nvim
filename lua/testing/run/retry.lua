@@ -202,11 +202,12 @@ function M.apply(report, o)
     for _ in pairs(files) do
       nfiles = nfiles + 1
     end
-    require("testing.core.result").finalize(res)
+    local result = require("testing.core.result")
+    result.finalize(res)
     report.failed = bad
     report.failed_files = nfiles
-    report.skipped = res.summary.skip
-    report.exit_code = (bad > 0 or (o.strict and report.skipped > 0)) and 1 or 0
+    report.skipped, report.na = result.skip_counts(res)
+    report.exit_code = (bad > 0 or (o.strict and report.skipped + report.na > 0)) and 1 or 0
   end
   return info
 end

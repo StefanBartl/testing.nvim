@@ -1617,7 +1617,7 @@ function M.run(opts)
   res.run.duration_ms = math.floor(wall_ms * 1000 + 0.5) / 1000
   result.finalize(res)
 
-  local skipped = res.summary.skip
+  local skipped, na = result.skip_counts(res)
   return {
     result = res,
     failed = bad_total,
@@ -1628,9 +1628,10 @@ function M.run(opts)
     files_unrun_budget = files_unrun_budget,
     files_unselected = files_unselected,
     skipped = skipped,
+    na = na,
     stopped = state.stopped,
     wall_ms = wall_ms,
-    exit_code = (bad_total > 0 or (opts.strict and skipped > 0)) and 1 or 0,
+    exit_code = (bad_total > 0 or (opts.strict and skipped + na > 0)) and 1 or 0,
     notes = notes,
     unattached = unattached,
     pool = pool_stats,

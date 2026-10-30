@@ -156,7 +156,7 @@ end
 
 ---A case was recorded. A bad case in a phase 1 file is a red interim finding at once. A passing case says nothing
 ---yet: the cases of a file arrive in batches, so only `file_done` knows that no bad case is still to come.
----@param case { file: string, status: string }
+---@param case { file: string, status: string, na?: string }
 function Tracker:case(case)
   if self._fired or not self._set[case.file] then
     return
@@ -168,7 +168,8 @@ function Tracker:case(case)
     self:_fire()
     return
   end
-  if case.status == "skip" then
+  -- an n/a case (`case.na`) does not keep a run from green
+  if case.status == "skip" and type(case.na) ~= "string" then
     self._skip = self._skip + 1
   end
 end

@@ -427,6 +427,7 @@ local function run_verdict(o)
     files_deliberate = o.deliberate or 0,
     cases_total = #o.report.result.cases,
     cases_skipped = report.skipped or 0,
+    cases_na = report.na or 0,
     selection = #pieces > 0 and table.concat(pieces, ", ") or nil,
     case_selection = o.case_selection,
     flaky_cases = o.flaky_cases,

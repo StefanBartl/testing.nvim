@@ -13,7 +13,15 @@
 ---      and a skip line qualifies: a spec that asserts before it skips keeps its verdict, and a case
 ---      that fails or raises is never turned into a skip.
 ---
----   2. The `assertions` policy of `.testing.lua`:
+---   2. The N/A convention. A check that only means something on one platform or with an optional
+---      tool (Windows, PowerShell, tesseract) prints a line starting with `n/a` and returns:
+---      `print("n/a  needs Windows")`. The case carries the reason in `case.na`. Without any
+---      assertion it is a `skip`, with assertions before the line it stays `pass`; either way it is
+---      counted as "not applicable here", does NOT keep the run from being green and is red under
+---      `--strict` (a job that must run those checks says so). A failing or raising case keeps its
+---      verdict. This is the honest form of `if not windows then return end` (rule NEW-43).
+---
+---   3. The `assertions` policy of `.testing.lua`:
 ---        "error"  (default) a case without assertions is a failure (P4);
 ---        "warn"   a case without assertions is a PASS that carries a warning: the case keeps one
 ---                 passing synthetic assertion (kind `no_assertions`, so the IR stays valid) and the
@@ -68,9 +76,34 @@ function M.skip_reason(lines)
   return nil
 end
 
+---Is `line` an n/a notice? It starts (after blanks and an optional `[`) with `n/a`, in any letter case,
+---followed by the end of the line, a blank or a `:` (`n/ab` is not one).
+---@param line any
+---@return boolean
+function M.is_na_line(line)
+  if type(line) ~= "string" then
+    return false
+  end
+  local rest = trim(line):lower():match("^%[?n/a(.*)$")
+  return rest ~= nil and (rest == "" or rest:match("^[%s:%]]") ~= nil)
+end
+
+---The first n/a line of `lines`, trimmed and shortened, or nil.
+---@param lines? string[]
+---@return string|nil reason
+function M.na_reason(lines)
+  for _, line in ipairs(lines or {}) do
+    if M.is_na_line(line) then
+      return trim(line):sub(1, M.MAX_LINE_BYTES)
+    end
+  end
+  return nil
+end
+
 ---@class Testing.Policy.Opts
 ---@field assertions? "error"|"warn" Policy of a case without assertions (default `error`).
----@field printed? string[] Lines the case printed (see `M.capture`); only the skip convention reads them.
+---@field printed? string[] Lines the case printed (see `M.capture`); only the skip and n/a conventions read them.
+---@field own? string[] Of `printed`, the case's own lines (not those of cases it ran itself); the n/a convention reads only these when given.
 
 ---Does the case consist of nothing but the synthetic `no_assertions` failure of the kernel?
 ---@param case Testing.Result.Case
@@ -87,11 +120,27 @@ end
 ---@param case Testing.Result.Case
 ---@param opts? Testing.Policy.Opts
 ---@return Testing.Result.Case case The same table.
----@return "skip"|"warn"|nil changed What was done; nil when the case was left alone.
+---@return "skip"|"na"|"warn"|nil changed What was done; nil when the case was left alone.
 function M.apply(case, opts)
   opts = opts or {}
+  -- only the case's own words: a spec of a test runner runs cases that print `n/a` lines of their own
+  local na = M.na_reason(opts.own or opts.printed)
+  if na and case.status == "pass" then
+    -- it asserted, then said the rest does not apply here: the checks it made stand
+    case.na = na
+    case.notes[#case.notes + 1] = "n/a convention: the rest of the case does not apply here: " .. na
+    return case, "na"
+  end
   if not only_no_assertions(case) then
     return case, nil
+  end
+  if na then
+    case.assertions = {}
+    case.status = "skip"
+    case.reason = na
+    case.na = na
+    case.notes[#case.notes + 1] = "n/a convention: no assertions and a printed n/a line: " .. na
+    return case, "na"
   end
   local reason = M.skip_reason(opts.printed)
   if reason then
@@ -113,37 +162,61 @@ end
 
 ---@class Testing.Policy.Capture
 ---@field lines string[] Everything printed since `capture()` (capped), whole lines only until `flush`.
+---@field own string[] Of `lines`, what was printed while no capture opened later was running: a case that runs
+---other cases in this editor (a spec of a test runner) gets their lines in `lines`, but they are not its own words.
 ---@field flush fun() Turn a trailing partial line (written without its newline) into a line.
----@field stop fun(): string[] Restore the hooks and return the lines.
+---@field stop fun(): string[], string[] Restore the hooks and return the lines and the own lines.
+
+---The captures that are running, oldest first: a capture is the innermost one exactly when it is last.
+---@type table[]
+local open_captures = {}
 
 ---Collect what a case writes until `stop()`: `print`, `io.write`, `io.stdout:write`, `io.stderr:write`
 ---and `vim.api.nvim_out_write` / `nvim_err_write` (a project harness prints its `FAIL` lines with
 ---whichever it likes). The text still reaches the original function. Text without a newline is held
 ---until the line ends (`io.write("FAIL x")` then `io.write("\n")` is ONE line). Captures nest (stop
----the inner one first); a `stop` that finds another function installed leaves it alone.
+---the inner one first); a `stop` that finds another function installed leaves it alone. What an inner
+---capture saw reaches the outer one too, in `lines` but not in `own`.
 ---@return Testing.Policy.Capture
 function M.capture()
-  local lines = {}
-  local pending = ""
-  local function add_line(line)
-    if #lines < M.MAX_LINES then
-      lines[#lines + 1] = line:sub(1, M.MAX_LINE_BYTES)
+  local id = {}
+  open_captures[#open_captures + 1] = id
+  ---A line buffer: whole lines (capped) and the text of a line not yet ended.
+  ---@return { lines: string[], pending: string }
+  local function buffer()
+    return { lines = {}, pending = "" }
+  end
+  local all, own = buffer(), buffer()
+  local lines = all.lines
+  ---@param buf { lines: string[], pending: string }
+  ---@param line string
+  local function add_line(buf, line)
+    if #buf.lines < M.MAX_LINES then
+      buf.lines[#buf.lines + 1] = line:sub(1, M.MAX_LINE_BYTES)
+    end
+  end
+  ---@param buf { lines: string[], pending: string }
+  ---@param text string
+  local function feed_into(buf, text)
+    buf.pending = buf.pending .. text
+    while true do
+      local nl = buf.pending:find("\n", 1, true)
+      if not nl then
+        break
+      end
+      add_line(buf, (buf.pending:sub(1, nl - 1):gsub("\r$", "")))
+      buf.pending = buf.pending:sub(nl + 1)
+    end
+    if #buf.pending > 4 * M.MAX_LINE_BYTES then
+      add_line(buf, buf.pending)
+      buf.pending = ""
     end
   end
   ---@param text string
   local function feed(text)
-    pending = pending .. text
-    while true do
-      local nl = pending:find("\n", 1, true)
-      if not nl then
-        break
-      end
-      add_line((pending:sub(1, nl - 1):gsub("\r$", "")))
-      pending = pending:sub(nl + 1)
-    end
-    if #pending > 4 * M.MAX_LINE_BYTES then
-      add_line(pending)
-      pending = ""
+    feed_into(all, text)
+    if open_captures[#open_captures] == id then
+      feed_into(own, text)
     end
   end
 
@@ -217,13 +290,16 @@ function M.capture()
 
   local stopped = false
   local function flush()
-    if pending ~= "" then
-      add_line(pending)
-      pending = ""
+    for _, buf in ipairs({ all, own }) do
+      if buf.pending ~= "" then
+        add_line(buf, buf.pending)
+        buf.pending = ""
+      end
     end
   end
   return {
     lines = lines,
+    own = own.lines,
     flush = flush,
     stop = function()
       if not stopped then
@@ -235,8 +311,14 @@ function M.capture()
         for i = #hooks, 1, -1 do
           hooks[i].restore()
         end
+        for i = #open_captures, 1, -1 do
+          if open_captures[i] == id then
+            table.remove(open_captures, i)
+            break
+          end
+        end
       end
-      return lines
+      return lines, own.lines
     end,
   }
 end
@@ -249,11 +331,11 @@ end
 function M.guard(opts, run)
   local capture = M.capture()
   local ok, case = pcall(run, capture)
-  local printed = capture.stop()
+  local printed, own = capture.stop()
   if not ok then
     error(case, 0)
   end
-  M.apply(case, { assertions = opts and opts.assertions, printed = printed })
+  M.apply(case, { assertions = opts and opts.assertions, printed = printed, own = own })
   return case
 end
 

@@ -64,12 +64,18 @@ case, because a script ends its own process: the child driver runs it in a proce
 
 ## Assertion policy and skips (`testing.policy`)
 
-A case without assertions is a failure by default (P4). Two honest exits, applied by every dialect to the finished
+A case without assertions is a failure by default (P4). Honest exits, applied by every dialect to the finished
 case:
 
 * **skip convention**: no assertion at all and a printed line starting with `skip` (`skip  git_spec.lua: git not
   usable`) is a `skip`, never green, red under `--strict`. A spec that asserted before skipping keeps its verdict;
   failures, errors and timeouts are never turned into skips.
+* **n/a convention**: a printed line starting with `n/a` (`n/a  needs Windows`) says the case, or the rest of it, does
+  not apply here (a platform, an optional tool). Without any assertion the case is a `skip`, after assertions it stays
+  `pass`; both carry the line in `case.na`, are counted and listed with it, do **not** keep the run from `green`, and
+  are red under `--strict`. Failures, errors and timeouts keep their verdict. Only the case's own lines count: what a
+  case it ran in the same editor printed (a spec of a test runner) does not make it n/a. This replaces
+  `if not windows then return end`, which passes silently (rule NEW-43).
 * **`assertions = "warn"`** (`.testing.lua`, `opts.assertions`): a case without assertions is a pass that carries one
   passing synthetic assertion (kind `no_assertions`, so the IR stays valid) and the note
   `warning: case made no assertions`. The migration config of a repository that ran under plenary sets it.

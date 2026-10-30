@@ -268,10 +268,35 @@ function M.summarize(cases)
   return summary
 end
 
+---Cases that do not apply here (`case.na`, the n/a convention of `testing.policy`), and the skips that are not
+---one of them. A skip keeps a run from green, an n/a case does not; `--strict` makes both red. The summary
+---keeps counting every `skip` (it is the count per status).
+---@param result Testing.Result
+---@return integer skipped Skips without `na`.
+---@return integer na Cases with `na` (skip or pass).
+function M.skip_counts(result)
+  local skipped, na = 0, 0
+  for _, c in ipairs(result.cases or {}) do
+    if type(c.na) == "string" and (c.status == "pass" or c.status == "skip") then
+      na = na + 1
+    elseif c.status == "skip" then
+      skipped = skipped + 1
+    end
+  end
+  return skipped, na
+end
+
 ---Recompute `result.summary` from `result.cases`.
 ---@param result Testing.Result
 ---@return Testing.Result result the same table
 function M.finalize(result)
+  for _, c in ipairs(result.cases) do
+    -- n/a is set when the case finishes; a guard, a timeout or a fired file can turn it red afterwards, and a red
+    -- case is red, not "does not apply" (its failure must be what the reporters show)
+    if c.na ~= nil and c.status ~= "pass" and c.status ~= "skip" then
+      c.na = nil
+    end
+  end
   result.summary = M.summarize(result.cases)
   return result
 end
@@ -762,6 +787,7 @@ local function redact_result(value, r, ci)
       a.msg, a.expected, a.actual = red(a.msg), red(a.expected), red(a.actual)
     end
     c.reason = red(c.reason)
+    c.na = red(c.na)
     if type(c.error) == "table" then
       c.error.message, c.error.traceback = red(c.error.message), red(c.error.traceback)
     end
@@ -883,6 +909,7 @@ local function scan_leaks(value, path, opts, problems, depth)
       or path:find("%.guards%.")
       or path:find("%.error%.")
       or path:find("%.reason$")
+      or path:find("%.na$")
     for _, bad in ipairs((free_text or not opts.forbid_free_text_only) and opts.forbid or {}) do
       -- Whole word, case-insensitive: the user name `bartl` is a leak in `by bartl` but not in the
       -- public handle `WKDSteve/lib.nvim`.
@@ -1090,6 +1117,11 @@ local function validate_cases(cases, problems)
       end
       if not is_int(c.retries) or c.retries < 0 then
         problems[#problems + 1] = at .. ".retries: must be an integer >= 0"
+      end
+      if
+        c.na ~= nil and (type(c.na) ~= "string" or (c.status ~= "pass" and c.status ~= "skip"))
+      then
+        problems[#problems + 1] = at .. ".na: must be a string, on a pass or a skip only"
       end
       if c.flaky ~= nil and type(c.flaky) ~= "boolean" then
         problems[#problems + 1] = at .. ".flaky: must be a boolean"

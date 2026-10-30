@@ -37,7 +37,8 @@ M.MAX_CHANGED = 12
 ---@field files_unrun_budget? integer Of `files_unrun`, the ones the `--time-budget` ran out before.
 ---@field files_deliberate? integer Selected files `--skip-uncacheable` left out on purpose (they have no cache key).
 ---@field cases_total integer
----@field cases_skipped integer
+---@field cases_skipped integer Skips that are not n/a.
+---@field cases_na? integer Cases that do not apply here (`case.na`): counted, never a reason for `green-partial`.
 ---@field selection? string What narrowed the files (`--changed`, `--since <rev>`, `--shard 1/2`, a path), for the reason text.
 ---@field flaky_cases? integer Cases `--allow-flaky` counted as green after a retry (the run is never a plain green).
 ---@field case_selection? boolean A case selection (`--filter`, `--tags`, `--lf`) applied.
@@ -48,7 +49,7 @@ M.MAX_CHANGED = 12
 ---@field kind Testing.Verdict.Kind
 ---@field exit_code integer
 ---@field files { total: integer, selected: integer, cached: integer, ran: integer, skipped: integer, unrun: integer, budget?: integer, deliberate?: integer }
----@field cases { total: integer, skipped: integer, flaky: integer }
+---@field cases { total: integer, skipped: integer, flaky: integer, na?: integer }
 ---@field reasons? string[] Why a run is not `green` (partial; a refused stamp adds its own reason).
 ---@field last_green? { ts: integer, sha?: string }
 ---@field changed_since? { count: integer, files: string[] }
@@ -94,6 +95,9 @@ function M.build(f)
       total = int(f.cases_total),
       skipped = int(f.cases_skipped),
       flaky = int(f.flaky_cases),
+      -- not applicable here (a platform, an optional tool): shown, but no reason for green-partial; `--strict` has
+      -- already made such a run red through its exit code
+      na = int(f.cases_na) > 0 and int(f.cases_na) or nil,
     },
   }
   if v.exit_code ~= 0 then
@@ -164,7 +168,7 @@ end
 function M.from_result(result)
   local files, cached_files = {}, {}
   local nfiles, ncached = 0, 0
-  local bad, skipped = 0, 0
+  local bad, skipped, na = 0, 0, 0
   for _, c in ipairs(result.cases or {}) do
     local file = c.file or "?"
     if not files[file] then
@@ -178,6 +182,8 @@ function M.from_result(result)
     local cls = util.class_of(c.status)
     if cls == "bad" then
       bad = bad + 1
+    elseif type(c.na) == "string" then
+      na = na + 1
     elseif cls == "skip" then
       skipped = skipped + 1
     end
@@ -194,6 +200,7 @@ function M.from_result(result)
     files_cached = ncached,
     cases_total = #(result.cases or {}),
     cases_skipped = skipped,
+    cases_na = na,
   })
   v.derived = true -- the driver's facts (last green run, what was not selected) are not known here
   return v
@@ -210,7 +217,7 @@ function M.of(result)
   return M.from_result(result)
 end
 
----`n from cache, m ran, k skipped on purpose`
+---`n from cache, m ran, k skipped on purpose`, then `, j case(s) n/a here` when cases did not apply
 ---@param v Testing.Verdict
 ---@return string
 function M.counts(v)
@@ -222,6 +229,10 @@ function M.counts(v)
   local budget = int(v.files and v.files.budget)
   if budget > 0 then
     text = text .. (", %d not run (budget)"):format(budget)
+  end
+  local na = int(v.cases and v.cases.na)
+  if na > 0 then
+    text = text .. (", %d case(s) n/a here"):format(na)
   end
   return text
 end

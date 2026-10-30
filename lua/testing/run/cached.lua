@@ -423,6 +423,7 @@ function M.empty_report(plan, seed)
     files_unrun = 0,
     files_unselected = 0,
     skipped = 0,
+    na = 0,
     stopped = false,
     wall_ms = 0,
     exit_code = 0,
@@ -496,7 +497,7 @@ function M.finish_inner(prep, report, opts)
   res.cases = merged
   result.finalize(res)
   report.total = #res.cases
-  report.skipped = res.summary.skip
+  report.skipped, report.na = result.skip_counts(res)
   report.cases_cached = ncached
   report.files_cached = vim.tbl_count(prep.hits)
 

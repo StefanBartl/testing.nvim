@@ -181,6 +181,9 @@ function M.validate(raw, expect)
     if c.error ~= nil or c.reason ~= nil then
       return nil, ("case %d carries an error"):format(i)
     end
+    if c.na ~= nil then
+      return nil, ("case %d does not apply here (n/a)"):format(i)
+    end
     if M.blocking_guards(c) then
       return nil, ("case %d carries guard findings"):format(i)
     end

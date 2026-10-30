@@ -104,6 +104,7 @@
 ---@field notes string[]
 ---@field error? Testing.Result.CaseError Set when `status == "error"`.
 ---@field reason? string Why a case was skipped.
+---@field na? string The printed `n/a` line: the case (a `skip`) or its rest (a `pass`) does not apply here; never keeps a run from green, red under `--strict` (`testing.policy`).
 ---@field cached? boolean `true`: not executed in this run, the result comes from the result cache (`testing.cache`).
 ---@field flaky? boolean `true`: the case failed and then passed on a retry (`--retry-failed`); `retries` is the retry that passed. The status is `fail` (the run stays red) unless `--allow-flaky` replaced it by the passing result.
 ---@field surface? { hit: string[] } The keymaps, commands and autocmds the case exercised (`surface.track`).
@@ -200,6 +201,7 @@
 ---@field MAX_EFFECTS integer Entries kept per effects list.
 ---@field summarize fun(cases: Testing.Result.Case[]): Testing.Result.Summary
 ---@field finalize fun(result: Testing.Result): Testing.Result
+---@field skip_counts fun(result: Testing.Result): integer, integer
 ---@field normalize fun(value: any, roots: Testing.Result.PathRoots, opts?: Testing.Result.NormalizeOpts): any
 ---@field encode fun(result: Testing.Result, opts?: Testing.Result.EncodeOpts): string|nil, string|nil
 ---@field validate fun(result: any, opts?: Testing.Result.ValidateOpts): boolean, string[]

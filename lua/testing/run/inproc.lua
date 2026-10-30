@@ -163,7 +163,8 @@ end
 ---@field files_unrun integer Files not reached because `--maxfail` stopped the run or the `--time-budget` ran out.
 ---@field files_unrun_budget integer Of `files_unrun`, the ones the `--time-budget` left.
 ---@field files_unselected integer Files whose cases the selection removed entirely.
----@field skipped integer Cases with status `skip`.
+---@field skipped integer Cases with status `skip`, the n/a ones not counted.
+---@field na integer Cases that do not apply here (`case.na`): never keep the run from green, red under `strict`.
 ---@field stopped boolean `--maxfail` stopped the run.
 ---@field wall_ms number Wall time of the file loop.
 ---@field exit_code integer 0 green, 1 at least one red case (or, under `strict`, a skip / a finding).
@@ -655,8 +656,8 @@ local function run_files(opts, holder)
   res.run.duration_ms = math.floor(wall_ms * 1000 + 0.5) / 1000
   result.finalize(res)
 
-  local skipped = res.summary.skip
-  local exit_code = (bad_total > 0 or (opts.strict and skipped > 0)) and 1 or 0
+  local skipped, na = result.skip_counts(res)
+  local exit_code = (bad_total > 0 or (opts.strict and skipped + na > 0)) and 1 or 0
   local nfailed_files = 0
   for _ in pairs(failed_files) do
     nfailed_files = nfailed_files + 1
@@ -671,6 +672,7 @@ local function run_files(opts, holder)
     files_unrun_budget = files_unrun_budget,
     files_unselected = files_unselected,
     skipped = skipped,
+    na = na,
     stopped = stopped,
     wall_ms = wall_ms,
     exit_code = exit_code,

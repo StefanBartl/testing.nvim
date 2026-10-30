@@ -289,6 +289,11 @@ local function case_details(c, indent, lines, o, paint)
   local maxv = o.max_value_lines or M.DEFAULTS.max_value_lines
   local pad = (" "):rep(indent)
   local cls = util.class_of(c.status)
+  if type(c.na) == "string" and cls ~= "bad" then
+    -- not applicable here (n/a convention): the reason is the line the spec printed
+    emit(lines, indent, "n/a here: " .. c.na, width)
+    return
+  end
   if c.status == "skip" then
     emit(lines, indent, "skipped" .. (c.reason and (": " .. c.reason) or ""), width)
     return
@@ -495,7 +500,7 @@ function M.render(result, opts)
   local failed_files = 0
 
   for _, g in ipairs(util.group_by_file(result)) do
-    local bad, skipped, cached = 0, 0, 0
+    local bad, skipped, na, na_skipped, cached = 0, 0, 0, 0, 0
     for _, c in ipairs(g.cases) do
       if c.cached then
         cached = cached + 1
@@ -503,6 +508,9 @@ function M.render(result, opts)
       local cls = util.class_of(c.status)
       if cls == "bad" then
         bad = bad + 1
+      elseif type(c.na) == "string" then
+        na = na + 1
+        na_skipped = na_skipped + (cls == "skip" and 1 or 0)
       elseif cls == "skip" then
         skipped = skipped + 1
       end
@@ -511,14 +519,19 @@ function M.render(result, opts)
     if bad > 0 then
       failed_files = failed_files + 1
       label, kind = "FAIL", "red"
-    elseif skipped == #g.cases then
+    elseif skipped > 0 and skipped + na_skipped == #g.cases then
       label, kind = "skip", "yellow"
+    elseif na_skipped == #g.cases then
+      label, kind = "n/a", "cyan"
     else
       label, kind = "ok", "green"
     end
     local suffix = (bad == 0 and skipped > 0 and skipped < #g.cases)
         and (" (%d skipped)"):format(skipped)
       or ""
+    if bad == 0 and na > 0 and label ~= "n/a" then
+      suffix = suffix .. (" (%d n/a here)"):format(na)
+    end
     if cached > 0 and cached == #g.cases then
       -- not executed in this run (`--cached`): never look the same as a file that ran
       suffix = suffix .. " (cached)"
@@ -530,16 +543,20 @@ function M.render(result, opts)
     local multi = #g.cases > 1
     for _, c in ipairs(g.cases) do
       local cls = util.class_of(c.status)
-      if cls == "bad" or c.status == "skip" then
+      local is_na = cls ~= "bad" and type(c.na) == "string"
+      if cls == "bad" or c.status == "skip" or is_na then
         local indent = 6
         if multi then
           local title = ("%s  %s%s"):format(
-            c.status,
+            is_na and "n/a" or c.status,
             util.short_name(c),
             c.line and (":" .. c.line) or ""
           )
           lines[#lines + 1] = ("    "):rep(1)
-            .. paint(cls == "bad" and "red" or "yellow", fit(title, width - 4))
+            .. paint(
+              cls == "bad" and "red" or (is_na and "cyan" or "yellow"),
+              fit(title, width - 4)
+            )
           indent = 8
         end
         case_details(c, indent, lines, o, paint)
@@ -599,6 +616,10 @@ function M.render(result, opts)
   for _, c in ipairs(result.cases or {}) do
     if c.cached then
       ncached = ncached + 1
+    end
+    if c.status == "skip" and type(c.na) == "string" then
+      -- an n/a case is a `skip` in the counts but does not make the summary yellow
+      skip_total = skip_total - 1
     end
   end
   local summary = ("summary: %s (%d case(s)%s) in %.2f s"):format(

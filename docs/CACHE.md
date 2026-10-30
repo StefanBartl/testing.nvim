@@ -327,7 +327,9 @@ module with `-- @cache-allow` (which is then a statement, not a guess).
 
 ### What is never stored
 
-`cache.put` refuses a file with a case that is not a plain `pass`, a retried case (`--retry-failed`: a case that
+`cache.put` refuses a file with a case that is not a plain `pass`, a case that does not apply here (`case.na`, the n/a
+convention: a replay would keep saying so after the platform or tool is there, and would turn a `--strict` red into a
+green), a retried case (`--retry-failed`: a case that
 failed and then passed is flaky, also under `--allow-flaky`, and the run reports the file as flaky), an effect in the ledger (spawn,
 network, write outside tmp), a guard finding, a flaky file, a timeout or crash, a partial run (a case selection:
 `--filter`, `--lf`, ...), or cases that are themselves cached. Guards that are off do not make a file

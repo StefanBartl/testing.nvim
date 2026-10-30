@@ -265,10 +265,12 @@ function M.summary_markdown(result)
   lines[#lines + 1] = "| File | Result | Cases | Time (s) |"
   lines[#lines + 1] = "|---|---|---:|---:|"
   for _, g in ipairs(util.group_by_file(result)) do
-    local g_bad, g_skip, ms = 0, 0, 0
+    local g_bad, g_skip, g_na, ms = 0, 0, 0, 0
     for _, c in ipairs(g.cases) do
       if util.class_of(c.status) == "bad" then
         g_bad = g_bad + 1
+      elseif c.status == "skip" and type(c.na) == "string" then
+        g_na = g_na + 1
       elseif c.status == "skip" then
         g_skip = g_skip + 1
       end
@@ -276,7 +278,10 @@ function M.summary_markdown(result)
     end
     lines[#lines + 1] = ("| %s | %s | %d | %s |"):format(
       M.md_escape(g.file),
-      (g_bad > 0 and ("FAIL (" .. g_bad .. ")")) or (g_skip == #g.cases and "skip") or "ok",
+      (g_bad > 0 and ("FAIL (" .. g_bad .. ")"))
+        or (g_skip > 0 and g_skip + g_na == #g.cases and "skip")
+        or (g_na == #g.cases and "n/a")
+        or "ok",
       #g.cases,
       util.seconds(ms)
     )
