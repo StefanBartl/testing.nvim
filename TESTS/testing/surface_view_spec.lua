@@ -280,7 +280,15 @@ return function(H)
       "export path: relative is below the root"
     )
     eq(view.export_path("/abs/m.tsv", "/r"), "/abs/m.tsv", "export path: absolute stays")
-    eq(view.export_path("C:\\x\\m.tsv", "/r"), "C:/x/m.tsv", "export path: a drive path stays")
+    eq(view.export_path("C:/x/m.tsv", "/r"), "C:/x/m.tsv", "export path: a drive path stays")
+    if vim.fn.has("win32") == 1 then
+      -- backslashes are separators on Windows only (on POSIX they are part of a file name)
+      eq(
+        view.export_path("C:\\x\\m.tsv", "/r"),
+        "C:/x/m.tsv",
+        "export path: a backslash drive path stays"
+      )
+    end
     local f = assert(io.open(out, "rb"))
     local exported = f:read("*a")
     f:close()
