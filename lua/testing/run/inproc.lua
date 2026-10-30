@@ -877,14 +877,24 @@ end
 ---values (a `vim.inspect`ed path has DOUBLED backslashes), and the validator rightly refuses such an
 ---IR. In place: the root paths in their escaped form become placeholders, in assertion texts and
 ---case errors. Users, hosts and environment values are the kernel's job (`encode`'s `redact`).
+---Each root also in its resolved spelling (`fs_realpath`), as `result.encode` matches it: on Windows
+---the parent's temp dir can be the 8.3 short form (`C:\Users\STEFAN~1\...`) while a child's sandbox
+---below it is built from the long form (`testing.child`), and its paths must still become `<TMP>`.
 ---@param res Testing.Result
 ---@param root string
 function M.scrub_texts(res, root)
   local needles = {}
   for name, path in pairs(M.path_roots(root)) do
     if type(path) == "string" and path ~= "" then
-      local doubled = path:gsub("/", "\\"):gsub("\\", "\\\\")
-      needles[#needles + 1] = { doubled, result.PLACEHOLDERS[name] }
+      local real = vim.uv.fs_realpath(path)
+      local seen = {}
+      for _, p in ipairs({ path, type(real) == "string" and real or "" }) do
+        local doubled = p:gsub("/", "\\"):gsub("\\", "\\\\")
+        if doubled ~= "" and not seen[doubled] then
+          seen[doubled] = true
+          needles[#needles + 1] = { doubled, result.PLACEHOLDERS[name] }
+        end
+      end
     end
   end
   table.sort(needles, function(x, y)

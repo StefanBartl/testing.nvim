@@ -1,7 +1,8 @@
 -- TESTS/testing/child_sandbox_long_temp_spec.lua -- a child's sandbox never inherits the 8.3 short form of the parent's
 -- temp directory (Windows: `C:\Users\STEFAN~1\...`). `vim.fn.glob()` finds nothing below a path with a short-name
 -- component, so a spec that globs below `tempname()` was red locally and green on CI (no short form there). The base of
--- the sandbox is brought into its long form before `TEMP`/`TMP`/`TMPDIR`/XDG are built from it. Windows only (a short
+-- the sandbox is brought into its long form before `TEMP`/`TMP`/`TMPDIR`/XDG are built from it, and the IR scrubber
+-- still turns such a long-form path into `<TMP>` when the parent's temp dir is the short form. Windows only (a short
 -- form exists nowhere else); skipped where the volume does not generate 8.3 names.
 
 return function(H)
@@ -85,6 +86,23 @@ return function(H)
         seen.dir,
         seen.found
       )
+    )
+
+    -- the IR of a parent whose TEMP is the short form: a `vim.inspect`ed path below the child's (long-form)
+    -- sandbox still becomes `<TMP>` in the spec's own text (`scrub_texts`), not `<HOME>\\AppData\\...`
+    local p = S.spawn({ extra_env = { TEMP = short, TMP = short, TMPDIR = short } })
+    local scrubbed = p.lua([[
+      local tmp = vim.fs.dirname(vim.fn.tempname())
+      local long = vim.uv.fs_realpath(tmp) or tmp
+      local msg = vim.inspect(long:gsub("/", "\\") .. "\\testing-child-1-1\\tmp\\x.txt")
+      local res = { cases = { { assertions = { { msg = msg } }, notes = {} } } }
+      require("testing.run.inproc").scrub_texts(res, vim.fn.getcwd())
+      return { tmp = tmp, msg = res.cases[1].assertions[1].msg }
+    ]])
+    ok(has_short(scrubbed.tmp), "that parent's temp dir is the short form: " .. scrubbed.tmp)
+    ok(
+      vim.startswith(scrubbed.msg, '"<TMP>\\\\testing-child-1-1'),
+      "the inspected long-form sandbox path is <TMP>-relative: " .. scrubbed.msg
     )
   end)
 end
