@@ -655,6 +655,11 @@ local function run_inprocess(planned, root, suite_args, sv, o)
       XDG_CACHE_HOME = scratch .. "/cache",
     })
   end
+  -- the trust store is the user's, not the scratch state directory's: resolved before the environment moves
+  local trust_ctx = sv.trust
+  if type(trust_ctx) == "table" and trust_ctx.store == nil then
+    trust_ctx = vim.tbl_extend("force", trust_ctx, { store = require("testing.trust").path() })
+  end
   local saved = {}
   for k in pairs(env) do
     saved[k] = vim.uv.os_getenv(k) or false
@@ -666,7 +671,7 @@ local function run_inprocess(planned, root, suite_args, sv, o)
   local ok, code = pcall(
     require("testing.cli").main,
     argv,
-    vim.tbl_extend("force", sv, { out = sink(sv.out), err = sink(sv.err) })
+    vim.tbl_extend("force", sv, { out = sink(sv.out), err = sink(sv.err), trust = trust_ctx })
   )
   if scratch then
     scratch_traces = isolated.trace_base()

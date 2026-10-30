@@ -244,6 +244,35 @@ return function(H)
     eq(cli.main({ "trust", "bogus" }, sv), 2, "an unknown subcommand is 2")
     eq(cli.main({ "trust", "add", base .. "/nope" }, sv), 2, "a missing directory is 2")
     eq(cli.main({ "trust" }, sv), 2, "no subcommand is 2")
+
+    -- the real entry: a root trusted through the store stays trusted in `testing ci`, whose suite step runs
+    -- in a throwaway XDG_STATE_HOME (the store is pinned before the environment moves)
+    local here = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))
+    local entry = vim.fs.dirname(vim.fs.dirname(here)) .. "/scripts/testing.lua"
+    local ci_proj = base .. "/ci-proj"
+    put(ci_proj .. "/.testing.lua", "return {}\n")
+    put(ci_proj .. "/lua/ciproj/init.lua", "return {}\n") -- a Lua project: `ci` derives the suite step
+    put(ci_proj .. "/TESTS/a_spec.lua", "return function(H) H.ok(true, 'a') end\n")
+    local child_env = {
+      XDG_STATE_HOME = base .. "/ci-state",
+      CI = "",
+      TESTING_TRUST = "",
+      TESTING_TRUST_ROOTS = "",
+    }
+    local function run_entry(args)
+      local argv = { vim.v.progpath, "-n", "-i", "NONE", "--headless", "-u", "NONE", "-l", entry }
+      vim.list_extend(argv, args)
+      local r = vim.system(argv, { cwd = ci_proj, env = child_env, text = true }):wait(120000)
+      return r.code, (r.stdout or "") .. (r.stderr or "")
+    end
+    local code_add = run_entry({ "trust", "add", "." })
+    eq(code_add, 0, "entry: trust add")
+    local code_ci, text_ci = run_entry({ "ci" })
+    ok(
+      not text_ci:find(trust.REFUSED, 1, true),
+      "entry: ci does not refuse a stored root (got " .. text_ci:sub(1, 600) .. ")"
+    )
+    eq(code_ci, 0, "entry: ci on a stored root is green")
   end)
   trust.arm(nil)
   vim.fn.delete(base, "rf")

@@ -64,8 +64,14 @@ local trust_env = {}
 for _, name in ipairs({ "CI", "TESTING_TRUST", "TESTING_TRUST_ROOTS" }) do
   trust_env[name] = os.getenv(name)
 end
-local ok_run, code =
-  pcall(cli.main, arg or {}, { env = env, script = this, trust = { env = trust_env } })
+-- the store is pinned here: `testing ci` runs its suite step in a throwaway XDG_STATE_HOME, where
+-- `stdpath("state")` would name an empty store and refuse a root the user trusted
+local trust_store = require("testing.trust").path()
+local ok_run, code = pcall(
+  cli.main,
+  arg or {},
+  { env = env, script = this, trust = { env = trust_env, store = trust_store } }
+)
 if not ok_run then
   die("testing: internal error: " .. tostring(code))
 end
