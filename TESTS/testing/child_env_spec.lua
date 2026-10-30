@@ -46,6 +46,11 @@ return function(H)
   eq(r.env.NVIM_APPNAME, nil, "NVIM_APPNAME is dropped")
   eq(r.env.LUA_PATH, nil, "what is not on the list is dropped")
   eq(r.env.MY_FLAG, nil, "an unknown variable is dropped")
+  eq(
+    env.sanitize({ TESTING_UPDATE_SNAPSHOTS = "1" }).env.TESTING_UPDATE_SNAPSHOTS,
+    "1",
+    "--update-snapshots reaches the child (testing.screen reads it there)"
+  )
   ok(vim.tbl_contains(r.dropped, "GITHUB_TOKEN"), "the dropped names are reported")
   ok(not vim.tbl_contains(r.dropped, "PATH"), "kept names are not reported as dropped")
 

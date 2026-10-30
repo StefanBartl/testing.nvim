@@ -119,6 +119,19 @@ return function(H)
   a = assert(parse({ "r", "--isolate-home" }))
   eq(a.isolate_home, true, "--isolate-home")
   eq(a.given.isolate_home, true, "--isolate-home is recorded as given")
+  a = assert(parse({ "r", "--update-snapshots" }))
+  eq(a.update_snapshots, true, "--update-snapshots")
+  eq(
+    a.no_cache,
+    true,
+    "--update-snapshots implies --no-cache (a cached file would not rewrite anything)"
+  )
+  eq(assert(parse({ "r" })).update_snapshots, false, "off by default")
+  eq(
+    args_mod.REPEAT_DROP.update_snapshots,
+    true,
+    "a repeat of a failed case does not rewrite snapshots"
+  )
 
   -- ------------------------------------------------------------------ the usage text lists them all
   local usage = args_mod.usage()
@@ -133,6 +146,7 @@ return function(H)
     "--no-determinism",
     "--no-trace",
     "--isolate-home",
+    "--update-snapshots",
     "<none|file|case|soft>",
   }) do
     has(usage, flag, "usage lists " .. flag)

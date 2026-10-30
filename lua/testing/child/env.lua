@@ -86,6 +86,8 @@ M.ALLOW = {
   -- specs that behave differently on CI read these; neither is a secret
   "CI",
   "GITHUB_ACTIONS",
+  -- `--update-snapshots`: testing.screen in the child rewrites differing snapshots; not a secret
+  "TESTING_UPDATE_SNAPSHOTS",
   -- display (a spec that opens a GUI helper)
   "DISPLAY",
   "WAYLAND_DISPLAY",

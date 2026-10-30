@@ -450,6 +450,8 @@ local ATTR_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 ---second cell is skipped); `attrs[r]` has one letter per cell: ' ' = no highlight, otherwise a letter
 ---per DISTINCT attribute in order of first appearance (attributes are comparable, not resolvable to a
 ---group: `vim.inspect_pos` names the groups of a buffer position).
+---`cells[r]` and `cell_attrs[r]` are the same row by SCREEN COLUMN: one entry per column, `""` (and
+---the attribute ' ') for the second cell of a wide character; `testing.screen` masks by column with them.
 ---Needs an attached UI (the parent attaches one before the first call): without a UI nvim does not
 ---draw and `screenstring()` is empty.
 ---@return table screen
@@ -457,8 +459,10 @@ function M.screen()
   vim.cmd("redraw")
   local rows, cols = vim.o.lines, vim.o.columns
   local lines, attrs, letters, nletters = {}, {}, {}, 0
+  local grid, grid_attrs = {}, {}
   for r = 1, rows do
     local cells, marks = {}, {}
+    local row_cells, row_marks = {}, {}
     for c = 1, cols do
       local s = vim.fn.screenstring(r, c)
       local a = vim.fn.screenattr(r, c)
@@ -477,9 +481,13 @@ function M.screen()
         cells[#cells + 1] = s
         marks[#marks + 1] = mark
       end
+      row_cells[c] = s
+      row_marks[c] = s ~= "" and mark or " "
     end
     lines[r] = table.concat(cells)
     attrs[r] = table.concat(marks)
+    grid[r] = row_cells
+    grid_attrs[r] = table.concat(row_marks)
   end
   local trimmed = {}
   for r, l in ipairs(lines) do
@@ -492,6 +500,8 @@ function M.screen()
     lines = lines,
     attrs = attrs,
     text = table.concat(trimmed, "\n"),
+    cells = grid,
+    cell_attrs = grid_attrs,
   }
 end
 

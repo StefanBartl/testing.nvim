@@ -121,6 +121,7 @@ An option that is accepted by the parser but not implemented is **refused** with
 | `--guard <name>=<mode>`, `--allow-fs <path>`, `--allow-spawn <exe>`, `--allow-network <host>` | The guards and what they let through ([ISOLATION.md](ISOLATION.md#guards)); repeatable. |
 | `--no-determinism`, `--no-trace` | A child keeps the parent's `LANG`/`LC_ALL`/`TZ` / leaves no trace artifact when it dies. |
 | `--isolate-home` | A child gets a home directory of its own in its sandbox (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`); see [CHILD.md](CHILD.md#environment-determinism-sandbox). |
+| `--update-snapshots` | Screen snapshots that differ are rewritten instead of failing (sets `TESTING_UPDATE_SNAPSHOTS=1`, which reaches every child); implies `--no-cache`, and a repeat command drops it. See [CHILD.md](CHILD.md#screen-snapshots-testingscreen). |
 | `--jobs <n\|auto>` | Child editors running at once (default 1, `.testing.lua` `jobs`); `auto` is cores minus one (at least 1). The permits are a `lib.nvim.async.Semaphore`; the report, the printed child output and the exit code are the same for any `n`: results are merged in file order. See [Worker pool](#worker-pool). |
 | `--watch`, `--watch-debounce <ms>`, `--watch-max-wait <ms>`, `--watch-poll` | Run, then re-run on every change, see [Watch](#watch). |
 | `--host <c\|l>` | How a child starts. `c` (default): like plenary's host, the spec runs from a `-c` command (`v:vim_did_enter` is 0, `expand('<cword>')` works). `l`: `nvim -l`. A `script` prefers `l` unless this is given. |

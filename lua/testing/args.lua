@@ -88,6 +88,7 @@ M.AGENT_BUDGET_MIN = 200
 ---@field determinism? boolean `--no-determinism` (false); nil = the config decides
 ---@field isolate_home? boolean `--isolate-home` (true); nil = the config decides
 ---@field trace? boolean `--no-trace` (false); nil = the config decides
+---@field update_snapshots boolean `--update-snapshots`: `testing.screen` rewrites differing snapshots (implies `no_cache`)
 ---@field jobs? integer `--jobs <n>`: children running at once (isolated runs)
 ---@field jobs_auto? boolean `--jobs auto`: cores minus one (the caller resolves it into `jobs`)
 ---@field shard_text? string `--shard i/n` as typed
@@ -509,6 +510,14 @@ local OPTIONS = {
     field = "trace",
     const = false,
     help = "no trace artifact for a child that times out or crashes",
+  },
+  {
+    name = "update_snapshots",
+    long = "update-snapshots",
+    kind = "flag",
+    field = "update_snapshots",
+    const = true,
+    help = "rewrite screen snapshots that differ (testing.screen; implies --no-cache)",
   },
   {
     name = "jobs",
@@ -988,6 +997,7 @@ local function new_args()
     budget_update = false,
     budget_allow_new = false,
     cache_clear = false,
+    update_snapshots = false,
     no_cache = false,
     cache_refresh = false,
     changed = false,
@@ -1160,6 +1170,10 @@ function M.parse(argv)
   end
   args.paths = positionals
 
+  -- a cached file does not run, so it could not rewrite its snapshots
+  if args.update_snapshots then
+    args.no_cache = true
+  end
   if args.fast then
     if args.shuffle then
       return nil, "fast orders by priority; --shuffle excludes it"
@@ -1220,6 +1234,7 @@ M.REPEAT_DROP = {
   list = true,
   maxfail = true,
   time_budget = true,
+  update_snapshots = true,
   skip_uncacheable = true,
   shuffle = true,
   seed = true,

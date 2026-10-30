@@ -692,9 +692,8 @@ local function descendants(pid)
   return out
 end
 
----Kill the process tree of a child (see the module header). Idempotent; never raises.
 ---@param h Testing.Child.Handle
-function M.kill_tree(h)
+local function kill_tree(h)
   if h.ended then
     return -- the process is gone (an abandoned one is not: it can still be killed when the editor quits)
   end
@@ -770,6 +769,20 @@ function M.kill_tree(h)
     end
     root_kill()
   end
+end
+
+---Kill the process tree of a child (see the module header). Idempotent; never raises. The processes
+---this starts (`powershell` for the process table, `taskkill`) are the driver's, not the spec's: when a
+---guard is installed (a spec that drives an RPC child inside a guarded case) they run outside it.
+---@param h Testing.Child.Handle
+function M.kill_tree(h)
+  local guard = package.loaded["testing.guard"]
+  if type(guard) == "table" and guard.suspended then
+    return guard.suspended(function()
+      kill_tree(h)
+    end)
+  end
+  kill_tree(h)
 end
 
 ---Does a process exist? (`kill(pid, 0)`: no signal is sent.)

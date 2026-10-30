@@ -83,6 +83,27 @@ function M.live_count()
   return n
 end
 
+---Run `fn` with the wrappers of EVERY installed layer silenced: work of testing.nvim itself that runs
+---inside a case without knowing the case's handle (the RPC driver ending a child's process tree,
+---`testing.screen` writing a snapshot). Not for spec code: what a spec does on its own stays guarded.
+---@param fn function
+---@return any ...
+function M.suspended(fn)
+  local held = {}
+  for h in pairs(LIVE) do
+    h.busy = h.busy + 1
+    held[#held + 1] = h
+  end
+  local ok, a, b, c = pcall(fn)
+  for _, h in ipairs(held) do
+    h.busy = h.busy - 1
+  end
+  if not ok then
+    error(a, 0)
+  end
+  return a, b, c
+end
+
 local GUARD_MODULES = {
   scheduled_error = "testing.guard.scheduled_error",
   prompt = "testing.guard.prompt",

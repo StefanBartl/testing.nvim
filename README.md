@@ -173,7 +173,10 @@ Known limits, not hidden:
   checkout (lib.nvim) selects nothing here.
 - Surface tracking does not work with the warm pool (it says so), a keymap with a string right-hand side
   cannot be observed, and no threshold fails `testing run`; `testing surface` is the gate.
-- Not implemented at all: a test UI (tree, hover), snapshots, adapters for other test frameworks. Keys for
+- Screen snapshots exist for RPC children only (`testing.screen`, [docs/CHILD.md](docs/CHILD.md#screen-snapshots-testingscreen)):
+  a text grid with attribute letters, no pixels, and no value snapshots (`a.snapshot`) yet; a spec that uses them
+  declares the snapshot directory for the cache by hand (`-- @cache-inputs TESTS/__snapshots__/`).
+- Not implemented at all: a test UI (tree, hover), adapters for other test frameworks. Keys for
   some of these exist in `.testing.lua` and are validated, but nothing acts on them.
 
 ## What testing.nvim does differently
@@ -222,7 +225,8 @@ machine (Windows 11, 12 threads, Neovim 0.12.2, 2026-10-06, one run each, [docs/
 The first run with `--cached` costs more than a plain one (+1 % to +41 % on these suites). `--changed` is not a gate:
 it is a partial run that never prints the sentinel, and on lib.nvim the selection averaged 60 of 87 specs over the last
 20 commits, because computed `require`s make a one-line change reach most of the suite. There is no shared or remote
-cache, no retry or flaky-test quarantine, no test UI and no screenshots; the project is pre-alpha.
+cache, no retry or flaky-test quarantine, no test UI and no pixel screenshots (screen snapshots are text grids); the
+project is pre-alpha.
 
 Measured stale-pass rate (`--cached --cache-audit all` after a warm run, 2026-10-07, same machine, one run each):
 markdown.nvim 0 of 27 audited hits differed, ui.nvim 0 of 29. That is 56 hits and no stale pass found, which says the

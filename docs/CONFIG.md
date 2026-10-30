@@ -86,7 +86,7 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `cache.enabled` | boolean | `false` | `true`: reuse the results of unchanged spec files without `--cached`. Ignored in CI: a default never decides there ([CACHE.md](CACHE.md)). `--no-cache` wins. |
 | `coverage.bindings`, `.commands`, `.autocmds` | number 0..1 | `0` | Gate thresholds of `testing surface` per kind; `0` = report only. |
 | `ci` | table | absent (derived for a Lua project) | The pipeline of `testing ci`: `profiles`, `default`, `steps`; without `profiles` it adjusts the derived pipeline (`skip`, `steps`, [CI.md](CI.md#without-writing-a-pipeline-the-derived-one)). `testing ci` validates it itself and every problem there is an error (exit `2`), unlike the other keys: [CI.md](CI.md). |
-| `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | Reserved (snapshots). |
+| `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | The default directory of screen snapshots (`testing.screen`). The spec process does not read `.testing.lua`: a project with another directory passes `opts.dir`. |
 | `backends.luals`, `.pty`, `.playwright`, `.webdriver` | boolean | `false` | Reserved (optional backends). |
 
 "Reserved" keys are validated and kept, but nothing acts on them yet. A key of the tables above that is invalid

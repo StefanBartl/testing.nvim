@@ -228,6 +228,45 @@ return function(H)
       shot2.attrs[2]:find("%a") ~= nil,
       "a highlighted match shows up as an attribute letter on its row: " .. shot2.attrs[2]
     )
+    -- cells by screen column: a wide character's second cell is "", attributes per column
+    c.cmd("nohlsearch")
+    c.api.nvim_buf_set_lines(0, 0, -1, false, { "a日b 12:34" })
+    local wide = c.screen()
+    eq(#wide.cells[1], 80, "one cell per screen column")
+    eq(#wide.cell_attrs[1], 80, "one attribute letter per screen column")
+    eq(
+      { wide.cells[1][1], wide.cells[1][2], wide.cells[1][3], wide.cells[1][4] },
+      { "a", "日", "", "b" },
+      "the second cell of a wide character is empty"
+    )
+    -- a snapshot of the real screen: written once, matched again, a change differs; the clock is masked
+    local snap_root = S.new_dir()
+    local screen_mod = require("testing.screen")
+    local sopts = {
+      root = snap_root,
+      file = snap_root .. "/TESTS/demo_spec.lua",
+      ci = false,
+      update = false,
+      masks = { "%d%d:%d%d" },
+    }
+    eq(screen_mod.compare("wide", wide, sopts).status, "written", "the first snapshot is written")
+    has(
+      screen_mod.compare("wide", wide, sopts).actual,
+      "1|a日b #####",
+      "the masked clock in the file"
+    )
+    c.api.nvim_buf_set_lines(0, 0, -1, false, { "a日b 23:59" })
+    eq(
+      screen_mod.compare("wide", c.screen(), sopts).status,
+      "match",
+      "another time behind the mask still matches"
+    )
+    c.api.nvim_buf_set_lines(0, 0, -1, false, { "a日c 23:59" })
+    eq(
+      screen_mod.compare("wide", c.screen(), sopts).status,
+      "differ",
+      "a changed character differs"
+    )
 
     -- ===================================================================
     -- 8. reset: a clean editor stays clean, leaks are NAMED

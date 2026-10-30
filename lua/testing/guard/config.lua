@@ -45,7 +45,8 @@ M.DEFAULTS = {
       -- are huge, the walk costs seconds per file and is cut at `max_files`).
       watch_stdpath = false,
       -- Snapshot: directory names and patterns (on the file name) that are never looked at.
-      ignore = { ".git", ".deps", "node_modules", ".testing" },
+      -- `__snapshots__`: the screen snapshots testing.screen writes (its own files, not the spec's).
+      ignore = { ".git", ".deps", "node_modules", ".testing", "__snapshots__" },
       ignore_patterns = { "%.log$", "%.swp$", "%.shada$" },
       snapshot = true,
       max_files = 5000,

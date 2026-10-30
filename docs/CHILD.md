@@ -93,7 +93,7 @@ pipe on Windows, a socket in the private `XDG_RUNTIME_DIR` elsewhere), nothing h
 | `feed(keys, {remap=, typed=})` | `nvim_feedkeys` with `x`: the typeahead is drained before it returns; `<Esc>` names are translated; mappings apply |
 | `mouse(button, action, mods, row, col, grid?)` | `nvim_input_mouse`; 0-based screen cells |
 | `settle(timeout_ms, {raise=, rounds=, interval_ms=})` | wait until idle: `true`, or `false, why` |
-| `screen()` | `{ size, cursor, mode, lines, attrs, text }` |
+| `screen()` | `{ size, cursor, mode, lines, attrs, text, cells, cell_attrs }`; compare it with a file through `testing.screen` |
 | `notifies({clear=})`, `prompts({clear=})` | what the child notified / what it answered with "cancelled" |
 | `messages()` | the lines of `:messages` |
 | `effects()` | the guard's ledger `{ spawned, network, fs_outside_tmp }` (empty without a guard) |
@@ -150,6 +150,66 @@ Attaches a UI on first use (`size`), forces a redraw and reads the grid with `sc
 `attrs[r]` one letter per cell: space = no highlight, otherwise one letter per **distinct** attribute in
 order of first appearance. Attributes are comparable, not resolvable to a highlight group (use
 `vim.inspect_pos` in the child for a buffer position). `cursor` is the screen cursor (1-based).
+`cells[r]` and `cell_attrs[r]` are the same row by **screen column**: one entry per column, `""` (attribute
+`' '`) for the second cell of a wide character, so a column number means the same cell as on the screen.
+
+## Screen snapshots (`testing.screen`)
+
+The assertion half of the klicker: a screen is compared with a reviewed text file, like a Playwright
+screenshot, but as characters plus attribute letters (deterministic, diffable, no fonts).
+
+```lua
+-- @cache-inputs TESTS/__snapshots__/
+local screen = require("testing.screen")
+
+child.feed(":lua require('ui.kit').confirm({ question = 'Delete?' })<CR>")
+child.settle(2000)
+screen.expect(H.ok, "confirm.80x24", child.screen(), {
+  masks = { "%d%d:%d%d", { row = 24 } },     -- a clock anywhere; the whole command line
+})
+-- busted style: screen.check("confirm.80x24", child.screen(), opts) raises on a failure
+```
+
+The file is `TESTS/__snapshots__/<spec>/<name>.snap` (`<spec>` = the spec path without `TESTS/` and `.lua`; the
+directory is `opts.dir`, the spec file is found on the call stack or given as `opts.file`):
+
+```
+testing.nvim screen v1
+size: 80x24
+cursor: 12,35
+mode: n
+--- text
+01|
+02|  Delete?
+...
+--- attrs
+01|
+02|aaaaaaaaaaa
+...
+```
+
+Trailing blanks are cut in both blocks, line endings are LF (a CRLF checkout still matches). What a run does:
+
+| Situation | Result |
+|---|---|
+| the file has the same bytes | pass |
+| no file, not on CI | the file is **written**, pass, the message says so (review and commit it) |
+| no file, `CI` set | **fail**: CI never writes a snapshot |
+| it differs | **fail**, the message shows the first 12 differing lines (`-` file, `+` screen) |
+| it differs, `--update-snapshots` (or `opts.update`, `TESTING_UPDATE_SNAPSHOTS=1`) | the file is rewritten, pass |
+
+**Masks** hide what changes between runs. A string is a Lua pattern (`"%d%d:%d%d"`), `{ text = "..." }` a
+literal, `{ row = 24 }` a whole row, `{ row = 1, col = 70, cols = 11, rows = 1 }` a rectangle of screen cells
+(1-based). A masked cell is `#` in both blocks; masking either half of a wide character masks both. Attribute
+letters are given again after masking, so a masked clock with a highlight of its own does not shift the letters
+of everything behind it. `roots = { repo =, home =, tmp = }` and `replace = { { from =, to = } }` put
+placeholders in the text rows (this changes their width, not the width of the attribute rows); `cursor = false`,
+`mode = false` leave those lines out.
+
+Make screens comparable across machines with the child's options: a fixed `size` per snapshot (name it in the
+snapshot name, `confirm.80x24`), the deterministic locale and time zone (default), and a colour scheme the
+minit sets. Limits: the cache does not see the files on its own (declare them with `-- @cache-inputs`); a spec
+reads `.testing.lua` `snapshots.dir` only through `opts.dir`; there are no value snapshots (`a.snapshot`) yet.
 
 ## Notifications, messages, prompts, guard
 

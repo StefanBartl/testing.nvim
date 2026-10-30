@@ -625,6 +625,10 @@ local function execute(argv, sv)
     out(usage)
     return M.EXIT_OK
   end
+  -- testing.screen reads it in this host (in-process runs) and in every child (env allowlist)
+  if args.update_snapshots then
+    vim.env.TESTING_UPDATE_SNAPSHOTS = "1"
+  end
 
   for name in pairs(args.given) do
     if M.UNWIRED[name] then

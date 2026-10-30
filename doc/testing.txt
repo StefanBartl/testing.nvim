@@ -351,6 +351,8 @@ Control ~
   --no-trace         No trace artifact for a child that timed out or died.
   --isolate-home     A child gets a home directory of its own (HOME,
                      USERPROFILE, APPDATA, LOCALAPPDATA in its sandbox).
+  --update-snapshots Rewrite screen snapshots that differ (testing.screen);
+                     implies --no-cache.
   --host {c|l}       A child starts like plenary's host (`c`, default) or like
                      `nvim -l`.
   --env-allow {name} An environment variable (or PREFIX*) a child may inherit.
@@ -487,8 +489,10 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
                             and surface.
   coverage      table       bindings, commands, autocmds: 0..1 thresholds of
                             `testing surface`.
-  snapshots, backends
-                            Validated, reserved: nothing acts on them yet.
+  snapshots    table        `dir` is the default of testing.screen
+                            (`TESTS/__snapshots__`); a spec passes
+                            `opts.dir` for another one.
+  backends                  Validated, reserved: nothing acts on it yet.
 
 A dependency is looked up in $<NAME>_DIR, <root>/.deps/<name>, <root>/../<name>
 and stdpath('data')/lazy/<name>; the message of a miss names all four.
