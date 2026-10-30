@@ -26,6 +26,9 @@
 ---
 --- Sentinel (`LIB_TESTS_OK` style, printed last): only on exit 0 of a COMPLETE run with no skipped
 --- case. A filtered, partial or skip-containing run prints a distinct last line instead.
+--- The project's own sentinel is transitional: it ends on 2026-11-22 (decision of 2026-10-29, one
+--- month after the plenary removal); after that only `TESTING_OK` is printed
+--- (task `testing.nvim/legacy-sentinel-nach-2026-11-22-entfernen`).
 
 local util = require("testing.report.util")
 

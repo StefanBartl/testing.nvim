@@ -148,6 +148,8 @@ end
 ---token are fine, and so is a token passed to `print`, `say(...)`, `io.write` or `io.stdout:write`.
 ---A token whose line (or one of the two lines before it) calls something that prints is preferred;
 ---otherwise the last token of the file wins. Pure text; the text should have its comments removed.
+---Transitional: the project sentinel ends on 2026-11-22 (task
+---`testing.nvim/legacy-sentinel-nach-2026-11-22-entfernen`); then this lookup goes away.
 ---@param text string
 ---@return string|nil sentinel
 function M.find_sentinel(text)
