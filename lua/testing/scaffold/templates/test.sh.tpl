@@ -131,7 +131,9 @@ if [[ "${1:-}" == "ci" ]]; then
   [[ -n "$real_state" ]] || fail 'error: cannot ask nvim for stdpath("state"); the ci document would be lost.'
 fi
 
-export NVIM_APPNAME="${NVIM_APPNAME:-@@PLUGIN@@-tests}"
+# Always this name: an NVIM_APPNAME the developer exported (a second config) would make the run read and write that
+# app's real stdpath("data"). The exported one only decides where a plugin manager's checkouts are (DATA, above).
+export NVIM_APPNAME="@@PLUGIN@@-tests"
 # A run with `isolated = "none"` writes the plugin's state where Neovim keeps it: point state and
 # cache at a scratch directory, removed afterwards (a child editor has a sandbox of its own).
 scratch="$(mktemp -d)"

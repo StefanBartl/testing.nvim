@@ -59,8 +59,8 @@ fi
 
 # Throwaway app name, state and cache: the run never reads or writes the developer's real stdpath("state") and
 # stdpath("cache"). stdpath("config") and stdpath("data") are not redirected, they only carry the app name below
-# (an exported NVIM_APPNAME is kept, then they are that app's).
-export NVIM_APPNAME="${NVIM_APPNAME:-testing-nvim-tests}"
+# (always this name: an exported NVIM_APPNAME would make them that app's real ones).
+export NVIM_APPNAME="testing-nvim-tests"
 # Without a scratch directory the exports below would point at /state and /cache: stop instead
 scratch="$(mktemp -d)" || {
   printf '\033[31m%s\033[0m\n' "error: cannot create a scratch directory (mktemp -d failed; is TMPDIR writable?)." >&2

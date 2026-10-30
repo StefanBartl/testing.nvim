@@ -544,6 +544,27 @@ return function(H)
   )
   has(green.stdout, "load_spec.lua", "and it ran the generated spec")
 
+  -- an NVIM_APPNAME the developer exported (run() sets one) must not become the run's app name: the run would read
+  -- and write that app's real stdpath("data")
+  vim.fn.writefile({
+    "return function(H)",
+    '  H.eq(vim.env.NVIM_APPNAME, "runme-tests", "the throwaway app name, not the inherited one")',
+    "end",
+  }, run_proj .. "/TESTS/appname_spec.lua")
+  local appname = run(
+    { bash, "scripts/test.sh", "--file", "appname" },
+    run_proj,
+    vim.tbl_extend("force", deps_env, { NVIM_APPNAME = "developer-config" })
+  )
+  eq(
+    appname.code,
+    0,
+    "an exported NVIM_APPNAME is replaced by the throwaway one: "
+      .. tostring(appname.stdout)
+      .. tostring(appname.stderr)
+  )
+  vim.fn.delete(run_proj .. "/TESTS/appname_spec.lua")
+
   -- `scripts/test.sh ci`: the generated project needs no ci section, its pipeline is derived; without the runner the
   -- ci verb is exit 3 (infrastructure), the plain run stays exit 1
   local ci_list = run({ bash, "scripts/test.sh", "ci", "list" }, run_proj, deps_env)
