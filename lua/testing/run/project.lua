@@ -170,7 +170,12 @@ end
 ---@return boolean ok
 ---@return string|nil err
 local function run_minit(root, cfg)
-  require("testing.child.clipboard").install()
+  local clipboard = require("testing.child.clipboard")
+  local installed, why = clipboard.install()
+  if not installed and why == clipboard.ALREADY_RAN then
+    -- the host touched + or * before the run: the specs of this run write the user's clipboard
+    io.stderr:write("testing: note: the fake clipboard is not in place: ", why, "\n")
+  end
   local path = minit_path(root, cfg)
   if not path then
     return true, nil

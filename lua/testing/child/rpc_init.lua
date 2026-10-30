@@ -73,7 +73,12 @@ end
 do
   local cok, clip = pcall(require, "testing.child.clipboard")
   if cok then
-    clip.install()
+    local installed, why = clip.install()
+    if not installed and why == clip.ALREADY_RAN then
+      -- something before this point touched + or * (`has("clipboard")`, a register read): the real
+      -- provider is frozen in, and the spec writes the user's clipboard again
+      io.stderr:write("testing child: the fake clipboard is not in place: ", why, "\n")
+    end
   else
     io.stderr:write("testing child: the fake clipboard is not available: ", tostring(clip), "\n")
   end

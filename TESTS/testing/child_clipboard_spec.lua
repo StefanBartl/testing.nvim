@@ -44,7 +44,8 @@ return function(H)
   -- ===================================================================
   -- 2. install(): this file runs in a throwaway editor of this repository (dogfood), so the fake is in
   -- place already; a second install is refused and says why
-  if #vim.api.nvim_list_uis() == 0 then
+  -- (a headless host started with a config of its own that sets `g:clipboard` is not the dogfood case)
+  if #vim.api.nvim_list_uis() == 0 and (vim.g.clipboard == nil or vim.g.clipboard.name == NAME) then
     eq(
       vim.g.clipboard and vim.g.clipboard.name,
       NAME,
@@ -67,14 +68,15 @@ return function(H)
       "an RPC child has the fake clipboard"
     )
     local marker = "testing_child_clipboard_spec_marker_" .. tostring(vim.uv.hrtime())
+    -- this editor's + holds a marker of its own before the child writes: the child's store is not ours
+    -- (in a headless host this editor has the fake too, so + is its process store, never the system's)
+    local mine = "testing_child_clipboard_spec_parent_" .. tostring(vim.uv.hrtime())
+    vim.fn.setreg("+", mine)
     c.lua(("vim.fn.setreg('+', {%q, 'two'}, 'V')"):format(marker))
     eq(c.lua_get("vim.fn.getreg('+', 1, 1)"), { marker, "two" }, "+ round-trips in the child")
     eq(c.lua_get("vim.fn.getregtype('+')"), "V", "with its type")
     eq(c.lua_get("vim.fn.getreg('*')"), "", "* is a register of its own")
-    ok(
-      vim.fn.getreg("+") ~= marker .. "\ntwo\n" and vim.fn.getreg("+") ~= marker .. "\ntwo",
-      "what the child wrote to + did not reach this editor's +"
-    )
+    eq(vim.fn.getreg("+"), mine, "what the child wrote to + did not reach this editor's +")
 
     -- the project's minit decides: a `g:clipboard` it sets is the one the spec sees
     local minit = S.new_dir() .. "/minit.lua"

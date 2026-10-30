@@ -28,6 +28,10 @@ local M = {}
 ---The `name` of the provider: what `vim.g.clipboard.name` answers in a child.
 M.NAME = "testing-fake-clipboard"
 
+---The reason `install()` gives when the editor's provider already ran: the one refusal a caller
+---reports (the other two, a UI or a `g:clipboard` somebody set, are expected).
+M.ALREADY_RAN = "the clipboard provider already ran"
+
 ---A `g:clipboard` provider whose `+` and `*` are two stores in this process. `copy` receives the lines and
 ---the register type the editor hands a provider; `paste` answers `[lines, regtype]`, so a linewise or
 ---blockwise yank comes back as it went in.
@@ -58,7 +62,7 @@ function M.install()
     return false, "g:clipboard is set"
   end
   if vim.g.loaded_clipboard_provider ~= nil then
-    return false, "the clipboard provider already ran"
+    return false, M.ALREADY_RAN
   end
   if #vim.api.nvim_list_uis() > 0 then
     return false, "the editor has a UI"
