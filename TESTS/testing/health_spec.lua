@@ -70,6 +70,23 @@ return function(H)
     has(text, "safe_call keeps non-string errors", "the report probes safe_call")
     has(text, "no .testing.lua in", "no .testing.lua is an info, not a problem")
     lacks(text, "ERROR", "a healthy setup holds no error:\n" .. text)
+    -- every lib.nvim / lib.lua module the plugin requires by name is checked by the report (a module missing
+    -- from the list would surface as an error at the first use instead of in :checkhealth)
+    local here = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))
+    local lua_dir = vim.fs.dirname(vim.fs.dirname(here)) .. "/lua"
+    local used = {}
+    for _, file in ipairs(vim.fn.globpath(lua_dir, "**/*.lua", false, true)) do
+      local fh = assert(io.open(file, "rb"))
+      local src = fh:read("*a")
+      fh:close()
+      for mod in src:gmatch('require%("(lib%.[%w_]+%.[%w_.]+)"%)') do
+        used[mod] = true
+      end
+    end
+    ok(next(used) ~= nil, "the plugin's sources name lib modules")
+    for mod in pairs(used) do
+      has(text, mod .. " -- ", "the report checks " .. mod .. ", which the plugin requires")
+    end
 
     -- 2. An old lib.nvim (module missing): name the module and the commit that is needed -------
     local mod = "lib.nvim.fs.write.atomic"

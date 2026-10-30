@@ -48,6 +48,12 @@ local REQUIRED_LIB = {
   { "lib.nvim.fs.write.atomic", "atomic write of the JSON IR and the reports" },
   { "lib.nvim.fs.write.append", "appending to the history files" },
   { "lib.nvim.system.job", "process execution (runner)" },
+  { "lib.lua.config", "the setup() configuration" },
+  { "lib.nvim.cross.executable", "finding the tools of a testing ci step" },
+  { "lib.nvim.json.canonical", "canonical JSON of the testing ci events and digests" },
+  { "lib.nvim.progress", "the progress of :Testing ci" },
+  { "lib.nvim.ui.kit", "the matrix view of :Testing surface --matrix" },
+  { "lib.nvim.window.make_scratch", "the hover float" },
 }
 
 ---Kernel modules the CLI and the in-process driver need; a failure here is a defect of the plugin
