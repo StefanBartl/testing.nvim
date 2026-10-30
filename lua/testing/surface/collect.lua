@@ -8,7 +8,8 @@
 --- What happens in the child, in this order:
 ---   1. the project's minimal init (`minit`) runs as the `-u` init and puts the project and its
 ---      dependencies on the runtimepath (plus `opts.deps`, resolved with `testing.deps`; each one is also
----      set as `$<NAME>_DIR`, and `REPOS_DIR` and `opts.env_allow` are inherited, as in a test run);
+---      set as `$<NAME>_DIR` and `opts.env_allow` is inherited, as in a test run; `REPOS_DIR` is
+---      inherited always, which a test run does only when `env_allow` lists it);
 ---   2. `opts.setup_chunk` (a Lua chunk) runs, or else `require(<plugin>).setup(<opts.setup>)` when
 ---      the module has a `setup` function (`.testing.lua` `setup` are the options);
 ---   3. `testing.surface.read.read` returns the surface.
@@ -113,7 +114,8 @@ function M.collect(root, opts)
     prepend[#prepend + 1] = lib.dir
     extra_env[deps.env_name("lib.nvim")] = lib.dir
   end
-  -- `REPOS_DIR` (the layout a minit falls back to) and the project's `env_allow`, as in a test run
+  -- the project's `env_allow` as in a test run, plus `REPOS_DIR` (the layout a minit falls back to) always:
+  -- a test run inherits it only when `env_allow` lists it
   local env_allow = { "REPOS_DIR" }
   vim.list_extend(env_allow, opts.env_allow or {})
   local spawn = opts.spawn or require("testing.rpc").spawn
