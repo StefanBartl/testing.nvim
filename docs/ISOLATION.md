@@ -85,7 +85,7 @@ return {
     scheduled_error = "error",-- errors in vim.schedule callbacks, timers, jobs
     prompt = "error",         -- blocking input()/confirm()/getchar()/vim.ui.*
     deprecation = "warn",     -- vim.deprecate (--strict makes it fail)
-    process_net = "off",      -- spawned processes and network connections
+    process_net = "warn",     -- spawned processes and network connections
     clock = false,            -- virtual clock and a fixed random seed (opt-in)
   },
   guard_allow = {

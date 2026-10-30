@@ -155,8 +155,8 @@ end]==],
       saw = saw or n:find("spawned and network are not measured", 1, true) ~= nil
     end
     ok(
-      saw,
-      "the default (process_net off): the case in the IR says spawned/network are not measured"
+      not saw,
+      "the default (process_net warn): spawned/network are measured, no 'not measured' note"
     )
 
     -- without a guard configuration nothing is measured, and the case says so
@@ -190,7 +190,8 @@ end]==],
     -- what the hanging child needs to write its own timeout record and quit
     local limits = { timeouts = { file_ms = 6000 }, grace_ms = 1000 }
     local root = S.new_root()
-    local rep = run(root, files, order, nil, limits)
+    -- process_net off on purpose: the dead child's case must still say what the ledger could not see
+    local rep = run(root, files, order, { guards = { process_net = "off" } }, limits)
     eq(
       S.statuses(rep),
       { "TESTS/ok_spec.lua:pass", "TESTS/crash_spec.lua:crash", "TESTS/hang_spec.lua:timeout" },

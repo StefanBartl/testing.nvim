@@ -52,14 +52,15 @@ local DEFAULTS = {
     jobs = 1,
     -- Guards (safety nets, NOT a sandbox: Lua code can bypass every monkeypatch). Per guard "off",
     -- "warn" (a finding in the report) or "error" (a finding fails the case). `clock` is opt-in.
-    -- `process_net` is off by default for now; its LEDGER (`effects`) is always collected.
+    -- `process_net` warns by default (a spawn or a connection is a finding, never a failure); its
+    -- LEDGER (`effects`) is always collected.
     guards = {
       fs = "warn",
       state = "warn",
       scheduled_error = "error",
       prompt = "error",
       deprecation = "warn",
-      process_net = "off",
+      process_net = "warn",
       clock = false,
     },
     -- What the guards let through, each a list: writes below these paths (fs), these executables

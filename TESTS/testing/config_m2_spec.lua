@@ -29,10 +29,10 @@ return function(H)
       scheduled_error = "error",
       prompt = "error",
       deprecation = "warn",
-      process_net = "off",
+      process_net = "warn",
       clock = false,
     },
-    "guards: the safe set (prompt and scheduled_error fail, state and fs warn, process_net off, clock opt-in)"
+    "guards: the safe set (prompt and scheduled_error fail, state, fs and process_net warn, clock opt-in)"
   )
   eq(d.guard_allow, { fs = {}, spawn = {}, network = {} }, "guard_allow: nothing is let through")
   eq(d.pool, { size = 0, reuse = false }, "pool: size 0 means `jobs`, no reuse")

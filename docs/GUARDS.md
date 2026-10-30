@@ -83,8 +83,10 @@ A section is a table or a bare mode string (`fs = "off"`, `prompt = false`).
 
 These are the defaults of the guard layer itself (`guard.install` called by a spec or a tool). **The runner
 (`testing`, `.testing.lua`) starts from its own, safer set** ([CONFIG.md](CONFIG.md)): `fs = "warn"`,
-`state = "warn"`, `process_net = "off"` (its ledger then says "not measured"), the rest as below. A project
-switches `process_net` on with `guards = { process_net = "warn" }` and lists what is expected.
+`state = "warn"`, `process_net = "warn"` (a spawn or a connection is a finding, nothing turns red), the rest
+as below. A project lists what is expected in `guard_allow` and makes it strict with
+`guards = { process_net = "error" }`; `"off"` switches it off (its ledger then says "not measured"). The
+`.testing.lua` written by `:Testing init` sets `process_net = "warn"` explicitly.
 
 | Guard | Default mode (guard layer) | Fails the case by default |
 | --- | --- | --- |
@@ -397,7 +399,7 @@ written by testing.nvim: the fleet repositories were only measured. The shape:
 
 ```lua
 guard_allow = { spawn = { "git" }, fs = { "TESTS" }, network = {} },
-guards = { process_net = "warn" },   -- the spawn net is off by default; with it on, list what is expected
+guards = { process_net = "error" },  -- the spawn net warns by default; with the list in place, make it strict
 ```
 
 `guard_allow.fs` takes directories (prefix match on the resolved path; a relative path is resolved

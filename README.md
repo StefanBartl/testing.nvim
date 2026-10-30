@@ -82,7 +82,7 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
 - **Guards** ([docs/GUARDS.md](docs/GUARDS.md)): safety nets, not a sandbox. They name what a spec
   leaves behind ("spec X leaves autocmd Y in group Z", a stub in `package.preload`, a running job), what
   it writes outside the run folder, an error in a scheduled callback, a prompt nobody answers, a
-  deprecation, and a process or connection (`process_net`, off by default; `guards.<name>` also takes a table to tune a guard, see [docs/GUARDS.md](docs/GUARDS.md#tuning-a-guard-in-testinglua)). They run in this editor
+  deprecation, and a process or connection (`process_net`, warn by default; `guards.<name>` also takes a table to tune a guard, see [docs/GUARDS.md](docs/GUARDS.md#tuning-a-guard-in-testinglua)). They run in this editor
   and in every child; findings are in the terminal report, JUnit, GitHub and the IR (`case.guards`,
   `case.effects`). This repository's own suite runs with every guard on `error`.
 - **The RPC child** ([docs/CHILD.md](docs/CHILD.md)): `testing.rpc` starts an embedded, headless,
@@ -148,7 +148,7 @@ Known limits, not hidden:
   objects from Lua); on POSIX its process group is.
 - The runner itself is started with `nvim -l` (`v:vim_did_enter` is `1`, `expand("<cfile>")` raises);
   specs that need the host of a `-c` command must run in a child (`isolated = "file"`, host `c`).
-- `effects` of a case are filled by the guards: with `process_net` off (the default) no process or
+- `effects` of a case are filled by the guards: with `process_net` off (warn is the default) no process or
   connection is seen, with `fs` off no write, and the case says so in its notes; an empty list is not a
   measurement then.
 - The `init` subcommand exists only as `:Testing init`, not on the command line.

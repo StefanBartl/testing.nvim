@@ -321,6 +321,11 @@ return function(H)
   eq(loaded.problems, {}, ".testing.lua has no warning")
   eq(loaded.config.plugin, "myplug", ".testing.lua names the plugin")
   eq(loaded.config.deps, { "lib.nvim" }, ".testing.lua names the dependency")
+  eq(
+    loaded.config.guards and loaded.config.guards.process_net,
+    "warn",
+    ".testing.lua switches the process/network guard on (warn)"
+  )
   if not is_windows then
     local stat = vim.uv.fs_stat(root .. "/scripts/test.sh")
     ok(bit.band(stat.mode, tonumber("100", 8)) ~= 0, "scripts/test.sh is executable")

@@ -433,6 +433,7 @@ unknown keys are warnings (the default stays); an unusable file is exit 2.
                             process_net: "off"|"warn"|"error" or a table
                             { mode = ..., categories, ignore_*, keep, allow,
                             ... } (docs/GUARDS.md); clock: boolean.
+                            Runner default: process_net "warn".
   guard_allow  table        { fs, spawn, network } string lists.
   pool         table        { size = n, reuse = boolean }: the warm pool.
   determinism  boolean      Fixed LANG/LC_ALL/TZ in a child. Default true.
