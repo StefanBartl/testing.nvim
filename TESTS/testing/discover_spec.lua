@@ -364,16 +364,19 @@ return function(H)
       { "TESTS/link_spec.lua", "TESTS/real_spec.lua" },
       "a symlinked directory is not entered, a symlinked file is listed, a broken link is not"
     )
-    local link_file = found.files[1]
+    -- a failed check above must not turn into an index error that hides the blocks below
+    local link_file = found.files[1] or {}
     eq(link_file.symlink, true, "the symlinked file is marked")
     local sd = findings(found, "symlink_dir")
     eq(#sd, 1, "the symlinked directory is reported")
-    eq(sd[1].path, "TESTS/linked", "by path")
-    eq(sd[1].rule, "ERR-34", "under ERR-34")
-    has(sd[1].message, "not entered", "saying it was not entered")
+    local sd1 = sd[1] or {}
+    eq(sd1.path, "TESTS/linked", "by path")
+    eq(sd1.rule, "ERR-34", "under ERR-34")
+    has(sd1.message or "", "not entered", "saying it was not entered")
     eq(#findings(found, "symlink_file"), 1, "the symlinked file is reported")
-    eq(#findings(found, "broken_symlink"), 1, "the broken link is reported")
-    eq(findings(found, "broken_symlink")[1].severity, "error", "as an error")
+    local broken = findings(found, "broken_symlink")
+    eq(#broken, 1, "the broken link is reported")
+    eq((broken[1] or {}).severity, "error", "as an error")
   end
 
   -- ------------------------------------------------------------------ spec_pattern (filetree-style names)
