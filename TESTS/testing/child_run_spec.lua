@@ -405,13 +405,38 @@ describe("slow load", function()
   end)
 end)
 ]==],
-  }, { "TESTS/stuck_spec.lua", "TESTS/slowload_spec.lua" }, "busted")
+    -- the file is over (its final `case` record is written), but finishing it and quitting the editor
+    -- takes longer than case_ms + grace (a loaded runner): no case runs any more, so that is no stuck case.
+    -- The delay sits in the child's own fragment writer, right after the first final record.
+    ["TESTS/slowquit_spec.lua"] = [==[
+local fragment = require("testing.child.fragment")
+local append = fragment.append
+fragment.append = function(path, record)
+  local ok, err = append(path, record)
+  if record.k == "case" then
+    fragment.append = append
+    vim.uv.sleep(1500)
+  end
+  return ok, err
+end
+describe("slow quit", function()
+  it("still passes", function()
+    assert.is_true(true)
+  end)
+end)
+]==],
+  }, { "TESTS/stuck_spec.lua", "TESTS/slowload_spec.lua", "TESTS/slowquit_spec.lua" }, "busted")
   local repb = S.run(rootb, eb, { timeouts = { case_ms = 400, file_ms = 60000 }, grace_ms = 300 })
-  local stuck, slow = {}, {}
+  local by_file = {
+    ["TESTS/stuck_spec.lua"] = {},
+    ["TESTS/slowload_spec.lua"] = {},
+    ["TESTS/slowquit_spec.lua"] = {},
+  }
   for _, bc in ipairs(repb.result.cases) do
-    local bucket = bc.file == "TESTS/stuck_spec.lua" and stuck or slow
+    local bucket = by_file[bc.file]
     bucket[#bucket + 1] = bc.status
   end
+  local stuck, slow = by_file["TESTS/stuck_spec.lua"], by_file["TESTS/slowload_spec.lua"]
   eq(stuck, { "pass", "timeout" }, "a stuck case: the earlier case is kept, then one timeout")
   has(
     repb.result.cases[2].error.message,
@@ -419,6 +444,33 @@ end)
     "and the timeout names the case limit"
   )
   eq(slow, { "pass" }, "a file that is slow to load is not killed as a stuck case")
+  eq(
+    by_file["TESTS/slowquit_spec.lua"],
+    { "pass" },
+    "a file that is slow to finish and quit after its last case is not killed as a stuck case"
+  )
+  -- the scan behind it: complete lines only, a half-written line is scanned again once it is complete
+  local isolated = require("testing.run.isolated")
+  local scan_path = S.new_root() .. "/frag.ndjson"
+  local function put(text)
+    local f = assert(io.open(scan_path, "ab"))
+    f:write(text)
+    f:close()
+    return vim.uv.fs_stat(scan_path).size
+  end
+  local size1 = put('{"k":"progress","case":{"k":"done"}}\n{"k":"ca')
+  local over1, next1 = isolated.scan_file_over(scan_path, 0, size1)
+  eq(
+    { over1, next1 },
+    { false, 37 },
+    "a progress record (whatever it nests) and half a line: not over yet"
+  )
+  local size2 = put('se","case":{}}\n')
+  eq(
+    { isolated.scan_file_over(scan_path, next1, size2) },
+    { true, size2 },
+    "the completed final record: over"
+  )
 
   -- ===================================================================
   -- 6. a prompt nobody answers (a raw :call input()) is stopped by the hard timeout, not hung

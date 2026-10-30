@@ -332,6 +332,7 @@ end
 ---@field stall_limit? number ms without a new record that count as a stuck case (busted).
 ---@field progress_ms? number Monotonic ms of the last new record.
 ---@field frag_size? integer Size of the fragment at `progress_ms`.
+---@field frag_scanned? integer Bytes of the fragment the supervisor already scanned for the end of the file.
 ---@field out Testing.Child.Buffer Everything the child printed (stdout and stderr, arrival order).
 ---@field stdout Testing.Child.Buffer What it wrote to stdout.
 ---@field err Testing.Child.Buffer What it wrote to stderr.

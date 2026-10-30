@@ -45,7 +45,8 @@
 ---     `file_ms` and normally ends the file with a precise message first);
 ---   * case (busted files only): `case_ms` + `GRACE_MS` without a NEW record in the fragment once the
 ---     first one is there (loading a file with big `describe` bodies, on a loaded machine, is not a
----     stuck case; until the first record only the file deadline counts).
+---     stuck case; until the first record only the file deadline counts, and so it does again once the
+---     first final `case` or the `done` record is there: finishing the file and quitting is no case).
 ---
 --- WARM POOL (`pool.reuse`, `isolated = "file"`, never for `script` files or CASE mode). Instead of a
 --- process per file, `testing.run.pool` lends out embedded editors (`testing.rpc`): the file runs in a
@@ -100,6 +101,43 @@ local function tail(s, n)
     cut = cut + 1
   end
   return "..." .. s:sub(cut)
+end
+
+---Scan the records a child appended to its fragment since byte `from` (complete lines only) for the end of
+---the file: a final `case` or the `done` record means no case runs any more, so the stall window (a stuck
+---case) no longer applies; finishing the file and quitting the editor only count against the file deadline.
+---@param path string
+---@param from integer Byte offset already scanned (the start of an incomplete line).
+---@param size integer Current size of the fragment.
+---@return boolean over The file's cases are over.
+---@return integer next The offset to scan from next time.
+function M.scan_file_over(path, from, size)
+  if size <= from then
+    return false, from
+  end
+  local fd = vim.uv.fs_open(path, "r", 438)
+  if not fd then
+    return false, from
+  end
+  local chunk = vim.uv.fs_read(fd, size - from, from)
+  vim.uv.fs_close(fd)
+  if type(chunk) ~= "string" then
+    return false, from
+  end
+  local pos, over = 1, false
+  while true do
+    local nl = chunk:find("\n", pos, true)
+    if not nl then
+      break
+    end
+    local line = chunk:sub(pos, nl - 1)
+    pos = nl + 1
+    local ok, rec = pcall(vim.json.decode, line)
+    if ok and type(rec) == "table" and (rec.k == "case" or rec.k == "done") then
+      over = true
+    end
+  end
+  return over, from + pos - 1
 end
 
 ---@param rel string
@@ -1021,7 +1059,7 @@ function M.run(opts)
         handle.deadline = timeouts.file_ms and (handle.started_ms + timeouts.file_ms + grace) or nil
         handle.stall_limit = (is_busted and timeouts.case_ms) and (timeouts.case_ms + grace) or nil
         handle.progress_ms = handle.started_ms
-        handle.frag_size = 0
+        handle.frag_size, handle.frag_scanned = 0, 0
         slot.handle = handle
         slot.state = "running"
         live[#live + 1] = slot
@@ -1191,7 +1229,7 @@ function M.run(opts)
     h.deadline = timeouts.file_ms and (h.started_ms + timeouts.file_ms + grace) or nil
     h.stall_limit = (is_busted and timeouts.case_ms) and (timeouts.case_ms + grace) or nil
     h.progress_ms = h.started_ms
-    h.frag_size = 0
+    h.frag_size, h.frag_scanned = 0, 0
     slot.handle, slot.fragment, slot.state = h, frag_path, "running"
     live[#live + 1] = slot
 
@@ -1411,6 +1449,13 @@ function M.run(opts)
             if size ~= h.frag_size then
               h.frag_size = size
               h.progress_ms = t
+              local over
+              over, h.frag_scanned =
+                M.scan_file_over(slot.fragment or slot.plan.fragment, h.frag_scanned or 0, size)
+              if over then
+                -- the file's cases are over: finishing and quitting (slow on a loaded machine) is no stuck case
+                h.stall_limit = nil
+              end
             end
           end
           if h.deadline and t >= h.deadline then

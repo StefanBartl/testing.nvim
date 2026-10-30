@@ -108,7 +108,8 @@ inside the file, so only `file_ms` applies there.
 **Child editors have hard limits.** With `--isolated file` (default for busted files) the file runs
 in a child process (`testing.child`) and the POOL enforces the limits from outside: `file_ms` plus a
 2 s grace since the start, and for busted files `case_ms` plus the grace without a new case once the
-first one finished (loading a big file is not a stuck case). The whole process tree is killed
+first one finished and until the file is over (loading a big file, or finishing it and quitting the
+editor on a loaded machine, is not a stuck case). The whole process tree is killed
 (Windows `taskkill /T /F`, POSIX the process group), the status is `timeout` for that file only, the
 cases that finished before are kept, the run goes on. The in-child guard above still runs first and
 usually ends the file with the precise message.
