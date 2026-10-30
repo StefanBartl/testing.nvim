@@ -67,7 +67,7 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `minit` | `false` or relative path | `"TESTS/minimal_init.lua"` | Minimal init of the project; it runs in this editor and in every child before the spec. |
 | `deps` | list of directory names | `{}` | Dependencies the run needs (see below). A missing one is exit code `3`. |
 | `setup` | table | `{}` | Options `testing conformance` and `testing surface` call the plugin's `setup()` with. Put the options that switch every optional part on here: opt-in keymaps that the default `setup()` does not bind are not part of the surface. |
-| `timeouts.case_ms` | integer > 0 | `10000` | Timeout of one case: a guard in this editor, **hard** in a child (a busted file whose child writes no new case for `case_ms` + 2 s is killed with its process tree). |
+| `timeouts.case_ms` | integer > 0 | `10000` | Timeout of one case: a guard in this editor, **hard** in a child (a busted file whose child writes no new case for `case_ms` + 2 s is killed with its process tree; before its first case and once its final results are written only `file_ms` counts). |
 | `timeouts.file_ms` | integer > 0 | `60000` | Timeout of one spec file; hard in a child (`file_ms` + 2 s, then the process tree is killed and the file is one `timeout` case). |
 | `conformance.load_budget_ms` | number >= 0 | `40` | K10 of `testing conformance`: `require` + `setup()` must fit in this many milliseconds. |
 | `conformance.gate` | boolean | `false` | `true`: `testing conformance` exits `1` when a check failed. Off until the findings of the repository are triaged ([CONFORMANCE.md](CONFORMANCE.md)). |
