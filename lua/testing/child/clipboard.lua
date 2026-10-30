@@ -14,8 +14,8 @@
 --- and before the minit of a headless in-process run (`testing.run.project`), so a minit that sets
 --- `g:clipboard` itself still wins. It refuses, and says why:
 ---
----   * an editor with a UI: `:Testing` in-process runs in the user's own editor and must not take their
----     clipboard away;
+---   * an editor with a UI: it is the user's and must not lose their clipboard (`:Testing` never runs
+---     specs there: `testing.bindings.child` starts a headless runner, which gets the fake);
 ---   * an editor whose `g:clipboard` is set: the project or the user decided;
 ---   * an editor whose provider already ran (`g:loaded_clipboard_provider`): the editor read `g:clipboard`
 ---     once and would not look at it again.
