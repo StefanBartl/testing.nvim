@@ -35,11 +35,17 @@ return function(H)
       seed = (seed * 1103515245 + 12345) % 2147483648
       return seed % n
     end
+    local gaps = 0
     for _ = 1, 200 do
       local n = rnd(30)
       local w = {}
       for i = 1, n do
-        w[i] = rnd(4) == 0 and nil or rnd(100)
+        if rnd(4) == 0 then
+          w[i] = nil -- a slot without a weight
+          gaps = gaps + 1
+        else
+          w[i] = rnd(100)
+        end
       end
       local got = slowest.order(n, weights_of(w))
       local seen = {}
@@ -55,6 +61,7 @@ return function(H)
         break
       end
     end
+    ok(gaps > 0, "the random lists do contain slots without a weight (" .. gaps .. ")")
     ok(true, "200 random weight lists: always a permutation")
   end
 

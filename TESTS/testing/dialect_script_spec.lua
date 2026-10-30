@@ -160,11 +160,19 @@ return function(H)
   eq(problems, {}, "a script case validates")
   ok(valid, "valid")
   for _, status in ipairs({ "timeout", "crash", "error" }) do
-    local c = judge({
+    local run = {
       timed_out = status == "timeout",
       crashed = status == "crash",
-      code = status == "error" and nil or 1,
-    })
+    }
+    if status ~= "error" then
+      run.code = 1
+    end
+    ok(
+      (run.code == nil) == (status == "error"),
+      status .. " run: the exit code is missing exactly for `error`"
+    )
+    local c = judge(run)
+    ok(c.status ~= "pass", status .. " case is not a pass (got " .. tostring(c.status) .. ")")
     ok(
       result.validate({
         schema_version = 1,

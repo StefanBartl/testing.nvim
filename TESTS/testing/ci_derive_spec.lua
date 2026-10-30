@@ -100,29 +100,41 @@ return function(H)
     )
 
     -- the spelling of the spec folder does not change the pipeline: `tests/` is found on every system.
-    -- Limit of this case: it can only go red without the fix on a case-SENSITIVE file system (Linux), where
-    -- `TESTS/` and `tests/` are two folders. On Windows and macOS they are one folder, so finding the spec there
-    -- proves nothing about the spelling. What is checked on every system below: discovery lists the spec, and
-    -- exactly once when its case-folding is forced on (the `case_insensitive` seam of `discover`).
+    -- Limit of the call above: it only proves something on a case-SENSITIVE file system (Linux), where `TESTS/`
+    -- and `tests/` are two folders. On Windows and macOS they are one folder, and `fs_realpath` (libuv, Windows)
+    -- returns the on-disk spelling, so both spellings collapse by themselves: the case-folding of `discover`
+    -- is never needed there. To exercise it anyway, the loop below feeds `discover` an identity `realpath` (the
+    -- spelling stays as given, like on a mount that does not canonicalize) and checks the exact count:
+    -- folded -> the spec once, not folded -> once per spelling (`TESTS/` and `tests/`). On a case-sensitive
+    -- file system the folder `TESTS/` does not exist, so the spec is listed once either way.
     local lower = project("lowercase", { ["tests/x_spec.lua"] = "return 1\n" })
     eq(
       derive.section(lower, {}).profiles.full,
       { "suite" },
       "derive: specs in a lowercase tests/ give the suite on every system"
     )
+    local insensitive_fs = require("testing.discover").is_case_insensitive(lower)
     for _, folded in ipairs({ true, false }) do
-      local found = require("testing.discover").discover(lower, { case_insensitive = folded })
+      local found = require("testing.discover").discover(lower, {
+        case_insensitive = folded,
+        realpath = function(p)
+          return p
+        end,
+      })
       local count = 0
       for _, f in ipairs(found.files) do
         if f.rel:lower() == "tests/x_spec.lua" then
           count = count + 1
         end
       end
-      ok(
-        count >= 1 and (not folded or count == 1),
-        ("derive: discovery lists a lowercase tests/ spec (case_insensitive=%s, %d times)"):format(
+      local expected = (insensitive_fs and not folded) and 2 or 1
+      eq(
+        count,
+        expected,
+        ("derive: discovery lists a lowercase tests/ spec %d time(s) (case_insensitive=%s, file system %s)"):format(
+          expected,
           tostring(folded),
-          count
+          insensitive_fs and "case-insensitive" or "case-sensitive"
         )
       )
     end

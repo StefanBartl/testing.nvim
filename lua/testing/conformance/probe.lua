@@ -159,7 +159,10 @@ local function plain(value, depth)
   depth = depth or 0
   local t = type(value)
   if t == "function" or t == "userdata" or t == "thread" then
-    return value == vim.NIL and nil or true
+    if value == vim.NIL then
+      return nil
+    end
+    return true
   end
   if t ~= "table" then
     return value
@@ -175,6 +178,8 @@ local function plain(value, depth)
   end
   return out
 end
+
+M._plain = plain -- seam for specs
 
 ---Take the baseline: what the editor has before the plugin is loaded.
 ---@return { keymaps: integer, commands: integer, autocmds: integer, globals: integer }

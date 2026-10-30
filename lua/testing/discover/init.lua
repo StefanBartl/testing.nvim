@@ -541,8 +541,10 @@ function M.discover(root, opts)
   local include_legacy = opts.include_legacy ~= false
   local override_for = override_resolver(opts)
   local patterns = spec_patterns_of(opts)
-  -- `TESTS/` and `tests/` are ONE directory on a case-insensitive file system (Windows, macOS, WSL /mnt/*:
-  -- `fs_realpath` there keeps the spelling it was given): compare real paths case-folded, and only then
+  -- `TESTS/` and `tests/` are ONE directory on a case-insensitive file system (Windows, macOS, WSL /mnt/*).
+  -- Where `fs_realpath` returns the on-disk spelling (measured: libuv on Windows), both spellings already collapse
+  -- and the folding below is a no-op; where it may keep the spelling it was given (a mount that does not
+  -- canonicalize, e.g. WSL /mnt/*), the two would stay apart. So compare real paths case-folded, and only then
   local realpath = opts.realpath or uv.fs_realpath
   local ci = opts.case_insensitive
   if ci == nil then
