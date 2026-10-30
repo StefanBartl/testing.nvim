@@ -133,6 +133,25 @@ local function parent_tmp()
   return (vim.fs.normalize(vim.fs.dirname(vim.fn.tempname())):gsub("/+$", ""))
 end
 
+---The long form of an existing directory on Windows. The parent's `TEMP` there is often the 8.3 short
+---form (`C:\Users\STEFAN~1\...`), and `vim.fn.glob()` finds nothing below a path with a short-name
+---component, so a sandbox (`TEMP`/`TMP`/`TMPDIR`/XDG) built from it breaks every spec that globs below
+---`tempname()`. `fs_realpath` returns the on-disk long name. POSIX keeps the spelling it was given: a
+---symlinked temp dir does not break `glob`, and resolving it (macOS `/var` -> `/private/var`) would
+---only move the sandbox. A directory that does not exist (yet) is returned unchanged.
+---@param dir string
+---@return string
+local function long_form(dir)
+  if not is_windows then
+    return dir
+  end
+  local real = vim.uv.fs_realpath(dir)
+  if type(real) ~= "string" or real == "" then
+    return dir
+  end
+  return (real:gsub("\\", "/"):gsub("/+$", ""))
+end
+
 ---@class Testing.Child.Environment
 ---@field env table<string, string>
 ---@field dropped_env string[]
@@ -146,7 +165,7 @@ end
 ---@return Testing.Child.Environment
 function M.environment(spec)
   seq = seq + 1
-  local base = spec.base or parent_tmp()
+  local base = long_form(spec.base or parent_tmp())
   local name = spec.name or ("testing-child-%d-%d"):format(vim.fn.getpid(), seq)
   local sandbox = (base:gsub("\\", "/"):gsub("/+$", "")) .. "/" .. name
   local dirs, sandbox_vars, drop =

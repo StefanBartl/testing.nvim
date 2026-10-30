@@ -65,7 +65,9 @@ pipe on Windows, a socket in the private `XDG_RUNTIME_DIR` elsewhere), nothing h
 * **Sandbox**: one directory `testing-child-<pid>-<n>` below the temp dir with `config`, `data`,
   `state`, `cache`, `run`, `tmp`; `XDG_*`, `TEMP`/`TMP`/`TMPDIR` point into it, so `stdpath()` and
   `tempname()` never touch the real ones; the editor's log (`NVIM_LOG_FILE`) is in it. Removed by
-  `kill()` and when the process ended. `HOME` stays real (git needs it).
+  `kill()` and when the process ended. `HOME` stays real (git needs it). On Windows the base is
+  taken in its long form (`fs_realpath`): a parent `TEMP` in the 8.3 short form (`C:\Users\STEFAN~1\...`)
+  would otherwise reach the child, and `glob()` finds nothing below such a path.
 * **Isolated home** (opt-in: `isolate_home = true`, `--isolate-home`): the sandbox gets a `home`
   directory; `HOME`, `USERPROFILE` point there, `APPDATA`/`LOCALAPPDATA` below it, `HOMEDRIVE`/`HOMEPATH`
   name it too (Windows; libuv would otherwise copy the parent's into the child) or are removed. `~` and
