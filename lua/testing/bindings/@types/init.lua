@@ -31,6 +31,7 @@
 ---@field flags? Testing.Child.Flags
 ---@field json? string Where the IR is written (`run` only); default: a temp file that is removed afterwards.
 ---@field system? fun(argv: string[], opts: table, on_exit: fun(res: vim.SystemCompleted)): any Seam for specs (default `vim.system`).
+---@field trust_asked? boolean The run is the second one after the trust question (`testing.bindings.trust_prompt`): a refusal is not asked about again.
 
 ---@class Testing.Child.Verdict
 ---@field level "info"|"warn"|"error"

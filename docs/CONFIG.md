@@ -163,6 +163,10 @@ Only the entry arms the gate. A Lua caller of the library (a spec calling `testi
 below `TESTING_TRUST_ROOTS` (the script redirects `stdpath("state")`, so a store entry is not seen from it),
 and on CI the `ci` rule applies.
 
+From the editor the refusal is a question: `:Testing <cmd>` and `:Testing ci` ask once whether to trust the root,
+store it on yes (the store of the editor's `stdpath("state")`, which the child reads too) and run again
+([BINDINGS.md](BINDINGS.md#user-commands)). A headless nvim is never asked.
+
 Limits, honestly: the hash covers `.testing.lua`, not the specs or the minimal init (a changed spec of a
 trusted project runs); `--config <file>` is gated by the root, its own content is not hashed. The gate stops
 **accidents** (testing a cloned foreign repository by mistake), not an attacker who can write to your state

@@ -322,6 +322,7 @@ function M.start(sub, opts, on_done)
   on_done = on_done or function(verdict)
     M.show(verdict, "testing " .. sub)
   end
+  local given = opts
   opts = vim.tbl_extend("force", {}, opts)
   local own_json = false
   if sub == "run" and not opts.json then
@@ -335,18 +336,36 @@ function M.start(sub, opts, on_done)
 
   local function finish(res)
     vim.schedule(function()
-      local ok, verdict = pcall(M.interpret, sub, res, opts)
-      if not ok then
-        verdict = {
-          level = "error",
-          message = "cannot read the result: " .. tostring(verdict),
-          items = {},
-        }
+      local function report()
+        local ok, verdict = pcall(M.interpret, sub, res, opts)
+        if not ok then
+          verdict = {
+            level = "error",
+            message = "cannot read the result: " .. tostring(verdict),
+            items = {},
+          }
+        end
+        if own_json then
+          pcall(os.remove, opts.json)
+        end
+        on_done(verdict)
       end
-      if own_json then
-        pcall(os.remove, opts.json)
+      -- an untrusted root: ask once, and on yes run again (with the caller's options, so a fresh IR file)
+      local prompt = require("testing.bindings.trust_prompt")
+      if not opts.trust_asked and prompt.refused(res.code, res.stderr) then
+        prompt.ask(opts.root, function(trusted)
+          local again = vim.tbl_extend("force", {}, given, { trust_asked = true })
+          if trusted and M.start(sub, again, on_done) then
+            if own_json then
+              pcall(os.remove, opts.json)
+            end
+            return
+          end
+          report()
+        end)
+        return
       end
-      on_done(verdict)
+      report()
     end)
   end
 

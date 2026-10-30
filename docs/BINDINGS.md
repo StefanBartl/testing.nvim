@@ -89,6 +89,13 @@ assertion. The verdict is the child's exit code: 0 green, 1 failed, 2 usage or
 configuration error, 3 infrastructure error; a summary is only ever "green" for
 code 0, and a run that produced no readable result says so instead of "0 failed".
 
+A run in a root that is not trusted ([CONFIG.md](CONFIG.md#workspace-trust)) ends with exit 2 before anything of
+the project runs. `:Testing <cmd>` and `:Testing ci` then ask once (`vim.ui.select`): *Trust it and run again*
+stores the root like `testing trust add <root>` and starts the same run again; *Do not trust it* (or closing the
+question) leaves the refusal as the verdict. A second refusal of the run that follows is not asked about again,
+and a headless nvim (no UI) is never asked. `:Testing ci repos` does not ask: an untrusted repository is an
+`error` row of its table, trust it with `testing trust add <dir>` or list the parent in `TESTING_TRUST_ROOTS`.
+
 No subcommand takes a range or a count: there is no text to act on and nothing
 to repeat. `:Testing last` is the repeat.
 

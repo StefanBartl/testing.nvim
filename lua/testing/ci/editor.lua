@@ -878,7 +878,7 @@ function M.run_repos(o)
 end
 
 ---Start a pipeline run. Returns false with a reason when one is already running or the child cannot start.
----@param o { root: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, on_done?: fun(verdict: table) }
+---@param o { root: string, profile?: string, steps?: string[], keep_going?: boolean, reuse?: boolean, on_done?: fun(verdict: table), trust_asked?: boolean }
 ---@return boolean started
 ---@return string|nil err
 function M.run(o)
@@ -996,6 +996,7 @@ function M.run(o)
     end
   end)
   local stop_status = M.live_status(view, live)
+  local err_head = ""
   local function finish(res)
     vim.schedule(function()
       flush()
@@ -1006,33 +1007,58 @@ function M.run(o)
       entry.running = false
       local doc = read_json(json)
       pcall(os.remove, json)
-      local verdict = M.verdict(doc, res.code or -1, o.root, res.stderr)
-      if raw and verdict.level ~= "info" and #raw() > 0 then
-        local lines = { ("-- the last %d line(s) the suite printed:"):format(#raw()) }
-        vim.list_extend(lines, raw())
-        view.append(lines)
+      local function report()
+        local verdict = M.verdict(doc, res.code or -1, o.root, res.stderr)
+        if raw and verdict.level ~= "info" and #raw() > 0 then
+          local lines = { ("-- the last %d line(s) the suite printed:"):format(#raw()) }
+          vim.list_extend(lines, raw())
+          view.append(lines)
+        end
+        progress:finish(
+          verdict.level == "info" and "green" or verdict.level == "warn" and "partial" or "failed"
+        )
+        local notify = require("testing.notify").get()
+        notify[verdict.level](verdict.message)
+        if #verdict.items > 0 then
+          require("lib.nvim.ui.list").qf(verdict.items, "testing ci: findings", { open = "auto" })
+        end
+        M.refresh(o.root)
+        if o.on_done then
+          o.on_done(verdict)
+        end
       end
-      progress:finish(
-        verdict.level == "info" and "green" or verdict.level == "warn" and "partial" or "failed"
-      )
-      local notify = require("testing.notify").get()
-      notify[verdict.level](verdict.message)
-      if #verdict.items > 0 then
-        require("lib.nvim.ui.list").qf(verdict.items, "testing ci: findings", { open = "auto" })
+      -- an untrusted root: ask once, and on yes run the pipeline again
+      local prompt = require("testing.bindings.trust_prompt")
+      if not o.trust_asked and prompt.refused(res.code, err_head) then
+        prompt.ask(o.root, function(trusted)
+          if trusted then
+            progress:cancel("trusted, running again")
+            if M.run(vim.tbl_extend("force", {}, o, { trust_asked = true })) then
+              return
+            end
+          end
+          report()
+        end)
+        return
       end
-      M.refresh(o.root)
-      if o.on_done then
-        o.on_done(verdict)
-      end
+      report()
     end)
   end
   entry.running, entry.profile = true, o.profile or "default"
+  -- the start of stderr, kept for the trust gate's refusal (one line, written before anything runs)
+  local feed_err = feed("err")
+  local function on_stderr(e, data)
+    if data and #err_head < 4096 then
+      err_head = err_head .. data:sub(1, 4096 - #err_head)
+    end
+    feed_err(e, data)
+  end
   local ok, started = pcall(M.system, argv, {
     cwd = o.root,
     text = true,
     timeout = M.TIMEOUT_MS,
     stdout = feed("out"),
-    stderr = feed("err"),
+    stderr = on_stderr,
   }, finish)
   if not ok or not started then
     entry.running = false
