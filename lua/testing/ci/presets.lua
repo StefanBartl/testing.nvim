@@ -7,6 +7,14 @@
 ---
 --- In-process presets (`suite`, `conformance`, `surface`, `budget`) run inside the `testing ci` process through
 --- `testing.cli`, not as `nvim -l` inside `nvim -l`; their result lands in the same document.
+---
+--- A preset with `lint` is also a check of `testing lint` (`testing.lint`): one description of a linter for the
+--- pipeline, the command line and the editor. `files = true`: the tool takes the files to check after its fixed
+--- arguments (they replace the paths of `args`, its options stay); `false`: it checks the whole workspace and the
+--- findings are filtered afterwards. `fix` is the command that rewrites the files (`--fix`), `ext` the file
+--- extensions the check reads, `on_save = false` keeps an expensive check out of the check on save. `file_args` go
+--- before named files (stylua: its ignore file applies to them too), `valued` names the options of `args` whose
+--- value is the next argument (not a path), `path_option` the option that carries the path (`--check=<dir>`).
 
 local M = {}
 
@@ -19,6 +27,18 @@ local M = {}
 ---@field needs string[]
 ---@field version_argv? string[]
 ---@field efm? string|string[] Error format (`testing.ci.report.compile`: %f %l %c %m); alternatives as a list.
+---@field lint? Testing.Ci.PresetLint The preset is a check of `testing lint`.
+
+---@class Testing.Ci.PresetLint
+---@field files boolean The tool takes files (else it checks the whole workspace, the findings are filtered).
+---@field fix? string[] The command that rewrites files (the files, or the step's args with `--all`, follow it).
+---@field ext string[] File extensions the check reads (without the dot).
+---@field on_save? boolean false: never on save (default true).
+---@field message? string The text of a finding whose error format has no `%m`.
+---@field file_args? string[] Arguments that go before named files (check and fix).
+---@field valued? string[] Options of `args` that take the next argument as their value.
+---@field path_option? string The prefix of the argument that names the path (`--check=`); else a path is an argument
+---that is no option.
 
 ---@type table<string, Testing.Ci.Preset>
 local PRESETS = {
@@ -32,6 +52,30 @@ local PRESETS = {
     version_argv = { "stylua", "--version" },
     -- `Diff in <file>:` heads each file that is not formatted
     efm = "Diff in %f:",
+    lint = {
+      files = true,
+      fix = { "stylua" },
+      ext = { "lua" },
+      message = "not formatted (stylua)",
+      -- a file named on the command line is formatted even when `.styluaignore` excludes it, unless this is given
+      file_args = { "--respect-ignores" },
+      valued = {
+        "--config-path",
+        "-f",
+        "--glob",
+        "-g",
+        "--column-width",
+        "--indent-type",
+        "--indent-width",
+        "--line-endings",
+        "--quote-style",
+        "--call-parentheses",
+        "--collapse-simple-statement",
+        "--syntax",
+        "--num-threads",
+        "--stdin-filepath",
+      },
+    },
   },
   luacheck = {
     name = "luacheck",
@@ -42,6 +86,42 @@ local PRESETS = {
     needs = { "luacheck" },
     version_argv = { "luacheck", "--version" },
     efm = "%f:%l:%c: %m",
+    lint = {
+      files = true,
+      ext = { "lua" },
+      valued = {
+        "--config",
+        "--default-config",
+        "--std",
+        "--formatter",
+        "--cache",
+        "--jobs",
+        "-j",
+        "--filename",
+        "--max-line-length",
+        "--max-code-line-length",
+        "--max-string-line-length",
+        "--max-comment-line-length",
+        "--max-cyclomatic-complexity",
+        "--exclude-files",
+        "--include-files",
+      },
+    },
+  },
+  luals = {
+    name = "luals",
+    tool = "lua-language-server",
+    -- the level and the format the error format depends on; `args` names what is checked (`--check=<dir>`: a
+    -- single file is not checked at all, it reports "no problems")
+    fixed = { "--checklevel=Warning", "--check_format=pretty" },
+    args = { "--check=." },
+    needs = { "lua-language-server" },
+    version_argv = { "lua-language-server", "--version" },
+    -- `lua/a.lua:2:28 [Warning] Undefined global `x`. (undefined-global)`, coloured and after progress text: the
+    -- matcher strips the escapes and the progress (testing.ci.report.normalize_line); a path may hold blanks (%F)
+    efm = "%F:%l:%c %m",
+    -- the whole workspace in seconds: never on save
+    lint = { files = false, on_save = false, ext = { "lua" }, path_option = "--check=" },
   },
   suite = {
     name = "suite",
@@ -81,6 +161,18 @@ end
 function M.names()
   local out = vim.tbl_keys(PRESETS)
   table.sort(out)
+  return out
+end
+
+---The presets that are checks of `testing lint`, sorted.
+---@return string[]
+function M.lint_names()
+  local out = {}
+  for _, name in ipairs(M.names()) do
+    if PRESETS[name].lint then
+      out[#out + 1] = name
+    end
+  end
   return out
 end
 

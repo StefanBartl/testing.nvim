@@ -25,6 +25,9 @@ local DEFAULTS = {
   -- (docs/CI.md): `roots` are directories whose sub-directories with a `ci` section count ("$VAR" is expanded),
   -- `include` / `exclude` narrow them by directory name.
   ci = { repos = { roots = {}, include = {}, exclude = {} } },
+  -- `:Testing lint` (docs/CI.md). `on_save = true`: a written file is linted in the background (only the checks
+  -- that may run on save, never luals) and its diagnostics are updated.
+  lint = { on_save = false },
   -- Defaults of `.testing.lua` in a project root.
   project = {
     -- Lua module root of the project (conformance and coverage need it); "" = the directory name

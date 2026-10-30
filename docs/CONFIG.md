@@ -184,6 +184,7 @@ require("testing").setup({
   keymaps = {},
   hover = { max_width = 80, max_height = 20, max_diff_lines = 12 },
   surface_view = { keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } },
+  lint = { on_save = false },
 })
 ```
 
@@ -193,6 +194,7 @@ require("testing").setup({
 | `keymaps` | `table<string, string\|string[]\|false>` or `false` | `{}` | Moves or drops named keymap actions; `false` binds no key at all. See [BINDINGS.md](BINDINGS.md). The one action, `hover`, has no default key. |
 | `hover` | `{ max_width?, max_height?, max_diff_lines? }` | `{ 80, 20, 12 }` | Size of the hover over a test (`:Testing hover`, hover.nvim): longest line in display columns, most lines, lines of a failure diff. Positive integers. |
 | `surface_view` | `{ keys?: { jump?, status?, kind?, export? } }`, each an lhs or `false` | `{ keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } }` | Keys of the matrix view of `:Testing surface --matrix`, buffer-local to that view; `false` leaves one out. Two actions on the same key (with the defaults counted, `<cr>` is `<CR>`) or one on the view's own `?`, `q`, `<Esc>` is refused. The winbar legend and the `?` cheatsheet are built from the same table ([SURFACE.md](SURFACE.md#the-matrix-view-testing-surface---matrix)). |
+| `lint` | `{ on_save?: boolean }` | `{ on_save = false }` | `on_save = true`: a written file is linted in the background (`testing lint --on-save --file=<file>`, the checks that may run on save, never `luals`) and only its diagnostics are updated ([CI.md](CI.md#testing-lint-the-linters-on-the-changed-files)). |
 
 A key with the wrong type, and any unknown key, is dropped and reported with a warning; the
 default stays in place.

@@ -477,6 +477,8 @@ local DERIVED_KEYS = { skip = true, steps = true, default = true }
 ---@param root string
 ---@return Testing.Ci.Pipeline|nil pipeline With `derived` (`step = why`) when it was derived.
 ---@return string[]|nil problems
+---@return "absent"|nil why `absent`: the project simply has no pipeline (no `ci` section, nothing to derive), as
+---opposed to a configuration that cannot be used or a root that is not trusted.
 function M.load(root)
   local loaded = require("testing.config.project").load(root)
   if loaded.error then
@@ -509,11 +511,12 @@ function M.load(root)
   end
   local section, why = require("testing.ci.derive").section(root, loaded.config)
   if not section then
+    local only = #problems == 0
     problems[#problems + 1] = ("%s/.testing.lua has no `ci` section, and %s (docs/CI.md)"):format(
       root,
       tostring(why)
     )
-    return nil, problems
+    return nil, problems, only and "absent" or nil
   end
   ---@cast why table<string, string>
   local skip = raw.skip == nil and {} or raw.skip

@@ -115,10 +115,17 @@ decision of its own.
 | --- | --- | --- |
 | `stylua` | `stylua --check .` (`--check` is fixed, `args` replaces `.`: a step never turns into a formatter) | `stylua` |
 | `luacheck` | `luacheck --formatter plain --codes .` (`args` replaces `.`) | `luacheck` |
+| `luals` | `lua-language-server --checklevel=Warning --check_format=pretty --check=.` (`args` replaces `--check=.`, e.g. `{ "--check=lua" }`; a single file is not checked by LuaLS, name a directory). Never derived: a repo names it in a profile or runs `testing lint luals` | `lua-language-server` |
 | `suite` | the suite, in this process (`testing stamp <root>`, or `testing run` with `stamp = false`) | |
 | `conformance` | `testing conformance <root> --gate` in this process (a gate: without `--gate` it only reports) | |
 | `surface` | `testing surface <root>` in this process | |
 | `budget` | `testing budget <root>` in this process | |
+
+`stylua`, `luacheck` and `luals` are also the checks of [`testing lint`](#testing-lint-the-linters-on-the-changed-files):
+each carries a `lint` descriptor (`files`: the tool takes the files to check, else it checks the whole workspace and
+the findings are filtered; `fix`: the command `--fix` runs, only `stylua`; `ext`: the files it reads, `lua`;
+`on_save = false`: never on save, `luals`). One description of a linter for the pipeline, the command line and the
+editor.
 
 The in-process presets do not start `nvim -l` inside `nvim -l`: they run through `testing.cli` in the same process
 and with the same services. The suite step is green only when its Result-IR says so: exit `0` without a result is
@@ -326,11 +333,89 @@ Every line has `v` (`1`), `event` and `ts` (unix seconds).
 
 The findings themselves are in the document `testing-ci/1` (`--json`), which is complete when `run_done` is there.
 
+## `testing lint`: the linters on the changed files
+
+```
+testing lint [<check>...] [--file=<f>...|--changed|--all] [--fix] [--on-save] [--agent|--no-agent] [--json] [--root=<dir>]
+:Testing lint [<check>...] [--file|--changed|--all] [--fix] [--root=<dir>]
+```
+
+The lint checks without the rest of the pipeline, for the files that changed, the current file or everything.
+
+- **Checks**: the steps of the pipeline (written or [derived](#without-writing-a-pipeline-the-derived-one)) whose
+  preset lints (`stylua`, `luacheck`, `luals`), all of them by default; a step's own `args`, `needs`, `env` and
+  `timeout` apply. A named check is such a step, or a lint preset the pipeline does not have (its defaults:
+  `testing lint luals` in a repository whose pipeline has no `luals` step). That fallback is only for a project
+  that has no pipeline at all (no `ci` section, nothing to derive): an untrusted root or a `.testing.lua` that cannot
+  be used is exit `2` with the loader's problem (and `:Testing lint` asks for trust like `:Testing ci`). Anything
+  else is exit `2`.
+- **Scope**: `--changed` (default) the files changed against `HEAD` plus the untracked files git does not ignore;
+  `--file=<f>` this file (relative to the root, or absolute below it; outside the root is exit `2`), repeatable; a
+  value that names no file is split on commas (`--file=a.lua,b.lua`), so a file with a comma in its name is still
+  one file; `--all` exactly what the step checks in `testing ci` (its own `args`). The scopes exclude each other. A
+  check only sees the files with one of its extensions **and below the paths of its `args`** (a step with
+  `args = { "--std", "luajit", "lua" }` sees `lua/...`; `.` is everything; a path that is a file matches only
+  itself): a scope is never more than `--all`. The other files are listed as `not checked by <check> (outside its
+  args)` in the terminal report and as `not_checked` in the document, not as findings. Nothing to check is exit `0`
+  with `lint: nothing changed (...)`.
+- **How a check runs**: a check that takes files (`stylua`, `luacheck`) gets the files in place of the paths of
+  its `args`; the options of its `args` stay (`luacheck --formatter plain --codes --std luajit lua/a.lua`; an
+  option whose value is the next argument is known per preset). `stylua` gets `--respect-ignores` before named
+  files, so `.styluaignore` applies as it does for `--all` (check and fix). `luals` checks the whole workspace
+  (LuaLS checks no single file) and keeps the findings of the files in scope, compared as relative paths
+  (case-insensitive on Windows); it is green only when its output held findings and none was in scope: an exit `1`
+  without a single finding it could read (a crash, a configuration error) is red with its last output lines. The processes are those of
+  `testing ci`: the same `needs` lookup, deadline and error format.
+- **`--fix`**: a check with a fix (`stylua`) checks first, runs the fix on the files that had findings (with `--all`:
+  `stylua <its args>`; with named files `stylua --respect-ignores <files>`), checks again and names the files
+  that changed (`fixed: lua/a.lua`); a check without one
+  (`luacheck`, `luals`) runs as usual and says `<check>: no --fix`. The exit code is what is still wrong.
+- **A missing tool** skips that check with a reason that names the tool and where it was searched; the other checks
+  still run, and the exit code is `3`, never `0`, also next to a red check.
+- **Exit codes**, the worst wins: `0` green (or nothing to check), `1` findings, `2` usage, `3` a tool is missing or
+  a check could not run.
+- **Output**: the terminal report has a section per check (`== luacheck (2 files)`, its findings as
+  `file:line:col: message`, `-- luacheck: red, 2 finding(s)`) and the verdict (`lint: GREEN 2/2`, `lint: RED luacheck
+  (exit 1)`). `--agent` (the default in an agent environment, as for `testing ci`) prints the verdict first
+  (`lint GREEN 2/2`, `lint RED luacheck (2 findings)`, `lint INFRA luals (...)`), then only the findings.
+  `--json` prints the document `testing-lint/1` to stdout: `schema`, `root`, `scope` (`mode`, `files`), `fix`,
+  `verdict`, `exit`, `deciding`, `problems` and per check `name`, `preset`, `state` (`green`, `red`, `skipped`,
+  `error`, `infra`), `exit`, `ext`, `files` (`null` for `--all`), `findings` (`file`, `line`, `col`, `message`,
+  `check`), `findings_total`, `fixed`, `no_fix`, `missing`, `nothing` (no file in scope), `not_checked`, `reason`,
+  `errors`.
+- **`--on-save`**: the default set leaves out the checks whose preset says `on_save = false` (`luals`); this is what
+  the editor's check on save runs.
+
+**In the editor**, `:Testing lint` starts `testing lint --json` in a headless child (the editor never executes
+`.testing.lua` and never waits) and, when it ends, fills the quickfix list "testing lint" with the findings (opened
+only when there are some), sets `vim.diagnostic` in the loaded buffers with one namespace per check
+(`testing.lint.<check>`; a checked file without findings has that check's diagnostics cleared) and notifies the
+verdict. `--file` is the file of the current buffer; without a scope flag the changed files are checked. The check
+names complete from the project (`testing ci list`, which lists its lint steps) and the lint presets. `--fix` is
+refused while a buffer of a file in its scope has unsaved changes ("save first": the fix rewrites the file on disk);
+after it the buffers of rewritten files are reloaded (`:checktime`). Every run (manual and on save) is numbered when
+it starts, and a check's diagnostics of a file are only replaced by a run that started later than the one that set
+them, so a slow `:Testing lint` never overwrites a newer save's result. When a check's findings were cut at the cap
+(200), nothing of that check is cleared.
+
+**On save** (off by default): `setup({ lint = { on_save = true } })` lints a written file (`BufWritePost` on the
+extensions of the lint presets) with `testing lint --on-save --file=<file>` after 300 ms of quiet, in the
+background, one run per buffer at a time: a newer save stops the older run, whose result is dropped. Only the
+diagnostics change, no quickfix list opens, and a message appears only when a check could not run (exit `3`: a
+missing tool). "Nothing to lint here" is silent: no child starts for a file whose root (found upwards from it) has
+neither a `.testing.lua` nor a `lua/` folder, or that does not lie below it, and an exit `2` (no pipeline, an
+untrusted root, a broken `.testing.lua`) says nothing on save.
+`luals` never runs on save. `:checkhealth testing` lists every lint preset's tool (found or not, its path and
+version).
+
 ## Reports and findings
 
 A process preset has an **error format** (Vim's `errorformat` items `%f` (a file name, no blanks), `%l`, `%c`, `%m`
 and `%%`; any other item is an error; several alternatives per preset): `luacheck` `%f:%l:%c: %m`, `stylua`
-`Diff in %f:`. Each output line is matched as it arrives, and the **findings** (file, line, column, text; at most
+`Diff in %f:`, `luals` `%F:%l:%c %m` (`%F` is our own item: a file name that may hold blanks, not at its start;
+LuaLS prints `lua\my dir\a.lua:2:3 ...`). Each output line is matched as it arrives, without its colour escapes and,
+for a line that redraws itself with carriage returns (LuaLS' progress text), only its last part; a relative file
+name is written with forward slashes and without a leading `./`, and the **findings** (file, line, column, text; at most
 200 are listed, all are counted) go into the document. The suite's findings come from its Result-IR (one per case
 that is not green, at the failed assertion, with the first line of its message), so they do not depend on the
 reporter the suite printed with; a `--json` of yours after `--` is used for that, otherwise a temporary one. A

@@ -14,6 +14,8 @@
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
 ---   :Testing ci [<profile>] [--step=a,b] [--keep-going] [--reuse]   the pipeline of the ci section: live view, quickfix on red (docs/CI.md)
 ---   :Testing ci status | verify | hook install | hook remove   the last result, the proof of this state, the pre-push hook
+---   :Testing lint [<check>...] [--file|--changed|--all] [--fix]   stylua, luacheck, luals on the changed files (or the
+---                                current file, or everything): quickfix and diagnostics (docs/CI.md)
 ---   :Testing cache stats | clear [<root>]   the result cache of the project
 ---   :Testing hover               the last result of the test under the cursor (hover.nvim shows the same on `:Hover show`)
 ---   :Testing terminal            repeat the last run as the job of a terminal.nvim terminal (soft dependency, see docs/BINDINGS.md)
@@ -39,6 +41,7 @@ M.TYPE_SPEC = "TESTING_SPEC"
 M.TYPE_MIGRATE = "TESTING_MIGRATE"
 M.TYPE_CI_PROFILE = "TESTING_CI_PROFILE"
 M.TYPE_CI_STEPS = "TESTING_CI_STEPS"
+M.TYPE_LINT_CHECK = "TESTING_LINT_CHECK"
 
 ---Where the text of `:Testing migrate` goes (a viewer); a spec replaces it.
 ---@type fun(lines: string[], title: string)
@@ -320,6 +323,45 @@ function M.ci_run(ctx)
     return
   end
   require("testing.notify").get().info("testing ci: " .. root)
+end
+
+---`:Testing lint [check...] [--file|--changed|--all] [--fix]`: the lint checks in a child, findings as quickfix list
+---and diagnostics. `--file` is the file of the current buffer.
+---@param ctx { args: table<string, any>, flags: table<string, any>, rest?: string[] }
+function M.lint_run(ctx)
+  local say = require("testing.notify").get()
+  local file = vim.api.nvim_buf_get_name(0)
+  local root = M.resolve_root(ctx.flags.root, file)
+  local checks = {}
+  if ctx.args.check then
+    checks[1] = ctx.args.check
+  end
+  vim.list_extend(checks, ctx.rest or {})
+  local scopes = {}
+  for _, flag in ipairs({ "file", "changed", "all" }) do
+    if ctx.flags[flag] then
+      scopes[#scopes + 1] = flag
+    end
+  end
+  if #scopes > 1 then
+    say.error(("testing lint: --%s exclude each other"):format(table.concat(scopes, " and --")))
+    return
+  end
+  local scope = scopes[1]
+  if scope == "file" and file == "" then
+    say.error("testing lint: --file checks the file of the current buffer, and it has none")
+    return
+  end
+  local proc, err = require("testing.lint.editor").run({
+    root = root,
+    checks = checks,
+    scope = scope,
+    files = scope == "file" and { vim.fs.normalize(file) } or nil,
+    fix = ctx.flags.fix,
+  })
+  if not proc then
+    say.error("testing lint: " .. tostring(err))
+  end
 end
 
 ---`:Testing ci repos`: the pipelines of the repositories of `ci.repos` (setup option) in one child.
@@ -855,6 +897,33 @@ function M.routes()
       end,
     },
     {
+      path = { "lint" },
+      desc = "Run the lint checks (stylua, luacheck, luals) on the changed files: quickfix and diagnostics",
+      args = { { name = "check", type = M.TYPE_LINT_CHECK, optional = true, variadic = true } },
+      flags = {
+        { name = "file", bool = true, desc = "Only the file of the current buffer" },
+        {
+          name = "changed",
+          bool = true,
+          desc = "The files changed against HEAD and the untracked ones (default)",
+        },
+        { name = "all", bool = true, desc = "Everything the check covers in `testing ci`" },
+        {
+          name = "fix",
+          bool = true,
+          desc = "Rewrite what a check can fix (stylua), then check again",
+        },
+        {
+          name = "root",
+          type = "DIR",
+          desc = "The project root (default: found from the current buffer)",
+        },
+      },
+      run = function(ctx)
+        M.lint_run(ctx)
+      end,
+    },
+    {
       path = { "ci", "repos" },
       desc = "Run the pipelines of the repositories of ci.repos one after the other (verify first)",
       flags = {
@@ -1030,6 +1099,27 @@ local function register_types(composer)
       return out
     end,
   })
+  composer.register_type(M.TYPE_LINT_CHECK, {
+    desc = "a lint check: a step of the pipeline with a lint preset, or a lint preset",
+    validate = function(raw)
+      if not raw:match("^[%a_][%w_%-]*$") then
+        return false, nil, "expected a check name"
+      end
+      return true, raw, nil
+    end,
+    complete = function(lead)
+      local names = vim.deepcopy(require("testing.ci.presets").lint_names())
+      local list =
+        require("testing.ci.editor").list(M.resolve_root(nil, vim.api.nvim_buf_get_name(0)))
+      for _, name in ipairs(list and type(list.lint) == "table" and list.lint or {}) do
+        if not vim.tbl_contains(names, name) then
+          names[#names + 1] = name
+        end
+      end
+      table.sort(names)
+      return prefix(names, lead)
+    end,
+  })
   composer.register_type(M.TYPE_SPEC, {
     validate = function(raw)
       if raw == "" then
@@ -1065,7 +1155,7 @@ function M.register()
     local composer = require("lib.nvim.bindings.usercmd.composer")
     register_types(composer)
     composer.verb("Testing", {
-      desc = "testing.nvim: run, file, last, list, init, migrate, conformance, surface, budget, ci, cache, health, config, doctor",
+      desc = "testing.nvim: run, file, last, list, init, migrate, conformance, surface, budget, ci, lint, cache, health, config, doctor",
       default = function()
         M.run_all({ args = {}, flags = {} })
       end,

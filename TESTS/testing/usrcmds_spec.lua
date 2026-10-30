@@ -65,6 +65,7 @@ return function(H)
     "hover",
     "init",
     "last",
+    "lint",
     "list",
     "migrate",
     "run",
@@ -73,7 +74,7 @@ return function(H)
   }
   eq(sorted(complete("Testing ")), subcommands, "every subcommand is offered")
   eq(complete("Testing r"), { "run" }, "a prefix narrows the subcommands")
-  eq(complete("Testing l"), { "last", "list" }, "a prefix narrows to the matching ones")
+  eq(complete("Testing l"), { "last", "lint", "list" }, "a prefix narrows to the matching ones")
   eq(complete("Testing zzz"), {}, "nothing matches an unknown prefix")
 
   eq(sorted(complete("Testing run --")), {

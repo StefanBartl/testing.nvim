@@ -3,6 +3,7 @@
 ---@description
 --- A process step's output is read with the error format of its preset (`efm`): Vim's `errorformat` items `%f`
 --- (file, no blanks: Vim's isfname), `%l` (line), `%c` (column), `%m` (message) and `%%`, everything else literal,
+--- plus `%F` of our own (a file name that may hold blanks, not at its start: LuaLS prints `lua\my dir\a.lua:2:3`),
 --- one pattern per line, several alternatives per preset; any other `%` item is an error. Not `:cexpr`: this runs
 --- headless and the result is data (the `findings` of each step in `testing-ci/1`), which the editor turns into a
 --- quickfix list and an agent reads directly. The suite's findings come from its Result-IR (`M.ir_findings`), not
@@ -51,6 +52,10 @@ function M.compile(efm)
         -- no blanks (a grouped report line is no file name); non-greedy for the drive colon of a Windows path
         pat[#pat + 1] = "(%S-)"
         fields[#fields + 1] = "file"
+      elseif k == "F" then
+        -- a file name with blanks (not ours: Vim has no such item); it starts with a non-blank, non-greedy
+        pat[#pat + 1] = "(%S.-)"
+        fields[#fields + 1] = "file"
       elseif k == "l" then
         pat[#pat + 1] = "(%d+)"
         fields[#fields + 1] = "line"
@@ -64,7 +69,7 @@ function M.compile(efm)
         pat[#pat + 1] = "%%"
       else
         error(
-          ("errorformat %q: %%%s is not supported (only %%f %%l %%c %%m %%%%)"):format(efm, k),
+          ("errorformat %q: %%%s is not supported (only %%f %%F %%l %%c %%m %%%%)"):format(efm, k),
           2
         )
       end
@@ -77,23 +82,63 @@ function M.compile(efm)
   return table.concat(pat), fields
 end
 
+---What a line of a tool's output says once the terminal decoration is gone: colour escapes (CSI sequences) are
+---removed, and of a line that redraws itself with carriage returns (progress text, then the finding on the same
+---physical line) the last part that is not blank is kept. A plain line comes back unchanged.
+---@param line string
+---@return string
+function M.normalize_line(line)
+  if line:find("\27", 1, true) then
+    line = line:gsub("\27%[[%d;?]*[ -/]*[@-~]", "")
+  end
+  if line:find("\r", 1, true) then
+    local kept = ""
+    for part in (line .. "\r"):gmatch("([^\r]*)\r") do
+      if part:match("%S") then
+        kept = part
+      end
+    end
+    line = kept
+  end
+  return line
+end
+
+---The file of a finding as one spelling: a relative path with forward slashes and no leading `./` (`.\lua\a.lua`
+---is `lua/a.lua`); an absolute path is left as the tool wrote it.
+---@param file string
+---@return string
+function M.normalize_file(file)
+  if file:find("^[/\\]") or file:find("^%a:[/\\]") then
+    return file
+  end
+  return (file:gsub("\\", "/"):gsub("^%./", ""))
+end
+
 ---@class Testing.Ci.Matcher
 ---@field feed fun(line: string) Match one output line.
 ---@field list Testing.Ci.Finding[] The findings so far (at most `MAX_FINDINGS`).
 ---@field total fun(): integer Every line that matched.
+---@field matched fun(): integer Every line that matched, also those `keep` dropped.
 
 ---A matcher for an error format (one item or a list of alternatives), fed line by line as the output arrives:
----nothing but the findings is kept, and the total counts every match.
+---nothing but the findings is kept, and the total counts every match. Each line is normalised first
+---(`M.normalize_line`), each file name too (`M.normalize_file`).
 ---@param efm string|string[]|nil
+---@param keep? fun(f: Testing.Ci.Finding): boolean Only these findings are kept and counted (`testing lint` keeps
+---those of the files it checks).
 ---@return Testing.Ci.Matcher
-function M.matcher(efm)
+function M.matcher(efm, keep)
   local compiled = {}
   for _, item in ipairs(type(efm) == "table" and efm or (efm and { efm } or {})) do
     local pat, fields = M.compile(item)
     compiled[#compiled + 1] = { pat = pat, fields = fields }
   end
-  local list, total = {}, 0
+  local list, total, matched = {}, 0, 0
   local function feed(line)
+    if #compiled == 0 then
+      return
+    end
+    line = M.normalize_line(line)
     for _, c in ipairs(compiled) do
       local caps = { line:match(c.pat) }
       if #caps > 0 then
@@ -102,6 +147,13 @@ function M.matcher(efm)
           f[name] = (name == "line" or name == "col") and tonumber(caps[k]) or caps[k]
         end
         if f.file and f.file ~= "" then
+          f.file = M.normalize_file(f.file)
+          matched = matched + 1
+          if
+            keep and not keep(f --[[@as Testing.Ci.Finding]])
+          then
+            return
+          end
           total = total + 1
           if #list < M.MAX_FINDINGS then
             list[#list + 1] = f --[[@as Testing.Ci.Finding]]
@@ -116,6 +168,9 @@ function M.matcher(efm)
     list = list,
     total = function()
       return total
+    end,
+    matched = function()
+      return matched
     end,
   }
 end

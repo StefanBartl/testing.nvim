@@ -119,7 +119,10 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
 - **The pipeline** ([docs/CI.md](docs/CI.md)): `testing ci` runs a repository's whole check pipeline locally
   (stylua, luacheck, the suite, conformance, steps of its own) from the `ci` section of `.testing.lua`: profiles,
   presets, argv steps with a deadline that kills the process tree, a missing tool is exit `3` before anything
-  runs, and the document `testing-ci/1` in the state directory.
+  runs, and the document `testing-ci/1` in the state directory. `testing lint` / `:Testing lint` runs the lint
+  checks of that pipeline (stylua, luacheck, `lua-language-server --check` as the preset `luals`) on the changed
+  files, the current file or everything, with `--fix` for stylua; the editor puts the findings into the quickfix
+  list and `vim.diagnostic`, optionally on save (`lint = { on_save = true }`).
 - **The last result** ([docs/STATE.md](docs/STATE.md)): `testing.state` keeps the last result per case
   (`last.json`, merged over partial runs, with the staleness of each spec file) for an explorer, a hover or a
   statusline; a data module, no UI.
@@ -351,10 +354,12 @@ summary: 1 pass, 1 fail, 1 skip (3 case(s)) in 0.00 s
 :Testing terminal     " the same run as a terminal.nvim terminal (output to scroll and copy)
 :Testing health       " same as :checkhealth testing
 :Testing conformance  " the conformance checks of the current project
+:Testing lint         " stylua, luacheck, luals on the changed files: quickfix and diagnostics (--file, --all, --fix)
 :Testing cache clear  " delete the result cache of the project
 ```
 
-The plugin binds no keymap and registers no autocommand by default. Every subcommand, flag and
+The plugin binds no keymap and registers no autocommand by default (`lint = { on_save = true }` adds the one
+that lints a written file). Every subcommand, flag and
 completion: [docs/BINDINGS.md](docs/BINDINGS.md).
 
 ### Configuration
@@ -374,7 +379,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md): every subcommand and option.
-- [docs/CI.md](docs/CI.md): `testing ci`, the pipeline of a repository: the `ci` section, presets, exit codes, `testing-ci/1`.
+- [docs/CI.md](docs/CI.md): `testing ci`, the pipeline of a repository: the `ci` section, presets, exit codes, `testing-ci/1`; `testing lint` and `:Testing lint`.
 - [docs/WORKFLOW-CI.md](docs/WORKFLOW-CI.md): the CI workflow as a use case: one definition, the shim, editor, pre-push hook, several repositories, the hosted runner.
 - [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format, the green stamp.
 - [docs/CI-CACHE.md](docs/CI-CACHE.md): the result cache and the stamp in CI with `actions/cache`.
@@ -419,7 +424,8 @@ here), and handing it the runtime as `workspace.library` in `.luarc.json` would 
 own library injection and make the local numbers and the CI numbers different measurements. With
 `vim` declared as a bare global it still reports about 100 findings that come from the missing `uv`
 and tree-sitter types (`uv.uv_pipe_t`, `TSNode`) and from the spec shims, not from the code. Run it
-locally, with the runtime your editor injects, as a measure before and after a change.
+locally, with the runtime your editor injects, as a measure before and after a change:
+`testing lint luals --all` runs it (the preset `luals`, [docs/CI.md](docs/CI.md#testing-lint-the-linters-on-the-changed-files)).
 
 ## License
 

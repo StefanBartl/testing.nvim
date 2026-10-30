@@ -482,6 +482,10 @@ local function execute(argv, sv)
   if argv[1] == "ci" then
     return require("testing.ci").main(vim.list_slice(argv, 2), sv)
   end
+  -- `testing lint`: the lint checks of the pipeline on the changed files, named files or everything (docs/CI.md)
+  if argv[1] == "lint" then
+    return require("testing.lint").main(vim.list_slice(argv, 2), sv)
+  end
   -- `testing trust list|check|add|revoke [<root>]`: the workspace trust store (docs/CLI.md)
   if argv[1] == "trust" then
     return require("testing.trust").main(vim.list_slice(argv, 2), { out = out, err = err })

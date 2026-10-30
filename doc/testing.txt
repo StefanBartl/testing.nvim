@@ -101,6 +101,13 @@ surface_view ~
     `false` leaves a key out. Legend, `?` cheatsheet and keymaps come from
     this one table.
 
+                                                                 *testing-lint*
+lint ~
+    Type: { on_save?: boolean }. Default: `{ on_save = false }`.
+    `on_save = true`: a written file is linted in the background (the lint
+    checks that may run on save, never luals) and only its diagnostics are
+    updated, see |:Testing-lint|.
+
 ==============================================================================
 5. Commands                                                      *testing-commands*
 
@@ -157,6 +164,20 @@ from |testing-surface_view|):
         Measure the performance budgets of the runner. A measured case
         without a baseline entry compared nothing: exit 2 unless
         `--allow-new`.
+                                                                *:Testing-lint*
+:Testing lint [{check}...] [--file|--changed|--all] [--fix] [--root={dir}]
+        Run the lint checks (stylua, luacheck, luals: the lint steps of the
+        `ci` pipeline, or the named ones) in a headless child
+        (`testing lint --json`). Default: the files changed against HEAD and
+        the untracked ones; `--file` the file of the current buffer, `--all`
+        everything the step checks in `testing ci`. The findings fill the
+        quickfix list "testing lint" (opened only when there are some) and
+        become |vim.diagnostic| in the loaded buffers, one namespace per check
+        (`testing.lint.{check}`); a checked file without findings is cleared.
+        `--fix` rewrites what stylua can fix and reloads the buffers (refused
+        while a buffer in its scope has unsaved changes). A missing
+        tool skips its check and is named in the message (exit 3, never green).
+        On the command line: `testing lint --help`.
 :Testing cache stats | clear [{root}]
         Size of the result cache of the project, or delete it.
 :Testing health           Run `:checkhealth testing`.

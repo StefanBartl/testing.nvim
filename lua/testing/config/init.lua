@@ -14,7 +14,13 @@ local M = {}
 --- config object, which keeps the merge, `get()` and `reset()` the same as in every other plugin.
 local cfg = require("lib.lua.config").new(DEFAULTS, {
   name = "testing",
-  schema = { keymaps = "table|false", ci = "table", hover = "table", surface_view = "table" },
+  schema = {
+    keymaps = "table|false",
+    ci = "table",
+    lint = "table",
+    hover = "table",
+    surface_view = "table",
+  },
 })
 
 ---The actions of the matrix view whose key `surface_view.keys` sets (`testing.surface.view`).
@@ -82,6 +88,17 @@ local CHECKS = {
           return false
         end
         seen[code] = true
+      end
+    end
+    return true
+  end,
+  lint = function(v)
+    if type(v) ~= "table" then
+      return false
+    end
+    for k, value in pairs(v) do
+      if k ~= "on_save" or type(value) ~= "boolean" then
+        return false
       end
     end
     return true

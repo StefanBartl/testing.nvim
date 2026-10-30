@@ -76,7 +76,8 @@ return {
   -- What the specs of this repository start ON PURPOSE (their subject is the process driver): real child
   -- editors (`nvim`), the process-tree kill of the driver (`taskkill`, `powershell` for the Windows process table), `git` for the run header,
   -- `stylua` for the migrate writer, `bash` for the generated test script and `cmd` for the 8.3 short name of a directory
-  -- (the sandbox-long-temp spec).
+  -- (the sandbox-long-temp spec); `luacheck` and `lua-language-server` for `testing lint` and the lint
+  -- tools of `:checkhealth testing`.
   guard_allow = {
     -- `does-not-exist*`: specs of the start-failure path start an executable that is not there
     spawn = {
@@ -85,6 +86,8 @@ return {
       "taskkill",
       "powershell",
       "stylua",
+      "luacheck",
+      "lua-language-server",
       "bash",
       "cmd",
       "ps",

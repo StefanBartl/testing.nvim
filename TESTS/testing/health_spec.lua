@@ -70,6 +70,12 @@ return function(H)
     has(text, "safe_call keeps non-string errors", "the report probes safe_call")
     has(text, "no .testing.lua in", "no .testing.lua is an info, not a problem")
     lacks(text, "ERROR", "a healthy setup holds no error:\n" .. text)
+    -- the tools of the lint checks: every lint preset, found or not
+    has(text, "lint tools", "the report has the lint tools section")
+    for _, name in ipairs(require("testing.ci.presets").lint_names()) do
+      has(text, name .. ": ", "the report names the lint check " .. name)
+    end
+    has(text, "lua-language-server", "the report names the tool of luals")
     -- every lib.nvim / lib.lua module the plugin requires by name is checked by the report (a module missing
     -- from the list would surface as an error at the first use instead of in :checkhealth)
     local here = vim.fs.dirname(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p"))

@@ -18,6 +18,8 @@ function M.setup(opts)
   end
   require("testing.bindings.usrcmds").register()
   require("testing.bindings.keymaps").register(config.get())
+  -- the check on save (`lint.on_save`): installed, or removed again by a later setup() without it
+  require("testing.lint.editor").setup(config.get().lint)
   -- Soft in both directions: no hover.nvim is a machine without the optional half.
   pcall(function()
     require("testing.hover").setup()

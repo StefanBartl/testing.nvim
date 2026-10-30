@@ -44,12 +44,19 @@
 ---@class Testing.CiConfigOptions
 ---@field repos? { roots?: string[], include?: string[], exclude?: string[] }
 
+---@class Testing.LintConfig
+---@field on_save boolean Lint a written file in the background (the checks that may run on save) and update its diagnostics.
+
+---@class Testing.LintConfigOptions
+---@field on_save? boolean
+
 ---@class Testing.Config
 --- The effective configuration: `DEFAULTS` with the user's valid options merged on top.
 ---@field notify_prefix string Prefix of every message shown through lib.nvim.notify. Non-empty.
 ---@field keymaps Testing.KeymapsConfig Named keymap actions to rebind or drop; empty by default.
 ---@field hover Testing.HoverConfig The hover over a test (`testing.hover`).
 ---@field ci Testing.CiConfig `:Testing ci` from the editor.
+---@field lint Testing.LintConfig `:Testing lint` and the check on save.
 ---@field surface_view Testing.SurfaceViewConfig The keys of the matrix view of `:Testing surface --matrix`.
 ---@field project Testing.ProjectConfig Defaults of a project's `.testing.lua`; not settable through `setup()`.
 
@@ -185,6 +192,7 @@
 ---@field keymaps? Testing.KeymapsConfig
 ---@field hover? Testing.HoverConfigOptions
 ---@field ci? Testing.CiConfigOptions
+---@field lint? Testing.LintConfigOptions
 ---@field surface_view? Testing.SurfaceViewConfigOptions
 
 return {}

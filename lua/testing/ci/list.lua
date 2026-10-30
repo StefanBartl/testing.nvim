@@ -9,7 +9,7 @@ local M = {}
 M.EXIT_OK, M.EXIT_USAGE = 0, 2
 
 ---@param root string
----@return table|nil list `{ default, profiles = { name = { step, ... } }, steps = { name, ... } }`
+---@return table|nil list `{ default, profiles = { name = { step, ... } }, steps = { name, ... }, lint = { step, ... } }`
 ---@return string|nil problem
 function M.load(root)
   local pipeline, problems = require("testing.ci.schema").load(root)
@@ -18,10 +18,19 @@ function M.load(root)
   end
   local steps = vim.tbl_keys(pipeline.steps)
   table.sort(steps)
+  -- the steps `testing lint` runs (their preset lints): what `:Testing lint` completes
+  local lint = {}
+  for _, name in ipairs(steps) do
+    local preset = require("testing.ci.presets").get(pipeline.steps[name].preset)
+    if preset and preset.lint then
+      lint[#lint + 1] = name
+    end
+  end
   return {
     default = pipeline.default,
     profiles = pipeline.profiles,
     steps = steps,
+    lint = lint,
     derived = pipeline.derived,
   }
 end

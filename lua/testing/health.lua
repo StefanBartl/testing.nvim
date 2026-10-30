@@ -534,6 +534,61 @@ local function check_deps(health)
   end
 end
 
+---The tools of the lint checks (`testing lint`, the lint presets of `testing ci`): found or not, with their version.
+---The version processes are started together and collected afterwards (as `testing ci` does).
+---@param health table
+local function check_lint(health)
+  health.start("testing.nvim: lint tools (testing lint, :Testing lint)")
+  local presets = require("testing.ci.presets")
+  local executable = require("lib.nvim.cross.executable")
+  local rows = {}
+  for _, name in ipairs(presets.lint_names()) do
+    local preset = presets.get(name) --[[@as Testing.Ci.Preset]]
+    local path = executable.path(preset.tool)
+    local proc
+    if path and preset.version_argv then
+      local argv = vim.deepcopy(preset.version_argv)
+      argv[1] = path
+      local ok, obj = pcall(vim.system, argv, { text = true })
+      proc = ok and obj or nil
+    end
+    rows[#rows + 1] = { name = name, tool = preset.tool, path = path, proc = proc }
+  end
+  for _, row in ipairs(rows) do
+    if row.path then
+      local version
+      if row.proc then
+        local ok, res = pcall(row.proc.wait, row.proc, 10000)
+        if ok and res and res.code == 0 then
+          version = vim.trim((res.stdout or ""):match("[^\r\n]*") or "")
+        end
+      end
+      health.ok(
+        ("%s: %s (%s)%s"):format(
+          row.name,
+          row.tool,
+          row.path,
+          version and version ~= "" and (", " .. version) or ""
+        )
+      )
+    else
+      health.warn(
+        ("%s: %s was not found (searched: %s on PATH); `testing lint` skips the check with exit 3"):format(
+          row.name,
+          row.tool,
+          row.tool
+        ),
+        { ("Install %s, or leave the check out of the ci section"):format(row.tool) }
+      )
+    end
+  end
+  local on_save = require("testing.config").get().lint.on_save
+  health.info(
+    on_save and "lint on save is on (lint.on_save): the checks that may run on save, never luals"
+      or "lint on save is off (setup({ lint = { on_save = true } }) turns it on)"
+  )
+end
+
 ---@return nil
 function M.check()
   local health = vim.health
@@ -556,6 +611,7 @@ function M.check()
   local project = check_project(health)
   check_isolation(health, project)
   check_extensions(health)
+  check_lint(health)
 
   health.start("testing.nvim: hover")
   local okh, hover = pcall(require, "testing.hover")

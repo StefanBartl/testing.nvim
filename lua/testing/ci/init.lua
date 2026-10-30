@@ -389,6 +389,7 @@ end
 ---@field errors string[] The last lines of the output (up to 20).
 ---@field findings? Testing.Ci.Finding[]
 ---@field findings_total? integer
+---@field matched? integer Process steps: every finding the error format matched, also those a `keep` dropped.
 ---@field partial? boolean The suite's own verdict was `green-partial`.
 
 local MAX_ERRORS = 20
@@ -427,11 +428,12 @@ end
 ---@param planned Testing.Ci.Planned
 ---@param root string
 ---@param sv { out: fun(s: string), err: fun(s: string) }
+---@param o? { keep?: fun(f: Testing.Ci.Finding): boolean } `keep`: only these findings count (`testing lint`).
 ---@return Testing.Ci.StepResult
-local function run_process(planned, root, sv)
+local function run_process(planned, root, sv, o)
   local step = planned.step
   local errors, last = {}, {}
-  local matcher = require("testing.ci.report").matcher(step.efm)
+  local matcher = require("testing.ci.report").matcher(step.efm, o and o.keep)
   local function remember(line)
     last[#last + 1] = line
     if #last > MAX_ERRORS then
@@ -492,6 +494,7 @@ local function run_process(planned, root, sv)
     errors = errors,
     findings = matcher.list,
     findings_total = matcher.total(),
+    matched = matcher.matched(),
     timed_out = r.timed_out,
   }
   if r.code == -1 then
@@ -925,9 +928,10 @@ local function seconds(ms)
   return ("%.1f s"):format(ms / 1000)
 end
 
----Helpers `testing.ci.verify` shares with a run (not an API).
+---Helpers `testing.ci.verify` and `testing.lint` share with a run (not an API).
 M.internal = {
   plan = plan,
+  run_process = run_process,
   git_facts = git_facts,
   start_versions = start_versions,
   collect = collect,
