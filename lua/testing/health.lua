@@ -534,10 +534,62 @@ local function check_deps(health)
   end
 end
 
+---The tools the lint steps of the current project's pipeline need (`tool = step`), from the `.testing.lua` table this
+---report evaluated in its sandbox (never by executing the file) or, without a `ci` section with profiles, from what
+---a pipeline would be derived of (file system only). Empty when that is not known (no project, a file that was not
+---evaluated here, a section that does not resolve): health never fails on that.
+---@param project table|nil The project's `.testing.lua` table when it could be evaluated here.
+---@return table<string, string>
+local function lint_needs(project)
+  local root = vim.fs.normalize(M.project_dir())
+  local needed = {}
+  if project == nil and vim.uv.fs_stat(root .. "/.testing.lua") then
+    return needed
+  end
+  local ok, pipeline = pcall(function()
+    local schema = require("testing.ci.schema")
+    local ci = type(project) == "table" and project.ci or nil
+    if type(ci) == "table" and ci.profiles ~= nil then
+      return (schema.resolve(ci))
+    end
+    local section = require("testing.ci.derive").section(root, project or {})
+    if not section then
+      return nil
+    end
+    local skip = {}
+    for _, name in ipairs(type(ci) == "table" and type(ci.skip) == "table" and ci.skip or {}) do
+      skip[name] = true
+    end
+    for name, list in pairs(section.profiles) do
+      section.profiles[name] = vim.tbl_filter(function(n)
+        return not skip[n]
+      end, list)
+    end
+    section.steps = type(ci) == "table" and type(ci.steps) == "table" and ci.steps or {}
+    return (schema.resolve(section))
+  end)
+  if not ok or type(pipeline) ~= "table" then
+    return needed
+  end
+  local presets = require("testing.ci.presets")
+  for name, step in pairs(pipeline.steps) do
+    local preset = step.preset and presets.get(step.preset)
+    if preset and preset.lint then
+      for _, tool in ipairs(step.needs or {}) do
+        needed[tool] = needed[tool] or name
+      end
+    end
+  end
+  return needed
+end
+
 ---The tools of the lint checks (`testing lint`, the lint presets of `testing ci`): found or not, with their version.
----The version processes are started together and collected afterwards (as `testing ci` does).
+---A missing tool is a warning only when a lint step of the current project's pipeline needs it; otherwise the
+---linter is optional and its absence is information. The version processes are started together and collected
+---afterwards (as `testing ci` does).
 ---@param health table
-local function check_lint(health)
+---@param project table|nil The project's `.testing.lua` table when it could be evaluated here.
+local function check_lint(health, project)
   health.start("testing.nvim: lint tools (testing lint, :Testing lint)")
   local presets = require("testing.ci.presets")
   local executable = require("lib.nvim.cross.executable")
@@ -554,6 +606,7 @@ local function check_lint(health)
     end
     rows[#rows + 1] = { name = name, tool = preset.tool, path = path, proc = proc }
   end
+  local needed = lint_needs(project)
   for _, row in ipairs(rows) do
     if row.path then
       local version
@@ -571,14 +624,24 @@ local function check_lint(health)
           version and version ~= "" and (", " .. version) or ""
         )
       )
-    else
+    elseif needed[row.tool] then
       health.warn(
-        ("%s: %s was not found (searched: %s on PATH); `testing lint` skips the check with exit 3"):format(
+        ("%s: %s was not found (searched: %s on PATH), and the step %s of this project's pipeline needs it: `testing lint` and `testing ci` skip it with exit 3"):format(
           row.name,
           row.tool,
-          row.tool
+          row.tool,
+          needed[row.tool]
         ),
-        { ("Install %s, or leave the check out of the ci section"):format(row.tool) }
+        { ("Install %s, or leave the step out of the ci section"):format(row.tool) }
+      )
+    else
+      health.info(
+        ("%s: %s not found (searched: %s on PATH): `testing lint %s` would skip it; no lint step of this project needs it"):format(
+          row.name,
+          row.tool,
+          row.tool,
+          row.name
+        )
       )
     end
   end
@@ -611,7 +674,7 @@ function M.check()
   local project = check_project(health)
   check_isolation(health, project)
   check_extensions(health)
-  check_lint(health)
+  check_lint(health, project)
 
   health.start("testing.nvim: hover")
   local okh, hover = pcall(require, "testing.hover")

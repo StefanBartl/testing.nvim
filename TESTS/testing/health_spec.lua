@@ -128,6 +128,37 @@ return function(H)
     lacks(valid_text, "ERROR", "a valid .testing.lua holds no error")
     lacks(valid_text, "WARNING", "a valid .testing.lua holds no warning")
 
+    -- 4b. A linter that is not installed: a warning only when a lint step of this project needs it ----
+    -- (PATH holds only nvim's own folder, as on a runner without linters)
+    local executable = require("lib.nvim.cross.executable")
+    local path_before = vim.env.PATH
+    local function lint_line(report_text, tool)
+      for line in report_text:gmatch("[^\n]+") do
+        if line:find(tool .. ": " .. tool, 1, true) then
+          return line
+        end
+      end
+      return ""
+    end
+    local hidden_ok, hidden_err = pcall(function()
+      vim.env.PATH = vim.fn.fnamemodify(vim.v.progpath, ":h")
+      executable.clear()
+      ok(executable.path("luacheck") == nil, "the linter is hidden from PATH")
+      local optional = report()
+      has(lint_line(optional, "luacheck"), "not found", "a missing linter is reported")
+      lacks(lint_line(optional, "luacheck"), "WARNING", "a linter no step needs is no warning")
+      lacks(optional, "WARNING", "a valid .testing.lua holds no warning without linters either")
+      with_config('return { ci = { profiles = { full = { "luacheck" } } } }\n')
+      local needed = report()
+      has(lint_line(needed, "luacheck"), "WARNING", "a linter a lint step needs is a warning")
+      has(lint_line(needed, "luacheck"), "the step luacheck", "... naming the step")
+      lacks(lint_line(needed, "stylua"), "WARNING", "... and only that linter")
+    end)
+    vim.env.PATH = path_before
+    executable.clear()
+    ok(hidden_ok, "lint tools: " .. tostring(hidden_err))
+    with_config('return { dialect = "auto", roots = { "TESTS" } }\n')
+
     with_config('return { dialect = "nope", frobnicate = 1 }\n')
     local bad_text = report()
     has(bad_text, "2 problem(s)", "the number of problems is reported")

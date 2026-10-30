@@ -406,7 +406,9 @@ missing tool). "Nothing to lint here" is silent: no child starts for a file whos
 neither a `.testing.lua` nor a `lua/` folder, or that does not lie below it, and an exit `2` (no pipeline, an
 untrusted root, a broken `.testing.lua`) says nothing on save.
 `luals` never runs on save. `:checkhealth testing` lists every lint preset's tool (found or not, its path and
-version).
+version). A missing tool is a warning only when a lint step of the project's pipeline needs it (read from the
+`.testing.lua` table health evaluates in its sandbox, or derived from the repository; health never executes the
+file); otherwise it is information: the linters are optional.
 
 ## Reports and findings
 

@@ -45,11 +45,12 @@ function M.namespace_name(check)
   return "testing.lint." .. check
 end
 
+---The key two spellings of one file share: its real path, case-insensitive on Windows.
 ---@param path string
 ---@return string
 local function key(path)
-  local p = vim.fs.normalize(path)
-  return require("testing.platform").is_case_insensitive() and p:lower() or p
+  local p = require("testing.lint").real_path(path)
+  return require("testing.platform").is_windows() and p:lower() or p
 end
 
 ---@param file string
@@ -318,9 +319,21 @@ local function decode(stdout)
   return ok and valid(doc) and doc or nil
 end
 
+---@class Testing.Lint.RunOpts
+---@field root string
+---@field checks? string[]
+---@field scope? "changed"|"file"|"all"
+---@field files? string[]
+---@field fix? boolean
+---@field on_save? boolean
+---@field quiet? boolean
+---@field current? fun(): boolean
+---@field on_done? fun(doc: table|nil, verdict: table)
+---@field trust_asked? boolean
+
 ---Start a lint run in a child. `quiet`: diagnostics only (the check on save), a message only when a check could not
 ---run; `current`: asked when the child ends, false drops the result (a newer save took over).
----@param o { root: string, checks?: string[], scope?: "changed"|"file"|"all", files?: string[], fix?: boolean, on_save?: boolean, quiet?: boolean, current?: fun(): boolean, on_done?: fun(doc: table|nil, verdict: table), trust_asked?: boolean }
+---@param o Testing.Lint.RunOpts
 ---@return table|nil proc The `vim.SystemObj` (to stop it), nil when it could not start.
 ---@return string|nil err
 function M.run(o)

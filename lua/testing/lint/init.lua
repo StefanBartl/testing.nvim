@@ -149,13 +149,33 @@ local function path_key(rel)
   return require("testing.platform").is_case_insensitive() and rel:lower() or rel
 end
 
----A path relative to the root (forward slashes), nil when it does not lie below it.
----@param root string Absolute, normalised, no trailing slash.
----@param path string Relative to the root or absolute.
+---The real path of `path` (symlinks, junctions, macOS' `/var` that is `/private/var` resolved): of the file, else of
+---the nearest folder above it that exists (a deleted file), else the path as written. Forward slashes.
+---@param path string
+---@return string
+function M.real_path(path)
+  local p = vim.fs.normalize(path)
+  local rest = ""
+  while p ~= "" do
+    local r = vim.uv.fs_realpath(p)
+    if r then
+      return vim.fs.normalize(r) .. rest
+    end
+    local parent = vim.fs.dirname(p)
+    if not parent or parent == p then
+      break
+    end
+    rest = "/" .. vim.fs.basename(p) .. rest
+    p = parent
+  end
+  return vim.fs.normalize(path)
+end
+
+---@param base string Normalised, no trailing slash.
+---@param full string Normalised.
 ---@return string|nil
-function M.relative(root, path)
-  local full = vim.fs.normalize(is_absolute(path) and path or (root .. "/" .. path))
-  local base = vim.fs.normalize(root) .. "/"
+local function below(base, full)
+  base = base .. "/"
   local a, b = full, base
   if require("testing.platform").is_case_insensitive() then
     a, b = a:lower(), b:lower()
@@ -164,6 +184,21 @@ function M.relative(root, path)
     return nil
   end
   return full:sub(#b + 1)
+end
+
+---A path relative to the root (forward slashes), nil when it does not lie below it. Two spellings of one folder (a
+---link, `/var` and `/private/var`) are compared by their real paths.
+---@param root string Absolute, normalised, no trailing slash.
+---@param path string Relative to the root or absolute.
+---@return string|nil
+function M.relative(root, path)
+  local full = vim.fs.normalize(is_absolute(path) and path or (root .. "/" .. path))
+  local base = vim.fs.normalize(root):gsub("/+$", "")
+  local rel = below(base, full)
+  if rel or not is_absolute(path) then
+    return rel
+  end
+  return below((M.real_path(base):gsub("/+$", "")), M.real_path(full))
 end
 
 ---@param list string[]

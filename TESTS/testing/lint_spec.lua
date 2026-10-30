@@ -522,6 +522,21 @@ os.exit(code)
       "file: only the named file (absolute below the root)"
     )
     eq(check_of(named.doc, "luacheck").files, { "lua/proj/bad.lua" }, "file: checked files")
+    -- the root spelled through a link (a symlink; a junction on Windows), the file through the real path
+    local link = scoped .. "-link"
+    if not vim.uv.fs_symlink(scoped, link, { junction = true, dir = true }) then
+      print("lint_spec: no symlink or junction could be made here: the spelling check is skipped")
+    else
+      local spelled = run(link, "luacheck", "--json", "--file=" .. scoped .. "/lua/proj/bad.lua")
+      pcall(vim.uv.fs_unlink, link)
+      pcall(vim.uv.fs_rmdir, link)
+      eq(spelled.code, 1, "file: below the root in another spelling (" .. spelled.err .. ")")
+      eq(
+        finding_files(check_of(spelled.doc, "luacheck")),
+        { "lua/proj/bad.lua" },
+        "file: ... relative to the root"
+      )
+    end
     local other = run(scoped, "luacheck", "--file=.gitignore", "--no-agent")
     eq(other.code, 0, "file: a file no check reads is nothing to check")
     has(other.out, "nothing to check", "file: ... said so")

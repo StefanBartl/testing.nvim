@@ -196,6 +196,43 @@ return function(H)
     )
   end
 
+  -- the root spelled through a link (a symlink; a junction on Windows), the buffers through the real path: the
+  -- findings still reach them (macOS: a temp folder is /var/... and /private/var/... at once)
+  local link = tmp .. "-link"
+  local linked = vim.uv.fs_symlink(tmp, link, { junction = true, dir = true })
+  if not linked then
+    print(
+      "lint_editor_spec: no symlink or junction could be made here: the spelling check is skipped"
+    )
+  else
+    for _, buf in pairs(bufs) do
+      vim.diagnostic.reset(nil, buf)
+    end
+    local via_link = doc()
+    via_link.root = link
+    editor.apply(via_link)
+    eq(
+      #vim.diagnostic.get(bufs.a, { namespace = ns_luacheck }),
+      1,
+      "spelling: a root through a link reaches the buffer of the real path"
+    )
+    vim.diagnostic.set(ns_luacheck, bufs.c, stale)
+    editor.apply(via_link)
+    eq(
+      #vim.diagnostic.get(bufs.c, { namespace = ns_luacheck }),
+      0,
+      "spelling: ... and clears a checked file there"
+    )
+    eq(
+      editor.lintable(link, tmp .. "/lua/a.lua"),
+      true,
+      "spelling: a file is below a root spelled through a link"
+    )
+    for _, buf in pairs(bufs) do
+      vim.diagnostic.reset(nil, buf)
+    end
+  end
+
   -- the verdict
   do
     local v = editor.verdict(doc(), 3)
@@ -492,6 +529,9 @@ return function(H)
   for _, buf in pairs(bufs) do
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
+  -- the link first: deleting through it would empty the folder it points to
+  pcall(vim.uv.fs_unlink, link)
+  pcall(vim.uv.fs_rmdir, link)
   vim.fn.delete(tmp, "rf")
   ok(finished, "lint editor: " .. tostring(failure))
 end
