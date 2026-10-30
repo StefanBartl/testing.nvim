@@ -269,13 +269,18 @@ return function(H)
     f:close()
     eq(exported, render.tsv(model.header, { model.rows[2] }), "e: the shown rows are written")
 
+    -- the editor names a file by its resolved path (macOS: the temp dir /var is /private/var)
+    local function real(p)
+      return vim.fs.normalize(vim.uv.fs_realpath(p) or p)
+    end
+
     -- <CR> on the row: the source of its entry, at its line
     vim.api.nvim_win_set_cursor(win, { 2, 0 })
     key(buf, "<CR>").callback()
     ok(not vim.api.nvim_win_is_valid(win), "<CR>: the view closes")
     eq(
-      vim.fs.normalize(vim.api.nvim_buf_get_name(0)),
-      tmp .. "/lua/fx/init.lua",
+      real(vim.api.nvim_buf_get_name(0)),
+      real(tmp .. "/lua/fx/init.lua"),
       "<CR>: the source file is open"
     )
     eq(vim.api.nvim_win_get_cursor(0)[1], 30, "<CR>: at the line of the entry")
@@ -290,7 +295,7 @@ return function(H)
     local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
     vim.api.nvim_win_set_cursor(win, { 2, line:find("b_spec.lua", 1, true) - 1 })
     key(buf, "<CR>").callback()
-    eq(vim.fs.normalize(vim.api.nvim_buf_get_name(0)), tmp .. "/b_spec.lua", "<CR>: the spec file")
+    eq(real(vim.api.nvim_buf_get_name(0)), real(tmp .. "/b_spec.lua"), "<CR>: the spec file")
     edited = vim.api.nvim_get_current_buf()
     vim.api.nvim_set_current_buf(orig_buf)
     vim.api.nvim_buf_delete(edited, { force = true })
