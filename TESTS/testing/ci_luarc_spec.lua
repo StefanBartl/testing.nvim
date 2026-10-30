@@ -235,8 +235,10 @@ return function(H)
     -- a checkout beside the project (place 3 of testing.deps)
     write(tmp .. "/sibdep/lua/sibdep/init.lua", "return {}\n")
     local step = presets.step("luals", presets.get("luals"), { timeout_ms = 60000 })
-    -- an executable that exists everywhere stands in for the tool (only the plan is looked at)
+    -- an executable that exists everywhere stands in for the tool (only the plan is looked at); the needs check
+    -- would still ask for lua-language-server, which a CI runner does not have
     step.argv[1] = vim.v.progpath
+    step.needs = {}
     local state_dir = tmp .. "/state"
     local pipeline = { steps = { luals = step }, deps = { "sibdep" } }
     local planned, code, problems = internal.plan(
@@ -284,6 +286,7 @@ return function(H)
       args = { "--check=.", "--configpath=mine.json" },
     })
     own.argv[1] = vim.v.progpath
+    own.needs = {}
     local planned_own = internal.plan({ steps = { luals = own }, deps = {} }, { "luals" }, root)
     local own_argv = planned_own[1].argv
     eq(own_argv[#own_argv], "--configpath=mine.json", "own configpath: kept, nothing appended")
@@ -305,6 +308,7 @@ return function(H)
     write(root .. "/bin/lua-language-server.cmd", "@echo off\n")
     local shim = presets.step("luals", presets.get("luals"), { timeout_ms = 60000 })
     shim.argv[1] = root .. "/bin/lua-language-server.cmd"
+    shim.needs = {}
     local bad_state = tmp .. "/state 100%"
     local refused, refused_code, refused_problems = internal.plan(
       { steps = { luals = shim }, deps = {} },
