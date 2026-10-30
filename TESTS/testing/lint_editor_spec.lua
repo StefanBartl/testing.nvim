@@ -486,7 +486,13 @@ return function(H)
     end, 10)
     eq(#started, 1, "on save: two saves in a row start one check")
     local joined = table.concat(started[1], " ")
-    has(joined, "--file=" .. tmp .. "/lua/a.lua", "on save: the written file")
+    -- the editor may pass the resolved spelling (macOS: /var is /private/var), so match the file's real path
+    local written = joined:match("%-%-file=(%S+)")
+    eq(
+      written and require("testing.lint").real_path(written),
+      require("testing.lint").real_path(tmp .. "/lua/a.lua"),
+      "on save: the written file"
+    )
     has(joined, "--on-save", "on save: only the checks that may run on save")
     editor.on_save(bufs.a)
     vim.wait(1000, function()
