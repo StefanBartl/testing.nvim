@@ -97,7 +97,7 @@ it is no verdict: red repositories are still exit `0`.
 | Code | Meaning |
 | --- | --- |
 | `0` | The document was printed (also with red repositories, and when the CI adapter failed: `remote.error` says so). |
-| `2` | Bad usage: an unknown method or option, a directory that is not there, no repository found. |
+| `2` | Bad usage: an unknown method or option, a directory that is not there, no repository found. Or refused: `repo --export` of a repository the data classes of this device do not release (`private`, `unclassified`, no `areas.json`); nothing is printed on stdout. |
 | `3` | The document could not be built: it would leak a path of this machine (export form), it is larger than 8 MiB, an internal error. Nothing is printed on stdout. |
 
 `testing export --out <dir>` ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-export-folder-testing-export---out)) writes the

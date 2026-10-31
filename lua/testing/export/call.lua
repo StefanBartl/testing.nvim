@@ -9,13 +9,17 @@
 ---
 --- One line of canonical JSON (keys sorted, no whitespace) on stdout, nothing else; a problem is one line on stderr.
 --- The local form (default) carries the absolute `root` of the repositories, for a process on this machine;
---- `--export` gives the form of an export folder: no absolute path, refused when the leak detector still finds one.
+--- `--export` gives the form of an export folder: no absolute path, refused when the leak detector still finds one,
+--- and only the repositories the data classes of this device release (`public`, `internal`; `lib.nvim.data_classes`,
+--- fail-closed as `testing export --out`): `fleet` counts the others in `excluded_by` without naming them, `repo` of
+--- a repository that is not released prints nothing and exits 2.
 --- `--remote` asks the CI adapter (`testing ci remote`: GitHub, network, a read-only token); without it `ci_remote`
 --- is `null` (not asked); asked without a record it is `state = "unknown"`. Runs nothing: no suite, no pipeline, no `.testing.lua`; it writes nothing
 --- either, except the CI adapter's ETag cache in the state directory with `--remote`.
 ---
 --- Exit codes: 0 the document was printed, 2 usage (an unknown method or option, a root that is not a directory, no
---- repository), 3 the document could not be built (it would leak a path, it is too large, an internal error).
+--- repository) or `repo --export` of a repository the data classes do not release, 3 the document could not be built
+--- (it would leak a path, it is too large, an internal error).
 
 local M = {}
 
@@ -32,11 +36,12 @@ M.USAGE = table.concat({
   "  --repos-root=<dir>  the repositories below <dir> (workflows or a .testing.lua; no vault; repeatable)",
   "  --include=<names>   also these directory names below --repos-root (besides lib.nvim)",
   "  --exclude=<names>   leave these directory names out",
-  "  --export            the export form: no absolute path (default: the local form with root)",
+  "  --export            the export form: no absolute path, only the repositories the data classes of this",
+  "                      device release (default: the local form with root, all repositories)",
   "  --remote            ask the CI adapter (GitHub); without it ci_remote is null",
   "  --state-dir=<dir>   the state directory (default: stdpath('state'))",
   "  stdout: one line of canonical JSON; runs nothing (--remote: the adapter's ETag cache)",
-  "  exit: 0 printed, 2 usage, 3 the document could not be built",
+  "  exit: 0 printed, 2 usage or a repository not released (repo --export), 3 the document could not be built",
 }, "\n")
 
 ---@class Testing.Export.Call.Args
@@ -183,20 +188,24 @@ function M.main(argv, sv)
       return M.EXIT_USAGE
     end
   end
-  local doc, err
+  local doc, err, kind
   if args.method == "fleet" then
     doc, err = export.fleet(opts)
   else
-    doc, err = export.repo(args.roots[1] or ".", opts)
+    doc, err, kind = export.repo(args.roots[1] or ".", opts)
   end
   if not doc then
     sv.err("testing call: " .. tostring(err))
-    return M.EXIT_INFRA
+    return kind == export.REFUSED and M.EXIT_USAGE or M.EXIT_INFRA
   end
   local text, eerr = export.encode(doc)
   if not text then
     sv.err("testing call: " .. tostring(eerr))
     return M.EXIT_INFRA
+  end
+  -- as `testing export`: an export form that released less than asked for says why (no areas.json, an unusable one)
+  if type(doc.classes) == "table" and type(doc.classes.problem) == "string" then
+    sv.err("testing call: note: " .. doc.classes.problem)
   end
   sv.out(text)
   return M.EXIT_OK

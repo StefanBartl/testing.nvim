@@ -36,9 +36,10 @@
 --- `capabilities`; a break is `testing-export/2`. The JSON Schema is `schemas/testing-export/1/`.
 ---
 --- The command `testing call fleet|repo` (`testing.export.call`) prints the documents; `testing export --out`
---- (`testing.export.folder`) writes an export folder from `M.export`, which returns the files and the manifest. Only
---- `M.export` asks the data classes of this device (`M.release`, `lib.nvim.data_classes`, fail-closed): what leaves
---- the machine is `public` or `internal`, the rest is counted in the fleet's `excluded_by`, never named.
+--- (`testing.export.folder`) writes an export folder from `M.export`, which returns the files and the manifest. Every
+--- document in the export form (`M.export`, and `M.fleet`/`M.repo` with `form = "export"`) asks the data classes of
+--- this device (`M.release`, `lib.nvim.data_classes`, fail-closed): what leaves the machine is `public` or
+--- `internal`, the rest is counted in the fleet's `excluded_by`, never named; the local form does not ask.
 
 local M = {}
 
@@ -862,7 +863,7 @@ end
 ---unchanged state is the same bytes (no git diff in a results repository).
 ---@field no_local? boolean Read no local result (`last.json`, `last_green.json`, `ci.json`): `local`, `last_green`,
 ---`ci_local`, `counts` are `null`, `cases_red` is 0 and `local_read` is false. The workstation, where nothing runs.
----@field classes? table `export` only: the options of `lib.nvim.data_classes.load` (`path`, `dir`, `env`, `os`);
+---@field classes? table The export form only: the options of `lib.nvim.data_classes.load` (`path`, `dir`, `env`, `os`);
 ---nil reads this device's `areas.json`. A spec always names its own file.
 
 ---The CI adapter's records by directory, and what the document says about asking it.
@@ -905,7 +906,7 @@ end
 
 -- ── documents ────────────────────────────────────────────────────────────────
 
----What the data classes left out of a fleet (`M.export`); nil: not asked (`testing call`).
+---What the data classes left out of a fleet in the export form; nil: not asked (the local form).
 ---@class Testing.Export.Classed
 ---@field n_private integer
 ---@field n_unclassified integer
@@ -1029,22 +1030,28 @@ end
 
 ---Run `fn` with the secrets of the environment read once; an error becomes `nil, message`.
 ---@generic T
----@param fn fun(): T|nil, string|nil
+---@param fn fun(): T|nil, string|nil, string|nil
 ---@return T|nil
 ---@return string|nil err
+---@return string|nil kind `M.REFUSED` when the data classes refused the document, else nil.
 local function protect(fn)
   local outer = secrets_cache
   secrets_cache = nil
   secrets_cache = M.secrets()
-  local ok, res, err = pcall(fn)
+  local ok, res, err, kind = pcall(fn)
   secrets_cache = outer
   if not ok then
     return nil, tostring(res)
   end
-  return res, err
+  return res, err, kind
 end
 
----The `fleet` document.
+---The kind of error of `M.repo` in the export form when the data classes of this device do not release the
+---repository: a refusal (exit 2 of `testing call`), not a failure to build.
+M.REFUSED = "refused"
+
+---The `fleet` document. The export form holds only the repositories the data classes of this device release
+---(`M.release`, as `M.export` does); the local form, which stays on this machine, holds all and does not ask.
 ---@param opts Testing.Export.Opts
 ---@return table|nil doc
 ---@return string|nil err
@@ -1055,9 +1062,14 @@ function M.fleet(opts)
       return nil, tostring(info)
     end
     ---@cast info { excluded: string[], missing: string[] }
-    local remote, remote_info = ask_remote(dirs, opts)
-    local doc = build_fleet(dirs, info, opts, remote, remote_info)
-    if (opts.form or "export") == "export" then
+    local form = opts.form or "export"
+    local released, classed = dirs, nil
+    if form == "export" then
+      released, classed = M.release(dirs, opts.classes)
+    end
+    local remote, remote_info = ask_remote(released, opts)
+    local doc = build_fleet(released, info, opts, remote, remote_info, classed)
+    if form == "export" then
       local problem = refuse_leaks(doc, dirs, opts.state_dir)
       if problem then
         return nil, problem
@@ -1067,19 +1079,34 @@ function M.fleet(opts)
   end)
 end
 
----The `repo` document of one repository.
+---The `repo` document of one repository. In the export form a repository the data classes of this device do not
+---release (`private`, `unclassified`) gives no document: `nil, why, M.REFUSED`.
 ---@param dir string
 ---@param opts Testing.Export.Opts
 ---@return table|nil doc
 ---@return string|nil err
+---@return string|nil kind `M.REFUSED`: refused by the data classes.
 function M.repo(dir, opts)
   return protect(function()
     dir = vim.fs.normalize(vim.fn.fnamemodify(vim.fs.normalize(dir), ":p")):gsub("([^:/])/+$", "%1")
     if vim.fn.isdirectory(dir) ~= 1 then
       return nil, ("%s is not a directory"):format(dir)
     end
-    local remote, remote_info = ask_remote({ dir }, opts)
     local form = opts.form or "export"
+    if form == "export" then
+      local released, classed = M.release({ dir }, opts.classes)
+      if #released == 0 then
+        local class = classed.n_private > 0 and "private" or "unclassified"
+        local why = classed.problem and ("; " .. classed.problem) or ""
+        return nil,
+          ("the data classes of this device do not release this repository (%s%s): no export form"):format(
+            class,
+            why
+          ),
+          M.REFUSED
+      end
+    end
+    local remote, remote_info = ask_remote({ dir }, opts)
     local row, src = row_of(
       dir,
       { form = form, state_dir = opts.state_dir, remote = remote, no_local = opts.no_local }

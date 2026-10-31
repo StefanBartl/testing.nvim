@@ -339,8 +339,9 @@ nvim -n -i NONE --headless -u NONE -l scripts/testing.lua call repo <dir> [--exp
 
 `testing call` prints one line of canonical JSON on stdout ([CLI.md](CLI.md#subcommands)); `testing export --out <dir>`
 writes an export folder ([below](#the-export-folder-testing-export---out)). The Lua API is `testing.export`:
-`fleet(opts)`, `repo(dir, opts)`, `export(opts)` (the files of an export folder and the manifest, with the data
-classes asked; `opts.previous(path)` gives the folder's current file texts so that an unchanged document keeps its
+`fleet(opts)`, `repo(dir, opts)` (in the export form both ask the data classes like `export`: the fleet holds only the
+released repositories, `repo` of one that is not released gives `nil, why, testing.export.REFUSED`), `export(opts)`
+(the files of an export folder and the manifest, with the data classes asked; `opts.previous(path)` gives the folder's current file texts so that an unchanged document keeps its
 bytes, `opts.classes` the options of `lib.nvim.data_classes.load`, `opts.no_local` reads no local result), `release`
 (the repositories that may leave this machine), `encode`, `read`, `validate`, `leaks`, `repo_key`; and
 `testing.export.folder`: `write(dir, opts)`, `inspect(dir)`.
@@ -369,10 +370,10 @@ hashed), or indented by two spaces with a final line feed (the files of an expor
 ### `fleet`
 
 `repos[]`, one row per repository, sorted by directory name; `excluded` (how many were left out: vaults,
-`--exclude` and, in an export folder, the data classes; their names are not in the document); `excluded_by =
+`--exclude` and, in the export form, the data classes; their names are not in the document); `excluded_by =
 { selection, private, unclassified }` (the same by reason: `selection` the vaults and excludes, `private` and
 `unclassified` what the data classes kept on this machine; both `null` when the data classes were not asked, as in
-`testing call`, never 0); `classes = { checked, problem }` (whether the data classes were asked and why nothing or
+the local form, never 0; the export form, of `testing call --export` too, always asks them); `classes = { checked, problem }` (whether the data classes were asked and why nothing or
 less was released: no `areas.json` on this device, an unusable one, named by its kind only); `local_read` (`false`
 on the workstation: no local result was read, see below); `remote = { asked, error }` (whether the CI adapter was
 asked and why it failed, redacted). The repositories are found as `testing ci overview` finds them: below each `--repos-root`

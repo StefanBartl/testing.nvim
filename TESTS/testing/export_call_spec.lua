@@ -15,12 +15,15 @@ return function(H)
   local base = fixture.base("call")
   local fx = fixture.build(base)
 
-  local function call(args, install)
+  local function call(args, install, config)
     local out, err = {}, {}
     local restore = fixture.install(install)
     if install and install.after then
       install.after()
     end
+    -- the data classes of the fixture's "device" (never the real areas.json of this machine)
+    local saved_env = vim.env.TASKS_DESKTOP_CONFIG_DIR
+    vim.env.TASKS_DESKTOP_CONFIG_DIR = config or vim.fs.dirname(fx.areas)
     local pass, code = pcall(cli.main, vim.list_extend({ "call" }, args), {
       out = function(s)
         out[#out + 1] = s
@@ -30,6 +33,7 @@ return function(H)
       end,
       state_dir = fx.state,
     })
+    vim.env.TASKS_DESKTOP_CONFIG_DIR = saved_env
     restore()
     if not pass then
       error(code, 0)
@@ -258,6 +262,82 @@ return function(H)
     else
       eq(plain.repo.head, vim.NIL, "not a checkout: head is null")
     end
+  end
+
+  -- ── the data classes: the export form releases what testing export --out releases, the local form all ──
+  do
+    local cfg = base .. "/classes-call"
+    fixture.write(
+      cfg .. "/areas.json",
+      fixture.areas({ ["alpha.nvim"] = "public", ["beta.nvim"] = "private" })
+    )
+    local f = call({ "fleet", "--repos-root=" .. fx.root, "--export" }, nil, cfg)
+    eq(f.code, 0, "fleet --export: exit 0: " .. f.err)
+    local names = {}
+    for _, row in ipairs(f.doc.repos) do
+      names[#names + 1] = row.name
+    end
+    eq(names, { "alpha.nvim" }, "fleet --export: only the released repository")
+    eq(
+      f.doc.excluded_by,
+      { selection = 1, private = 1, unclassified = 1 },
+      "fleet --export: by reason"
+    )
+    eq(f.doc.classes.checked, true, "fleet --export: checked")
+    eq(f.out[1]:find("beta.nvim", 1, true), nil, "fleet --export: beta is not named")
+    eq(f.out[1]:find("gamma.nvim", 1, true), nil, "fleet --export: gamma is not named")
+
+    local p = call({ "repo", fx.beta, "--export" }, nil, cfg)
+    eq(p.code, 2, "repo --export of a private repository: exit 2")
+    eq(#p.out, 0, "repo --export of a private repository: nothing on stdout")
+    has(p.err, "(private)", "repo --export of a private repository: says why")
+    local u = call({ "repo", fx.gamma, "--export" }, nil, cfg)
+    eq(u.code, 2, "repo --export of an unclassified repository: exit 2")
+    eq(#u.out, 0, "repo --export of an unclassified repository: nothing on stdout")
+    has(u.err, "(unclassified)", "repo --export of an unclassified repository: says why")
+    local a = call({ "repo", fx.alpha, "--export" }, nil, cfg)
+    eq(a.code, 0, "repo --export of a public repository: exit 0: " .. a.err)
+    -- the refusal names neither the repository nor a path of this machine
+    for _, r in ipairs({ p, u }) do
+      eq(r.err:find("beta", 1, true), nil, "the refusal does not name beta")
+      eq(r.err:find("gamma", 1, true), nil, "the refusal does not name gamma")
+      eq(r.err:find(fx.root, 1, true), nil, "the refusal names no path")
+    end
+
+    -- the CI adapter is never asked about a repository that is not released (no request about a private one)
+    local asked = {}
+    local saved_remote = export.deps.remote
+    export.deps.remote = function(list)
+      for _, item in ipairs(list) do
+        asked[#asked + 1] = vim.fs.basename(item.dir)
+      end
+      return {}, {}
+    end
+    local fr = call({ "fleet", "--repos-root=" .. fx.root, "--export", "--remote" }, nil, cfg)
+    local pr = call({ "repo", fx.beta, "--export", "--remote" }, nil, cfg)
+    export.deps.remote = saved_remote
+    eq(fr.code, 0, "fleet --export --remote: exit 0: " .. fr.err)
+    eq(pr.code, 2, "repo --export --remote of a private repository: exit 2")
+    eq(asked, { "alpha.nvim" }, "the adapter is asked about the released repository only")
+
+    local none = base .. "/classes-none"
+    vim.fn.mkdir(none, "p")
+    local n = call({ "fleet", "--repos-root=" .. fx.root, "--export" }, nil, none)
+    eq(n.code, 0, "no areas.json: fleet --export: exit 0")
+    eq(n.doc.repos, {}, "no areas.json: fleet --export: no repository")
+    eq(n.doc.excluded_by.unclassified, 3, "no areas.json: all unclassified")
+    has(n.err, "note: no areas.json", "no areas.json: fleet --export says why on stderr")
+    local nr = call({ "repo", fx.alpha, "--export" }, nil, none)
+    eq(nr.code, 2, "no areas.json: repo --export: exit 2")
+    has(nr.err, "no areas.json", "no areas.json: repo --export: says why")
+
+    local l = call({ "repo", fx.beta }, nil, cfg)
+    eq(l.code, 0, "the local form of a private repository: exit 0 (it stays on this machine)")
+    eq(
+      #call({ "fleet", "--repos-root=" .. fx.root }, nil, none).doc.repos,
+      3,
+      "the local form: all"
+    )
   end
 
   vim.fn.delete(base, "rf")

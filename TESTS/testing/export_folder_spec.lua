@@ -321,12 +321,34 @@ return function(H)
     eq(classed.n_unclassified, 1, "no reader: unclassified")
     has(classed.problem, "no data_classes", "no reader: said")
 
-    -- the documents of `testing call` do not ask the data classes, and say so (null, never 0)
+    -- the export form of `testing call` asks the data classes like the folder does; the local form, which stays on
+    -- this machine, does not, and says so (null, never 0)
+    fixture.write(
+      fx2.areas,
+      fixture.areas({ ["alpha.nvim"] = "public", ["beta.nvim"] = "private" })
+    )
     local restore = fixture.install()
     local doc = export.fleet(fixture.opts(fx2, { remote = false }))
+    local ldoc = export.fleet(fixture.opts(fx2, { remote = false, form = "local" }))
     restore()
-    eq(doc.excluded_by, { selection = 1, private = vim.NIL, unclassified = vim.NIL }, "call: null")
-    eq(doc.classes, { checked = false, problem = vim.NIL }, "call: not checked")
+    local names = {}
+    for _, row in ipairs(doc.repos) do
+      names[#names + 1] = row.name
+    end
+    eq(names, { "alpha.nvim" }, "call, export form: only the released repository")
+    eq(
+      doc.excluded_by,
+      { selection = 1, private = 1, unclassified = 1 },
+      "call, export form: counted by reason"
+    )
+    eq(doc.classes, { checked = true, problem = vim.NIL }, "call, export form: checked")
+    eq(#ldoc.repos, 3, "call, local form: every repository")
+    eq(
+      ldoc.excluded_by,
+      { selection = 1, private = vim.NIL, unclassified = vim.NIL },
+      "call, local form: null"
+    )
+    eq(ldoc.classes, { checked = false, problem = vim.NIL }, "call, local form: not checked")
   end
 
   -- ── refusals: nothing is touched that the manifest does not own ──

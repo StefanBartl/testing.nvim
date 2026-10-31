@@ -299,7 +299,7 @@
           "$ref": "#/$defs/count"
         },
         "excluded_by": {
-          "description": "The repositories left out by reason, never by name: selection (vaults, excludes), private and unclassified (the data classes of this device, fail-closed). null: the data classes were not asked (a document that stays on this machine, `testing call`). Capability data_classes.",
+          "description": "The repositories left out by reason, never by name: selection (vaults, excludes), private and unclassified (the data classes of this device, fail-closed). null: the data classes were not asked (the local form, a document that stays on this machine; the export form always asks them). Capability data_classes.",
           "type": "object",
           "required": ["selection", "private", "unclassified"],
           "properties": {
