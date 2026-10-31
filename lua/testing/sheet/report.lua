@@ -50,9 +50,56 @@ local function snapshot_files(root, rel)
   return out
 end
 
----Read the sheets and last results of the projects.
+M.MAX_IR_BYTES = 64 * 1024 * 1024
+
+---The cases of a Result-IR file (`testing run --json <file>`) by name: the result of a run that did not
+---write the editor's state (`scripts/test.sh` runs with a throwaway app name and stdpath).
+---@param path string
+---@return table<string, Testing.State.Case>|nil cases, string|nil err
+function M.cases_from_ir(path)
+  local f = io.open(path, "rb")
+  if not f then
+    return nil, "cannot read " .. path
+  end
+  local text = f:read(M.MAX_IR_BYTES + 1) or ""
+  f:close()
+  if #text > M.MAX_IR_BYTES then
+    return nil, path .. " is too large for a Result-IR"
+  end
+  local ok, ir = pcall(vim.json.decode, text, { luanil = { object = true, array = true } })
+  if not ok or type(ir) ~= "table" or type(ir.cases) ~= "table" then
+    return nil, path .. " is not a Result-IR (no cases)"
+  end
+  local out = {}
+  for _, c in ipairs(ir.cases) do
+    if type(c) == "table" and type(c.name) == "string" and type(c.status) == "string" then
+      local msg
+      for _, a in ipairs(type(c.assertions) == "table" and c.assertions or {}) do
+        if type(a) == "table" and a.ok == false then
+          msg = type(a.msg) == "string" and a.msg or nil
+          break
+        end
+      end
+      if not msg and type(c.error) == "table" and type(c.error.message) == "string" then
+        msg = c.error.message
+      end
+      out[c.name] = {
+        id = tostring(c.id),
+        file = tostring(c.file),
+        name = c.name,
+        status = c.status,
+        duration_ms = type(c.duration_ms) == "number" and c.duration_ms or 0,
+        message = msg and (msg:match("^[^\n]*")) or nil,
+      }
+    end
+  end
+  return out, nil
+end
+
+---Read the sheets and last results of the projects. `opts.cases` (from `cases_from_ir`) replaces the
+---editor's state; it says nothing about staleness (an IR is one run).
 ---@param roots string[]
----@param opts? { states?: table<string, Testing.State>, state_dir?: string }
+---@param opts? { states?: table<string, Testing.State>, state_dir?: string, cases?: table<string, Testing.State.Case> }
 ---@return Testing.SheetReport.Entry[]
 function M.collect(roots, opts)
   opts = opts or {}
@@ -60,12 +107,16 @@ function M.collect(roots, opts)
   local out = {}
   for _, r in ipairs(roots) do
     local root = norm(r)
-    local st = (opts.states and opts.states[root])
-      or state.load(root, { state_dir = opts.state_dir })
-    local by_name = {}
-    for _, c in ipairs(st.cases or {}) do
-      if c.name then
-        by_name[c.name] = c
+    local st, by_name
+    if opts.cases then
+      by_name = opts.cases
+    else
+      st = (opts.states and opts.states[root]) or state.load(root, { state_dir = opts.state_dir })
+      by_name = {}
+      for _, c in ipairs(st.cases or {}) do
+        if c.name then
+          by_name[c.name] = c
+        end
       end
     end
     for _, path in ipairs(sheet_mod.files(root .. "/TESTS/sheets")) do
@@ -75,7 +126,7 @@ function M.collect(roots, opts)
         { root = root, rel = rel, sheet = s, error = err, snapshots = snapshot_files(root, rel) }
       if s then
         e.case = by_name[sheet_mod.spec_name(s)]
-        if e.case then
+        if e.case and st then
           local stale, why = state.is_stale(st, e.case.file)
           e.stale = stale and (why or "stale") or nil
         end
@@ -214,7 +265,7 @@ function M.render(entries, opts)
   return table.concat(out, "\n") .. "\n"
 end
 
-M.USAGE = "usage: testing sheets report [<root>...] [--out <file>]"
+M.USAGE = "usage: testing sheets report [<root>...] [--from <ir.json>]... [--out <file>]"
 
 ---`testing sheets report`: exit 0 written or printed, 2 bad usage, 3 the file could not be written.
 ---@param argv string[] The arguments after `sheets`.
@@ -225,15 +276,28 @@ function M.main(argv, sv)
     sv.err(M.USAGE)
     return 2
   end
-  local roots, out_file = {}, nil
+  local roots, out_file, cases = {}, nil, nil
   local i = 2
   while i <= #argv do
     local a = argv[i]
-    if a == "--out" then
-      out_file = argv[i + 1]
-      if not out_file then
+    if a == "--out" or a == "--from" then
+      local v = argv[i + 1]
+      if not v then
         sv.err(M.USAGE)
         return 2
+      end
+      if a == "--out" then
+        out_file = v
+      else
+        local got, ferr = M.cases_from_ir(v)
+        if not got then
+          sv.err("testing sheets: " .. tostring(ferr))
+          return 2
+        end
+        cases = cases or {}
+        for name, c in pairs(got) do
+          cases[name] = c
+        end
       end
       i = i + 1
     elseif a:match("^%-") then
@@ -247,7 +311,7 @@ function M.main(argv, sv)
   if #roots == 0 then
     roots = { vim.fn.getcwd() }
   end
-  local text = M.render(M.collect(roots), {
+  local text = M.render(M.collect(roots, { cases = cases }), {
     date = os.date("!%Y-%m-%d") --[[@as string]],
   })
   if not out_file then

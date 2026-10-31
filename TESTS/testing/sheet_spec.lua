@@ -203,6 +203,8 @@ return function(H)
         "keys that raise an error message fail the step (feed itself does not raise)"
       )
       slow.steps = { { wait = "false", timeout = 100 } }
+      -- two sizes, two failures: they must still be one line
+      slow.sizes = { { rows = 24, cols = 80 }, { rows = 12, cols = 40 } }
       local t0 = vim.uv.hrtime()
       local raised, err = pcall(sheet.check, slow, { root = root })
       local took_ms = (vim.uv.hrtime() - t0) / 1e6
@@ -224,6 +226,7 @@ return function(H)
         not tostring(err):find("\n", 1, true),
         "one line: the state and the report keep only the first"
       )
+      has(tostring(err), "; 40x12 step 1, wait false", "the second failure follows on that line")
       has(tostring(err), "still false after 100 ms", "a wait that never holds")
       local lr, lerr = pcall(sheet.check, root .. "/TESTS/sheets/bad.sheet.lua")
       ok(
@@ -338,6 +341,72 @@ return function(H)
       }
       eq(report.main({ "nope" }, sv), 2, "an unknown subcommand is bad usage")
       eq(report.main({ "report", "--bogus" }, sv), 2, "an unknown option is bad usage")
+      -- --from: the result of a run that did not write the editor's state (scripts/test.sh)
+      local root2 = root .. "/p2"
+      write(
+        "p2/TESTS/sheets/auto.sheet.lua",
+        'return { id = "auto", title = "Auto", steps = { { keys = "x" } } }'
+      )
+      write(
+        "p2/TESTS/sheets/red.sheet.lua",
+        'return { id = "red", title = "Red", steps = { { keys = "x" } } }'
+      )
+      local ir = write(
+        "ir.json",
+        vim.json.encode({
+          schema_version = 1,
+          cases = {
+            {
+              id = "TESTS/s_spec.lua::sheet:auto",
+              file = "TESTS/s_spec.lua",
+              name = "sheet:auto",
+              status = "pass",
+              duration_ms = 5,
+              assertions = { { ok = true } },
+            },
+            {
+              id = "TESTS/s_spec.lua::sheet:red",
+              file = "TESTS/s_spec.lua",
+              name = "sheet:red",
+              status = "fail",
+              duration_ms = 5,
+              assertions = { { ok = false, msg = "boom\nsecond line" } },
+            },
+          },
+        })
+      )
+      local cases = assert(report.cases_from_ir(ir))
+      eq(
+        { cases["sheet:auto"].status, cases["sheet:red"].message },
+        { "pass", "boom" },
+        "IR cases by name, first line of the first failure"
+      )
+      local from_entries = report.collect({ root2 }, { cases = cases })
+      eq(
+        vim.tbl_map(report.bucket, from_entries),
+        { "automated", "red" },
+        "the IR decides the buckets"
+      )
+      ok(report.cases_from_ir(root .. "/nope.json") == nil, "an unreadable IR is refused")
+      write("notir.json", "[1, 2]")
+      ok(report.cases_from_ir(root .. "/notir.json") == nil, "JSON without cases is refused")
+      eq(
+        report.main({ "report", root2, "--from", root .. "/nope.json" }, sv),
+        2,
+        "--from an unreadable file is bad usage"
+      )
+      local out2 = root .. "/out/from.md"
+      eq(
+        report.main({ "report", root2, "--from", ir, "--out", out2 }, sv),
+        0,
+        "--from writes the list"
+      )
+      local f2 = assert(io.open(out2, "rb"))
+      local from_md = f2:read("*a")
+      f2:close()
+      has(from_md, "## Automated (1)", "the IR's green case is automated")
+      has(from_md, "- `fail`: boom", "and its red case says why")
+
       local out_file = root .. "/out/list.md"
       eq(report.main({ "report", root, "--out", out_file }, sv), 0, "report writes the file")
       local f = assert(io.open(out_file, "rb"))

@@ -76,11 +76,15 @@ returns `{ ok, status, failures, snapshots }`. A project whose process guard is 
 ## The report
 
 ```
-testing sheets report [<root>...] [--out <file>]
+testing sheets report [<root>...] [--from <ir.json>]... [--out <file>]
 ```
 
 reads the sheets of every root (default the current directory) and the last results, and writes one
-Markdown list (stdout without `--out`):
+Markdown list (stdout without `--out`). The last results come from the editor's state (`testing.state`,
+written by `testing run` and `:Testing`) or, with `--from`, from the Result-IR of a run
+(`testing run --json <file>`). `scripts/test.sh` runs with a throwaway app name and stdpath, so its
+results never reach the state: run it with `--json <file>` and pass that file. An IR says nothing about
+staleness (it is one run); several `--from` files are merged by case name.
 
 | Section | What is in it |
 |---|---|

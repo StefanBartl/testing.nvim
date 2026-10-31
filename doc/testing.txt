@@ -515,8 +515,9 @@ A spec cannot end the run: `os.exit` inside a spec is an error of that file
 `testing migrate`: 0 done or nothing to do, 1 (`--check`) work to do, 2 refused
 or bad usage, 3 the root cannot be analysed.
 
-`testing sheets report [<root>...] [--out <file>]`: the checklist of live checks
-from the test sheets (TESTS/sheets/*.sheet.lua) and their last results; runs
+`testing sheets report [<root>...] [--from <ir.json>]... [--out <file>]`: the
+checklist of live checks from the test sheets (TESTS/sheets/*.sheet.lua) and
+their last results (the editor's state, or the IR of a run with `--from`); runs
 nothing. 0 written or printed, 2 bad usage, 3 the file could not be written.
 See docs/SHEETS.md.
 
