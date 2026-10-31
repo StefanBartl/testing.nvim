@@ -307,6 +307,26 @@ return function(H)
     refused(function(d)
       d.repos[1].counts = nil
     end, "a row without counts")
+    -- an export form whose data classes were not asked (an engine before 8e623df): a reader must not show it
+    has(
+      refused(function(d)
+        d.classes.checked = false
+      end, "an export-form fleet with classes.checked false"),
+      "classes.checked",
+      "the reason names the field"
+    )
+    refused(function(d)
+      d.classes = nil
+    end, "an export-form fleet without classes")
+    -- the rule is the export form's: the local form, which stays on this machine, does not ask the data classes
+    local localf = vim.deepcopy(fleet)
+    localf.form = "local"
+    localf.classes.checked = false
+    local lvalid, lproblems = export.validate(vim.json.encode(localf))
+    ok(
+      lvalid,
+      "a local-form fleet with classes.checked false is valid: " .. table.concat(lproblems, "; ")
+    )
   end
 
   -- ── the validator itself: a keyword it does not know is an error of the schema, not a pass ──

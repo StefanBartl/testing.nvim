@@ -12,7 +12,8 @@
 --- `--export` gives the form of an export folder: no absolute path, refused when the leak detector still finds one,
 --- and only the repositories the data classes of this device release (`public`, `internal`; `lib.nvim.data_classes`,
 --- fail-closed as `testing export --out`): `fleet` counts the others in `excluded_by` without naming them, `repo` of
---- a repository that is not released prints nothing and exits 2.
+--- a repository that is not released prints nothing and exits 2. A shallow clone among them (its key differs from that
+--- of a full clone) is a warning on stderr, never part of the document.
 --- `--remote` asks the CI adapter (`testing ci remote`: GitHub, network, a read-only token); without it `ci_remote`
 --- is `null` (not asked); asked without a record it is `state = "unknown"`. Runs nothing: no suite, no pipeline, no `.testing.lua`; it writes nothing
 --- either, except the CI adapter's ETag cache in the state directory with `--remote`.
@@ -160,6 +161,10 @@ function M.main(argv, sv)
     form = args.export and "export" or "local",
     state_dir = state_dir,
     remote = args.remote,
+    -- a shallow clone (its key differs from a full clone's): on stderr, never in the document
+    warn = function(msg)
+      sv.err("testing call: warning: " .. msg)
+    end,
   }
   -- what is a usage problem (a directory that is not there, nothing found) is told apart from a build failure
   if args.method == "fleet" then

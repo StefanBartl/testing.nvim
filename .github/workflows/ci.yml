@@ -39,6 +39,27 @@ jobs:
       - run: luarocks install luacheck 1.2.0
       - run: luacheck lua TESTS scripts plugin
 
+  # The contract testing-export/1 from the outside (contract/check.mjs, as tasks.nvim checks tasks-export/1): the
+  # schema compiles in Ajv's strict mode, every golden document is valid, documents that break the contract are
+  # refused, and the generated TypeScript types equal the committed schemas/testing-export/1/testing-export.d.ts.
+  contract:
+    name: contract (Ajv, golden files, .d.ts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      # The versions of package-lock.json, exactly (ajv, ajv-formats, json-schema-to-typescript are pinned).
+      - run: npm ci --no-audit --no-fund
+      - run: npm run check
+
   tests:
     name: specs (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -167,10 +188,10 @@ jobs:
           retention-days: 14
 
   # Consumers of this repo that check it out as a CI dependency pin `ref: ci-verified`: that branch
-  # only ever moves once stylua, luacheck and the three-platform test matrix have all passed.
+  # only ever moves once stylua, luacheck, the contract check and the three-platform test matrix have all passed.
   publish-ci-verified:
     name: publish ci-verified branch
-    needs: [stylua, luacheck, tests]
+    needs: [stylua, luacheck, contract, tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -878,6 +878,10 @@ function M.main(argv, sv)
     state_dir = args.state_dir and norm(args.state_dir) or sv.state_dir,
     remote = args.remote,
     no_local = workstation,
+    -- a shallow clone (its key differs from a full clone's): on stderr, never in a document
+    warn = function(msg)
+      sv.err("testing export: warning: " .. msg)
+    end,
   }
   local dirs, info = export.resolve(opts)
   if not dirs or #dirs == 0 then

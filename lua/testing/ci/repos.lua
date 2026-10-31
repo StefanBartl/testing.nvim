@@ -655,6 +655,9 @@ function M.main(argv, sv)
       roots = repos,
       state_dir = args.state_dir and norm(args.state_dir) or sv.state_dir,
       no_local = workstation == true,
+      warn = function(msg)
+        sv.err("testing ci: export: warning: " .. msg)
+      end,
     })
     if res then
       local classes = res.bundle.docs["fleet.json"].classes

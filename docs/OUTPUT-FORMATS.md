@@ -384,7 +384,7 @@ A row:
 
 | Field | Meaning |
 | --- | --- |
-| `key` | `<basename>-<12 hex of sha256(basename, a line feed, root commit)>`: the same in every clone of the repository, below any folder, on any machine (no path goes into it); without git the root commit is empty. Not the name of the state directory (that one hashes the absolute path). |
+| `key` | `<basename>-<12 hex of sha256(basename, a line feed, root commit)>`: the same in every clone of the repository, below any folder, on any machine (no path goes into it); without git the root commit is empty. Not the name of the state directory (that one hashes the absolute path). Its limits: [below](#the-repository-key-and-its-limits). |
 | `name` | The directory name. |
 | `root` | Only in the local form: the absolute directory. |
 | `head` | `{ sha, branch, dirty }` of the checkout now (git); `null` when it is no checkout. |
@@ -393,6 +393,25 @@ A row:
 | `ci_local` | The last local pipeline run (`ci.json`): `verdict`, `profile`, `partial`, `commit`, `tree`, `dirty`, `first_red`, `time`; or `null`. |
 | `ci_remote` | The CI adapter's record (`testing ci remote`, only with `--remote`): `state` (its states), `repo` (`owner/name`), `sha`, `branch`, `workflow`, `os.{ubuntu,windows,macos}` (`{ state, url, job }`, `null` without a job for that system), `run` (`id`, `url`, `status`, `conclusion`, `created_at`, `updated_at`, `event`, `attempt`), `note`. `null`: not asked (no `--remote`). Asked, but the adapter gave no record for the repository (it failed, see `remote.error`): `state = "unknown"`, `os` all `null`, `run: null`, a `note` that says so. Links only to `https://github.com/`; the token is in no document. |
 | `counts` | `{ fail, flaky }` of the last result (`flaky`: cases marked flaky in it), `null` without a result. |
+
+### The repository key and its limits
+
+The key (`testing.export.repo_key`, `testing.export.deps.identity`) is `<basename>-<12 hex of sha256(basename, a line
+feed, root commit)>`. The root commit is `git rev-list --max-parents=0 HEAD` (the smallest one when the history has
+several roots). It needs no path, no remote and no configuration, so the same repository has the same key in every
+full clone, below any folder, on any machine; a reader (testing-web, a results repository) follows a repository across
+exports by it. This is decided and stays so; exports are made from full clones (the private machine, the
+workstation). Two limits come with it:
+
+- **A shallow clone has another key.** In a clone made with `--depth` (`git rev-parse --is-shallow-repository` is
+  `true`; the default checkout of GitHub Actions is one), the oldest commit is the shallow boundary, not the root
+  commit, and it moves with every fetch. `testing export`, `testing call --export` and `testing ci --export` export it
+  all the same, and warn on stderr (`warning: <name> is a shallow clone: ...`, with `git fetch --unshallow` as the
+  remedy); nothing of this is in a document. The local form does not warn.
+- **Two clones of the same repository in one export have the same key**, and the documents could not tell them apart
+  (two `repos/<key>.json` of one name). This is an error, never a document: `two repositories have the key <key>
+  (<dir> and <dir>): two clones of the same repository ...` (one checkout inside the other, or the same repository
+  below two `--repos-root`); export only one of them, for example by naming the directories.
 
 ### `repo`
 
@@ -485,14 +504,16 @@ false` a client shows them as unknown); `--remote` still asks the CI adapter. An
 `last.json` keeps messages as the code under test wrote them, with absolute paths. Every free text of a document
 (messages, expected, actual, notes, names, the CI adapter's notes) is redacted as the IR redacts a message
 (`testing.run.inproc.redact_text`: the repository is `<REPO>`, the home directory `<HOME>`, the temporary directory
-`<TMP>`, the state directory `<STATE>`, user and host name, `NAME=value` pairs of the environment), the bare value of
+`<TMP>`, the state directory `<STATE>`, user and host name, `NAME=value` pairs of the environment), the token the CI
+adapter used for the document becomes `<TOKEN>` (whatever its source: `$TESTING_GITHUB_TOKEN` or `gh auth token`, which
+is no environment variable; the adapter hands it over, it masks its own error texts as well), the bare value of
 every environment variable whose name says it is a secret (`TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `API_KEY`, ...; at
 least 8 bytes) becomes `<ENV>`, then every absolute path left becomes `<PATH>` (a drive path, a UNC path with either
 slash, a POSIX path, also right after a `>` that closes no placeholder, a `file:` URI); a failure text is cut to 4 KiB, a note to 300 bytes. That holds in both forms. The absolute `root`
 exists only in the local form. Before an export-form document is handed out, a detector looks at every string and key
 for the same shapes (a drive path, a UNC path with either slash, an absolute POSIX path, a `file:` URI), the home
-directory and the roots of the repositories (as whole paths: `/root` is not in `rootless_spec.lua`), a secret of the
-environment and the user name (not in the name, the key and the file of a repository, names the user chose); a finding refuses the document (`testing call` exits `3`), it is never written with the leak.
+directory and the roots of the repositories (as whole paths: `/root` is not in `rootless_spec.lua`), the token of the
+CI adapter, a secret of the environment and the user name (not in the name, the key and the file of a repository, names the user chose); a finding refuses the document (`testing call` exits `3`), it is never written with the leak.
 
 ### Rules for a reader
 
@@ -501,8 +522,38 @@ environment and the user name (not in the name, the key and the file of a reposi
 - A missing or `null` value is unknown, never 0 (`local: null` is "no result", not "0 cases"). `cases_red` and
   `cases_omitted` of a repo with `local_read: false` are unknown too (they stay integers of version 1).
 - Refuse a document bigger than 8 MiB and an unknown `kind`.
+- Refuse a `fleet` in the export form whose `classes.checked` is not `true` (or that has no `classes`): every export
+  form asks the data classes of the device, so such a document comes from an engine before `testing.nvim@8e623df`,
+  whose `testing call --export` did not filter, and may hold repositories that must not leave the machine. The
+  schema says so (`if form = "export" then classes.checked = true`, `$defs/classes_checked`); the local form, which
+  stays on this machine and does not ask, may carry `checked: false`.
 
-`testing.export.read(text)` implements these rules; `testing.export.validate(doc)` checks a document against the
-JSON Schema (the schema describes exactly what this version writes, so a field nobody listed fails there, not in a
+`testing.export.read(text)` implements the rules of reading; `testing.export.validate(doc)` checks a document against
+the JSON Schema (the schema describes exactly what this version writes, so a field nobody listed fails there, not in a
 reader). The suite validates every golden file and every form against it with a Lua validator of the keywords the
 schema uses (`testing.export.schema`); an unknown keyword is an error of the schema, not a pass.
+
+### Where the schema is checked, and the TypeScript types
+
+The schema is checked twice, by two validators that must agree:
+
+- in the suite (Neovim, no Node): `testing.export.schema`, against every golden file, every form the engine builds,
+  and documents that break the contract (`TESTS/testing/export_contract_spec.lua`);
+- from the outside, as a client meets it: [`contract/check.mjs`](../contract/check.mjs) with Ajv in strict mode
+  (draft 2020-12, so a mistake in the schema itself fails), every file of `TESTS/golden/testing-export-1/`, and
+  negative cases that must be refused. Its own CI job (`contract` in `.github/workflows/ci.yml`) runs it on every
+  push and pull request; `ci-verified` moves only when it is green.
+
+```sh
+cd contract
+npm ci              # the pinned versions of package-lock.json: ajv, ajv-formats, json-schema-to-typescript
+npm run check       # node check.mjs: checks everything, writes nothing, exit 1 on any failure
+npm run generate    # node check.mjs --write: regenerates schemas/testing-export/1/testing-export.d.ts
+```
+
+The TypeScript types for a client (testing-desktop, testing-web) are generated from the schema by
+`json-schema-to-typescript` and committed as
+[`schemas/testing-export/1/testing-export.d.ts`](../schemas/testing-export/1/testing-export.d.ts); `npm run check`
+compares the generated text with the committed file byte for byte. A schema change is therefore: the schema, the
+golden files if the engine writes something else, `npm run generate`, and the regenerated `.d.ts` in the same commit.
+`contract/node_modules/` is never committed.

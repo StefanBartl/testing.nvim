@@ -603,6 +603,20 @@ return function(H)
     ok(check(out5), "ci --export: the folder is true to its manifest")
     eq(#listing(out5), 5, "ci --export: three repositories")
     ok(#seen == 3, "ci --export: the three runs happened")
+    -- a shallow clone among the repositories: ci --export warns on stderr, as testing export does
+    local saved_shallow = export.deps.shallow
+    export.deps.shallow = function(dir)
+      return vim.fs.basename(dir) == "alpha.nvim"
+    end
+    seen = {}
+    local rs = run({ "--repos=" .. list, "--force", "--export=" .. out5 })
+    export.deps.shallow = saved_shallow
+    eq(rs.code, 0, "ci --export with a shallow clone: exit 0: " .. rs.err)
+    has(
+      rs.err,
+      "testing ci: export: warning: alpha.nvim is a shallow clone",
+      "ci --export: the shallow warning"
+    )
     -- a folder the export would refuse: before anything runs
     seen = {}
     local busy = fx5.root .. "/../busy-ci"

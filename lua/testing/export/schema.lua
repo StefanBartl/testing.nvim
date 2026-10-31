@@ -8,9 +8,9 @@
 --- `maxLength`, `pattern` (through `vim.regex` in very-magic mode: write patterns that read the same in both
 --- dialects, `^[a-z0-9]{12}$`, no lookaround, no `\d`), `allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`.
 ---
---- Why its own: tasks.nvim checks its contract with Ajv (Node, `contract/package.json`), a third-party dependency
---- testing.nvim does not have. The documents are validated here, in the suite, against the same schema file a
---- client of the contract reads.
+--- Why its own: the suite runs in Neovim without Node. The documents are validated here, in the suite, against the
+--- same schema file a client of the contract reads; `contract/check.mjs` (Ajv, strict, its own CI job) checks the
+--- same schema and golden files from the outside, so the two validators must agree.
 ---
 --- A value is what `vim.json.decode` returns: `null` is `vim.NIL`, an empty `{}` carries the metatable of
 --- `vim.empty_dict()`, an empty plain table is `[]`.

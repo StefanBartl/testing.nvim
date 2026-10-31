@@ -350,6 +350,7 @@ for _, ph in ipairs({
   "HOST",
   "USER-PATH",
   "ENV",
+  "TOKEN",
   "EMAIL",
   "REDACTED",
   "VAULT",

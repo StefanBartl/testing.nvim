@@ -22,7 +22,8 @@
 --- (an error, never a leaky document) when the detector `M.leaks` still finds a path of this machine, the home
 --- directory or the user name in it. Free texts are redacted in BOTH forms the way the IR redacts a message
 --- (`testing.run.inproc.redact_text`: `<REPO>`, `<HOME>`, `<TMP>`, `<STATE>`, user, host, `NAME=value` pairs of
---- the environment), the bare value of a secret of the environment (`M.secrets`) becomes `<ENV>`, then every absolute
+--- the environment), the token the CI adapter used (`M.tokens`, whatever its source, `gh auth token` included)
+--- becomes `<TOKEN>`, the bare value of a secret of the environment (`M.secrets`) becomes `<ENV>`, then every absolute
 --- path left becomes `<PATH>` (`testing.ci.overview.clean`: drive, UNC with either slash, POSIX, `file:` URIs).
 ---
 --- Sources (nothing is written but the CI adapter's ETag cache in the state directory, with `remote`): the repository list (the index of the fleet: the detection of `testing ci overview`, below a
@@ -140,6 +141,7 @@ end
 ---@class Testing.Export.Deps
 ---@field identity fun(dir: string): string|nil
 ---@field key fun(dir: string): string
+---@field shallow fun(dir: string): boolean
 ---@field head fun(dir: string): Testing.Export.Head|nil
 ---@field remote fun(repos: { dir: string, from_root: boolean }[], opts: { state_dir: string }): table[], table
 
@@ -172,6 +174,20 @@ M.deps = {
   ---@return string
   key = function(dir)
     return M.repo_key(dir, M.deps.identity(dir))
+  end,
+  ---Whether the checkout is a shallow clone (`git rev-parse --is-shallow-repository`): its oldest commit is the
+  ---shallow boundary, not the root commit, so its key differs from the key of a full clone. false outside git.
+  ---@param dir string
+  ---@return boolean
+  shallow = function(dir)
+    local res = require("lib.nvim.git").run(
+      { "rev-parse", "--is-shallow-repository" },
+      { dir = dir, timeout_ms = 10000, read_only = true, no_lazy_fetch = true }
+    )
+    return res ~= nil
+      and res.code == 0
+      and type(res.stdout) == "string"
+      and vim.trim(res.stdout) == "true"
   end,
   ---The checkout now, nil outside git.
   ---@param dir string
@@ -316,10 +332,48 @@ function M.secrets()
   return out
 end
 
----A free text with every secret of the environment (a bare value, not only `NAME=value`) replaced by `<ENV>`.
+---@type string[]|nil
+local tokens_cache
+
+---The tokens the CI adapter used while this document is built (`info.token` of `testing.ci.remote.collect`, whatever
+---its source: `$TESTING_GITHUB_TOKEN`, `gh auth token`), longest first. Empty outside a document (`protect`).
+---@return string[]
+function M.tokens()
+  return tokens_cache or {}
+end
+
+---Remember the token the CI adapter used for the document being built: it is redacted as a value (`<TOKEN>`) and
+---the leak detector refuses a document that still holds it. Ignored outside a document and when shorter than
+---`M.SECRET_MIN`.
+---@param token any
+local function note_token(token)
+  if not tokens_cache or type(token) ~= "string" or #token < M.SECRET_MIN then
+    return
+  end
+  for _, t in ipairs(tokens_cache) do
+    if t == token then
+      return
+    end
+  end
+  tokens_cache[#tokens_cache + 1] = token
+  table.sort(tokens_cache, function(a, b)
+    if #a ~= #b then
+      return #a > #b
+    end
+    return a < b
+  end)
+end
+
+---A free text with the token of the CI adapter replaced by `<TOKEN>` and every secret of the environment (a bare
+---value, not only `NAME=value`) by `<ENV>`.
 ---@param s string
 ---@return string
 function M.redact_secrets(s)
+  for _, v in ipairs(M.tokens()) do
+    if s:find(v, 1, true) then
+      s = s:gsub(vim.pesc(v), "<TOKEN>")
+    end
+  end
   for _, v in ipairs(M.secrets()) do
     if s:find(v, 1, true) then
       s = s:gsub(vim.pesc(v), "<ENV>")
@@ -709,7 +763,8 @@ end
 ---path, a UNC path, an absolute POSIX path, the home directory, the user name, one of `ctx.roots` (any slash, any
 ---case). The answer names WHERE (`$.repos[1].ci_remote.note`) and WHAT, never the text itself.
 ---@param doc any A document (or any decoded value).
----@param ctx? { roots?: string[], home?: string, user?: string, secrets?: string[] } `secrets`: default `M.secrets()`.
+---@param ctx? { roots?: string[], home?: string, user?: string, secrets?: string[], tokens?: string[] } `secrets`:
+---default `M.secrets()`; `tokens`: default `M.tokens()` (the token the CI adapter used for this document).
 ---@return { path: string, what: string }[]
 function M.leaks(doc, ctx)
   ctx = ctx or {}
@@ -734,6 +789,7 @@ function M.leaks(doc, ctx)
       and ("%f[%w]" .. vim.pesc(user:lower()) .. "%f[%W]")
     or nil
   local secrets = ctx.secrets or M.secrets()
+  local tokens = ctx.tokens or M.tokens()
   local found = {}
   local function check(s, path)
     local function hit(what)
@@ -755,6 +811,11 @@ function M.leaks(doc, ctx)
     for _, n in ipairs(needles) do
       if M.find_root(low, n.text) then
         return hit(n.what)
+      end
+    end
+    for _, v in ipairs(tokens) do
+      if s:find(v, 1, true) then
+        return hit("the token of the CI adapter")
       end
     end
     for _, v in ipairs(secrets) do
@@ -865,6 +926,31 @@ end
 ---`ci_local`, `counts` are `null`, `cases_red` is 0 and `local_read` is false. The workstation, where nothing runs.
 ---@field classes? table The export form only: the options of `lib.nvim.data_classes.load` (`path`, `dir`, `env`, `os`);
 ---nil reads this device's `areas.json`. A spec always names its own file.
+---@field warn? fun(msg: string) The export form only: told about what does not go into a document but the user should
+---know (a shallow clone, whose key differs from that of a full clone). The commands print it on stderr.
+
+---Shallow clones among the repositories of an export: their key is made of the shallow boundary, not of the root
+---commit, so it differs from the key of a full clone of the same repository. Said through `opts.warn`, never in a
+---document (the key stays what it is: the decision is to export from full clones).
+---@param dirs string[]
+---@param opts Testing.Export.Opts
+local function warn_shallow(dirs, opts)
+  if type(opts.warn) ~= "function" then
+    return
+  end
+  for _, dir in ipairs(dirs) do
+    local okc, shallow = pcall(M.deps.shallow, dir)
+    if okc and shallow == true then
+      opts.warn(
+        (
+          "%s is a shallow clone: its key %s is made of its oldest fetched commit, not of the root commit, and"
+          .. " differs from the key of a full clone of the same repository; export from a full clone"
+          .. " (git fetch --unshallow)"
+        ):format(vim.fs.basename(dir), M.deps.key(dir))
+      )
+    end
+  end
+end
 
 ---The CI adapter's records by directory, and what the document says about asking it.
 ---@param dirs string[]
@@ -884,6 +970,11 @@ local function ask_remote(dirs, opts)
   end
   local base = opts.state_dir or vim.fn.stdpath("state")
   local ok, records, info = pcall(M.deps.remote, list, { state_dir = base })
+  -- the token the adapter used is a secret of this document from here on, whatever its source (`gh auth token`
+  -- is no environment variable `M.secrets` could find): every text built later is redacted against it
+  if ok and type(info) == "table" then
+    note_token(info.token)
+  end
   local where = dirs[1] or base
   if not ok then
     return {}, {
@@ -935,11 +1026,12 @@ local function build_fleet(dirs, info, opts, remote, remote_info, classed)
     )
     if by_key[row.key] then
       error(
-        ("two repositories have the key %s (%s and %s): one checkout inside the other?"):format(
-          row.key,
-          by_key[row.key].row.name,
-          row.name
-        ),
+        (
+          "two repositories have the key %s (%s and %s): the key is the directory name and the root commit, so"
+          .. " two clones of the same repository (one checkout inside the other, the same repository below two"
+          .. " roots) or two directories of that name without a commit cannot be told apart: export only one of"
+          .. " them (name just one, or leave one root out)"
+        ):format(row.key, by_key[row.key].dir, dir),
         0
       )
     end
@@ -1035,11 +1127,12 @@ end
 ---@return string|nil err
 ---@return string|nil kind `M.REFUSED` when the data classes refused the document, else nil.
 local function protect(fn)
-  local outer = secrets_cache
+  local outer, outer_tokens = secrets_cache, tokens_cache
   secrets_cache = nil
   secrets_cache = M.secrets()
+  tokens_cache = {}
   local ok, res, err, kind = pcall(fn)
-  secrets_cache = outer
+  secrets_cache, tokens_cache = outer, outer_tokens
   if not ok then
     return nil, tostring(res)
   end
@@ -1066,6 +1159,7 @@ function M.fleet(opts)
     local released, classed = dirs, nil
     if form == "export" then
       released, classed = M.release(dirs, opts.classes)
+      warn_shallow(released, opts)
     end
     local remote, remote_info = ask_remote(released, opts)
     local doc = build_fleet(released, info, opts, remote, remote_info, classed)
@@ -1105,6 +1199,7 @@ function M.repo(dir, opts)
           ),
           M.REFUSED
       end
+      warn_shallow(released, opts)
     end
     local remote, remote_info = ask_remote({ dir }, opts)
     local row, src = row_of(
@@ -1239,6 +1334,7 @@ function M.export(opts)
     end
     ---@cast info { excluded: string[], missing: string[] }
     local released, classed = M.release(dirs, o.classes)
+    warn_shallow(released, o)
     local remote, remote_info = ask_remote(released, o)
     local fleet, by_key = build_fleet(released, info, o, remote, remote_info, classed)
     local docs = { ["fleet.json"] = fleet }

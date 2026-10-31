@@ -279,6 +279,18 @@
       "type": "object",
       "properties": { "root": false }
     },
+    "classes_checked": {
+      "description": "The export form of a fleet always asked the data classes: `classes.checked` is true. A fleet in the export form without it (an engine before testing.nvim@8e623df, whose `testing call --export` did not filter) is refused, so a reader never shows an unfiltered export fleet. A `repo` document carries no `classes`: this rule cannot tell an unfiltered one of such an engine apart.",
+      "type": "object",
+      "required": ["classes"],
+      "properties": {
+        "classes": {
+          "type": "object",
+          "required": ["checked"],
+          "properties": { "checked": { "const": true } }
+        }
+      }
+    },
     "fleet": {
       "type": "object",
       "required": ["schema", "plugin", "kind", "form", "generated_at", "engine", "rev", "digest", "capabilities", "repos", "excluded", "remote"],
@@ -327,7 +339,8 @@
       "then": {
         "allOf": [
           { "$ref": "#/$defs/no_root" },
-          { "type": "object", "properties": { "repos": { "type": "array", "items": { "$ref": "#/$defs/no_root" } } } }
+          { "type": "object", "properties": { "repos": { "type": "array", "items": { "$ref": "#/$defs/no_root" } } } },
+          { "$ref": "#/$defs/classes_checked" }
         ]
       }
     },

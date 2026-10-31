@@ -146,6 +146,13 @@ return function(H)
     local cs = export.clean("auth with " .. secret .. " failed", fx.beta, fx.state)
     vim.env.EXPORT_SPEC_TOKEN = nil
     eq(cs, "auth with <ENV> failed", "a bare token of the environment")
+    -- <TOKEN> (the CI adapter's token) is a placeholder like <ENV>: a path after it is no absolute path
+    eq(
+      export.clean("<TOKEN>/abc def", fx.beta, fx.state),
+      "<TOKEN>/abc def",
+      "<TOKEN> is a placeholder"
+    )
+    eq(export.clean("<ENV>/abc def", fx.beta, fx.state), "<ENV>/abc def", "<ENV> is a placeholder")
     local long = export.clean(string.rep("x", 10000), fx.beta, fx.state, export.TEXT_MAX)
     eq(#long, export.TEXT_MAX, "a failure text is cut to its budget")
   end

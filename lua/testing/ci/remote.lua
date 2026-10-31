@@ -798,7 +798,9 @@ end
 ---@param repos { dir: string, from_root: boolean }[]
 ---@param opts { workflow?: string, state_dir: string }
 ---@return table[] records
----@return { token_source?: string, token_error?: string } info
+---@return { token_source?: string, token_error?: string, token?: string } info `token`: the token the adapter used
+---(whatever its source, `gh auth token` included), so that a caller that writes documents can redact it as a value
+---(`testing.export`). Never printed or written: `M.document` names only its source.
 function M.collect(repos, opts)
   local now = M.deps.now()
   local records, non_gating = {}, {}
@@ -894,6 +896,7 @@ function M.collect(repos, opts)
       end
     else
       info.token_source = source
+      info.token = token
       local ctx = { token = token, state_dir = opts.state_dir, now = now, non_gating = non_gating }
       local next_i, open = 1, 0
       local function launch()

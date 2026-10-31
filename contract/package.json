@@ -1,0 +1,19 @@
+{
+  "name": "testing-nvim-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Checks the testing-export/1 contract: the golden documents against the JSON Schema, negative cases, and the generated TypeScript types.",
+  "scripts": {
+    "check": "node check.mjs",
+    "generate": "node check.mjs --write"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "json-schema-to-typescript": "16.0.0"
+  }
+}
