@@ -122,7 +122,8 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   runs, and the document `testing-ci/1` in the state directory. `testing lint` / `:Testing lint` runs the lint
   checks of that pipeline (stylua, luacheck, `lua-language-server --check` as the preset `luals`) on the changed
   files, the current file or everything, with `--fix` for stylua; the editor puts the findings into the quickfix
-  list and `vim.diagnostic`, optionally on save (`lint = { on_save = true }`).
+  list and `vim.diagnostic`, optionally on save (`lint = { on_save = true }`). `testing ci overview` writes one
+  static HTML page of many repositories (local proof, GitHub Actions per system, filter "red only") and runs nothing.
 - **The last result** ([docs/STATE.md](docs/STATE.md)): `testing.state` keeps the last result per case
   (`last.json`, merged over partial runs, with the staleness of each spec file) for an explorer, a hover or a
   statusline; a data module, no UI.

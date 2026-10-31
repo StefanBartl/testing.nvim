@@ -40,6 +40,7 @@ M.USAGE = table.concat({
   "       testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list> [--force] [--jobs=<n>] ...",
   "       testing ci list [--json] [--root=<dir>]",
   "       testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>] [--state-dir=<dir>]",
+  "       testing ci overview [<root>...] [--repos-root=<dir>] [--out=<file.html>] [--json] [--no-remote] ...",
   "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
@@ -1011,6 +1012,10 @@ function M.main(argv, sv)
   -- before the multi-repository run: `remote --repos-root` is not `testing ci --repos-root`
   if argv[1] == "remote" then
     return require("testing.ci.remote").main(vim.list_slice(argv, 2), sv)
+  end
+  -- reads only, also with --repos-root: never the multi-repository run
+  if argv[1] == "overview" then
+    return require("testing.ci.overview").main(vim.list_slice(argv, 2), sv)
   end
   if require("testing.ci.repos").wanted(argv) then
     return require("testing.ci.repos").main(argv, sv)

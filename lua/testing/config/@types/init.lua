@@ -167,6 +167,7 @@
 ---@field deps string[] Directory names, resolved by `testing.deps`.
 ---@field setup table<string, any> Options for the plugin's `setup()`.
 ---@field ci_remote Testing.ProjectConfig.CiRemote `testing ci remote`.
+---@field ci_overview Testing.ProjectConfig.CiOverview `testing ci overview`.
 ---@field conformance Testing.ProjectConfig.Conformance
 ---@field surface Testing.ProjectConfig.Surface
 ---@field cache Testing.ProjectConfig.Cache
@@ -184,6 +185,10 @@
 ---@field workflow string The GitHub Actions workflow whose latest run is reported (default "CI").
 ---@field branch string The branch whose fetched head (`origin/<branch>`) is asked about (default "main").
 ---@field non_gating string[] Job names containing one of these (case-insensitive) are listed but never decide.
+
+---@class Testing.ProjectConfig.CiOverview
+---@field include string[] Directory names taken in although the detection misses them (default { "lib.nvim" }).
+---@field exclude string[] Directory names left out.
 
 ---@class Testing.ProjectConfig.Loaded
 --- Result of `testing.config.project.load`.

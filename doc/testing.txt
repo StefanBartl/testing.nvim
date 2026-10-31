@@ -246,7 +246,9 @@ whether the tree is still the stamped one (see "Stamp and verify" below).
 `init` is available as |:Testing| init only. `ci` runs the pipeline of
 .testing.lua locally; `ci remote` runs nothing and reports the latest GitHub
 Actions run of the CI workflow per repository and system (docs/CI.md, "The
-GitHub Actions status").
+GitHub Actions status"); `ci overview` runs nothing either and writes one
+static HTML page of the fleet from `ci verify`, `ci.json` and that adapter
+(docs/CI.md, "Fleet overview").
 
 Workspace trust ~                                             *testing-trust*
 The runner executes a project's `.testing.lua`, minimal init and specs, so it

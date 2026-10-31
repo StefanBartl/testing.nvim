@@ -89,6 +89,8 @@ all (syntax error, raises, does not return a table, lies outside the root) is an
 | `ci_remote.workflow` | string | `"CI"` | `testing ci remote`: the GitHub Actions workflow (its `name:`) whose latest run for the head commit is reported; `--workflow` overrides it. See [CI.md](CI.md#the-github-actions-status-testing-ci-remote). |
 | `ci_remote.branch` | branch name | `"main"` | `testing ci remote`: the branch whose fetched head (`origin/<branch>`, no fetch) is asked about. |
 | `ci_remote.non_gating` | list of texts | `{ "nightly" }` | `testing ci remote`: a job whose name contains one of these (case-insensitive) is listed under `non_gating` and never decides a cell or the overall state (a nightly leg, testing.nvim's `lib.nvim suite via testing.nvim`). |
+| `ci_overview.include` | list of directory names | `{ "lib.nvim" }` | `testing ci overview`, read from the `.testing.lua` of the current directory: names below `--repos-root` taken in although the detection misses them (lib.nvim has no `.testing.lua`); an included vault is taken in too. `--include` adds to it. See [CI.md](CI.md#fleet-overview-testing-ci-overview). |
+| `ci_overview.exclude` | list of directory names | `{}` | `testing ci overview`: names left out (a name containing `vault` is left out anyway). `--exclude` adds to it. |
 | `snapshots.dir` | relative path | `"TESTS/__snapshots__"` | The default directory of screen snapshots (`testing.screen`). The spec process does not read `.testing.lua`: a project with another directory passes `opts.dir`. |
 | `backends.luals`, `.pty`, `.playwright`, `.webdriver` | boolean | `false` | Reserved (optional backends). |
 

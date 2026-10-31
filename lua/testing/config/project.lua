@@ -519,6 +519,20 @@ local SCHEMA = {
       expect = 'a list of texts; a job whose name contains one is listed but never decides, e.g. { "nightly" }',
     },
   },
+  ci_overview = {
+    include = {
+      check = list_of(function(v)
+        return require("testing.deps").is_valid_name(v)
+      end, 0),
+      expect = 'a list of directory names, e.g. { "lib.nvim" }',
+    },
+    exclude = {
+      check = list_of(function(v)
+        return require("testing.deps").is_valid_name(v)
+      end, 0),
+      expect = 'a list of directory names, e.g. { "scratch.nvim" }',
+    },
+  },
   conformance = {
     load_budget_ms = {
       check = function(v)

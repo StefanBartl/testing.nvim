@@ -60,6 +60,11 @@ unknown flag, a root that is not a directory, no repository found below `--repos
 fetched (`unknown`: no token, no network, an API error, git could not read it) and none is red, or lib.nvim has no
 `net.github` (older than ccd30b5; nothing is asked). An `unknown` is never reported as green.
 
+`testing ci overview` ([CI.md](CI.md#fleet-overview-testing-ci-overview)) reads only and writes one HTML page: `0` the
+page was written, also when repositories are red (a report, not a gate: `testing ci remote` and `testing ci verify`
+gate), `2` a usage error (an unknown flag, a root or `--repos-root` that is not a directory, no repository), `3` the
+page could not be written.
+
 `testing lint` ([CI.md](CI.md#testing-lint-the-linters-on-the-changed-files)) uses them over its checks, the worst one
 decides: `0` every check green (or nothing to check), `1` findings, `2` usage (an unknown check, a file outside the
 root, two scopes), `3` a tool that is missing (that check is skipped, the others run; a red check never hides it) or

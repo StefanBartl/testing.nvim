@@ -771,6 +771,15 @@ local function redact_string(s, r, _ci)
   return s
 end
 
+---Redact one free text as `encode` redacts a case's message, expected and actual (environment pairs, user-home paths,
+---e-mail shapes, the named words), for a document that shows such a text outside an IR.
+---@param s string
+---@param r Testing.Result.Redact
+---@return string
+function M.redact_text(s, r)
+  return redact_string(s, r, true)
+end
+
 ---Redact the free-text fields of every case (assertion text, error message and traceback, notes, reason),
 ---on a copy. Structural strings (ids, status, kinds, paths) are never touched.
 ---@param value Testing.Result

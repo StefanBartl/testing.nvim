@@ -262,7 +262,7 @@ function M.has_ci(dir)
   return false
 end
 
----The directories below a root that have a `ci` section.
+---The directories below a root that have a `ci` section (uncached, writes nothing: `testing ci overview` uses it too).
 ---@param root string
 ---@return string[]
 local function scan(root)
@@ -285,6 +285,8 @@ local function scan(root)
   table.sort(out)
   return out
 end
+
+M.scan = scan
 
 ---The detection of a root, cached in `cache_file` (`refresh` rebuilds it; a cached directory that is gone or lost
 ---its section is dropped, a new one is found by `--refresh`).

@@ -946,6 +946,21 @@ local function redaction()
   return { env_names = vim.tbl_keys(vim.fn.environ()), words = words }, forbid
 end
 
+---One free text as the IR carries a case's message, expected and actual: the roots of `root` (repository, home, temp,
+---state) become placeholders, the longest first, then the kernel's redaction (user, host, environment values, home
+---paths, e-mail shapes). For a document outside the IR that shows such a text (`testing ci overview`).
+---@param s string
+---@param root string
+---@return string
+function M.redact_text(s, root)
+  s = result.normalize(
+    s,
+    M.path_roots(root),
+    { case_insensitive = require("testing.platform").is_windows() }
+  ) --[[@as string]]
+  return result.redact_text(s, (redaction()))
+end
+
 ---The IR as it may leave the process (file, CI artifact, stdout JSON): paths replaced by
 ---placeholders, user/host/environment values redacted by the kernel, encoded, decoded again and
 ---validated, so that what is checked is exactly what a reporter or a consumer reads. The result

@@ -100,6 +100,10 @@ local DEFAULTS = {
     -- `testing ci remote` (docs/CI.md): the GitHub Actions workflow whose latest run is reported, the branch whose
     -- fetched head is asked about, and the job names (lowercase texts) that are listed but never decide (a nightly leg).
     ci_remote = { workflow = "CI", branch = "main", non_gating = { "nightly" } },
+    -- `testing ci overview` (docs/CI.md), read from the `.testing.lua` of the directory it is called in: directory
+    -- names taken in although the detection below `--repos-root` misses them (lib.nvim: no `.testing.lua`), and names
+    -- left out (a name containing "vault" is left out anyway unless it is included here).
+    ci_overview = { include = { "lib.nvim" }, exclude = {} },
     -- `testing conformance`: gate = true makes a failed check exit 1 (report-only until the findings of
     -- the repository are triaged); skip = check ids that do not run; waivers = accepted findings, each with
     -- a reason; keymaps_off = what K3 passes to setup() on top of `setup`; timeout_ms of one child call.

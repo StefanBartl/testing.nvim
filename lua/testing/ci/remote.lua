@@ -746,9 +746,10 @@ end
 
 ---The repositories of the command line: absolute directories, each marked whether it came from a `--repos-root`.
 ---@param args Testing.Ci.Remote.Args
+---@param left_out? string[] Gets the names below a `--repos-root` that have workflows but are left out (a vault).
 ---@return { dir: string, from_root: boolean }[]|nil
 ---@return string|nil problem
-function M.resolve(args)
+function M.resolve(args, left_out)
   local out, seen = {}, {}
   local function add(dir, from_root)
     dir = vim.fs.normalize(vim.fn.fnamemodify(dir, ":p")):gsub("/$", "")
@@ -770,13 +771,16 @@ function M.resolve(args)
     parent = vim.fs.normalize(vim.fn.fnamemodify(parent, ":p")):gsub("/$", "")
     local names = {}
     for name, kind in vim.fs.dir(parent) do
-      -- the vaults (notes, tasks, rules) are no code repositories, even with a workflow
       if
         (kind == "directory" or kind == "link")
-        and not name:lower():find("vault", 1, true)
         and vim.fn.isdirectory(parent .. "/" .. name .. "/.github/workflows") == 1
       then
-        names[#names + 1] = name
+        -- the vaults (notes, tasks, rules) are no code repositories, even with a workflow
+        if not name:lower():find("vault", 1, true) then
+          names[#names + 1] = name
+        elseif left_out then
+          left_out[#left_out + 1] = name
+        end
       end
     end
     table.sort(names)
