@@ -622,18 +622,18 @@ return function(H)
           case = { status = "pass" },
           snapshots = { "TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap" },
         },
-      }, { multi = false })
+      })
       has(block, tasks.BEGIN, "the block has its begin marker")
       has(
         block,
-        "- **One** (`one`, `TESTS/sheets/one.sheet.lua`): automated part green, waiting for your judgement",
+        "- **One** (`one`, `p4/TESTS/sheets/one.sheet.lua`): automated part green, waiting for your judgement",
         "the state"
       )
       has(block, "    - [ ] looks ok", "judge criteria are checkboxes")
       has(block, "    - [ ] press it", "manual steps too")
       has(
         block,
-        "Look at: `TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap`",
+        "Look at: `p4/TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap`",
         "and the snapshots"
       )
       local placed = tasks.apply(body, block)
@@ -656,6 +656,65 @@ return function(H)
         { ["looks ok"] = true, other = true },
         "ticked boxes"
       )
+      eq(
+        tasks.ticked("- [x] looks ok   "),
+        { ["looks ok"] = true },
+        "trailing blanks do not lose the tick"
+      )
+
+      -- markers: only a line of its own outside code counts; a broken pair is never written over (review 18e4837)
+      local orphan = "Prose.\n" .. tasks.BEGIN .. "\nKeep me 1\nKeep me 2\n\n## Notizen\n- n"
+      local o_new, o_err = tasks.apply(orphan, block)
+      ok(
+        o_new == nil and tostring(o_err):find("markers", 1, true) ~= nil,
+        "a begin without its end is refused"
+      )
+      local reversed = "A\n" .. tasks.END .. "\nB\n" .. tasks.BEGIN .. "\nC"
+      ok(tasks.apply(reversed, block) == nil, "an end in front of the begin is refused")
+      local quoted = "The markers `"
+        .. tasks.BEGIN
+        .. "` and `"
+        .. tasks.END
+        .. "` are named here.\n\n## Notizen\n- n"
+      local q_new = assert(tasks.apply(quoted, block))
+      has(q_new, "are named here.", "markers quoted in prose are text and stay")
+      has(q_new, tasks.END .. "\n\n## Notizen", "and the block goes in front of the notes")
+      local fenced_body = "intro\n```\n## Notizen\n```\nmore\n\n## Notizen\n- n"
+      local f_new = assert(tasks.apply(fenced_body, block))
+      has(
+        f_new,
+        "```\n## Notizen\n```\nmore\n\n" .. tasks.BEGIN,
+        "a heading inside a code fence is not the notes"
+      )
+      local spaced = assert(tasks.apply("x\n\n## Notizen  \n- n", block))
+      has(spaced, tasks.END .. "\n\n## Notizen  ", "a notes heading with trailing blanks is found")
+      local in_code = "x\n```\n" .. tasks.BEGIN .. "\n```\n\n## Notizen"
+      has(
+        assert(tasks.apply(in_code, block)),
+        "```\n" .. tasks.BEGIN .. "\n```",
+        "a marker inside code is text"
+      )
+
+      -- batches: at most 100 operations and about 200 KiB per request
+      local many = {}
+      for k = 1, 101 do
+        many[k] = { op = "set_body", id = "a/t" .. k, body = "x" }
+      end
+      local groups = tasks._batches(many)
+      eq({ #groups, #groups[1], #groups[2] }, { 2, 100, 1 }, "101 operations go out as 100 and 1")
+      local big = {}
+      for k = 1, 3 do
+        big[k] = { op = "set_body", id = "a/b" .. k, body = ("y"):rep(95000) }
+      end
+      local bgroups = tasks._batches(big)
+      eq(#bgroups, 2, "three 95 KB bodies go out in two requests")
+      for _, g in ipairs(bgroups) do
+        local chunk = {}
+        for _, k in ipairs(g) do
+          chunk[#chunk + 1] = big[k]
+        end
+        ok(#vim.json.encode({ ops = chunk }) < 256 * 1024, "each request stays below 256 KiB")
+      end
 
       -- sync through a stand-in for `tasks call`
       write(
@@ -759,6 +818,75 @@ return function(H)
         tasks.sync(entries, { call = nobody }) == nil,
         "an engine that cannot be reached is an error of the whole sync"
       )
+
+      -- a CRLF body: no carriage return goes back (set_body refuses it)
+      current = body:gsub("\n", "\r\n")
+      calls = {}
+      assert(tasks.sync(report.collect({ root4 }, { cases = cases4 }), { call = engine(accept) }))
+      ok(
+        not calls[2].params.ops[1].body:find("\r", 1, true),
+        "a CRLF body is written with line feeds"
+      )
+
+      -- broken markers in a task: reported, nothing written
+      current = "Text\n" .. tasks.BEGIN .. "\nkeep\n\n## Notizen"
+      calls = {}
+      local broken =
+        assert(tasks.sync(report.collect({ root4 }, { cases = cases4 }), { call = engine(accept) }))
+      eq(broken[2].outcome, "failed", "a task with broken markers is a failure")
+      eq(#calls, 1, "and is not written")
+
+      -- the bodies page ends at 2 MiB: the ids that did not come back are asked again
+      local paged = {}
+      for k = 1, 4 do
+        paged[k] = {
+          root = root4,
+          rel = "TESTS/sheets/p" .. k .. ".sheet.lua",
+          sheet = assert(
+            sheet.validate({
+              id = "p" .. k,
+              title = "P",
+              task = "a/p" .. k,
+              steps = { { keys = "x" } },
+            })
+          ),
+          case = { status = "pass", file = "x" },
+          snapshots = {},
+        }
+      end
+      local asked = {}
+      local pager = function(method, params)
+        if method == "bodies" then
+          asked[#asked + 1] = #params.ids
+          local got = {}
+          for k = 1, math.min(2, #params.ids) do
+            got[k] = { id = params.ids[k], etag = "e", body = "b" }
+          end
+          return { kind = "tasks.bodies", items = got, next_offset = #params.ids > 2 and 2 or nil }
+        end
+        local rs = {}
+        for k = 1, #params.ops do
+          rs[k] = { n = k, ok = true, outcome = "changed" }
+        end
+        return { kind = "tasks.result", results = rs }
+      end
+      local pr = assert(tasks.sync(paged, { call = pager }))
+      eq(asked, { 4, 2 }, "a second bodies call for the ids the first page did not reach")
+      eq(
+        vim.tbl_map(function(r)
+          return r.outcome
+        end, pr),
+        { "changed", "changed", "changed", "changed" },
+        "all four written, none missing"
+      )
+      local stuck = function(method)
+        if method == "bodies" then
+          return { kind = "tasks.bodies", items = {}, next_offset = 0 }
+        end
+      end
+      local sr = assert(tasks.sync(paged, { call = stuck }))
+      eq(sr[1].outcome, "truncated", "a page that brings nothing: not read, not 'missing'")
+      ok(not paged[1].task_missing, "and not marked as missing")
 
       -- the CLI entry
       local outs4, errs4 = {}, {}

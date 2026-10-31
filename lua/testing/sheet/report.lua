@@ -389,8 +389,7 @@ function M.main(argv, sv, deps)
       end
       call = tasks.caller(cli, vault)
     end
-    local results, serr =
-      tasks.sync(entries, { call = call, dry_run = dry_run, multi = #roots > 1 })
+    local results, serr = tasks.sync(entries, { call = call, dry_run = dry_run })
     if not results then
       sv.err("testing sheets: " .. tostring(serr))
       return 3
