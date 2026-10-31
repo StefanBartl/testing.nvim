@@ -842,14 +842,12 @@ return function(H)
         paged[k] = {
           root = root4,
           rel = "TESTS/sheets/p" .. k .. ".sheet.lua",
-          sheet = assert(
-            sheet.validate({
-              id = "p" .. k,
-              title = "P",
-              task = "a/p" .. k,
-              steps = { { keys = "x" } },
-            })
-          ),
+          sheet = assert(sheet.validate({
+            id = "p" .. k,
+            title = "P",
+            task = "a/p" .. k,
+            steps = { { keys = "x" } },
+          })),
           case = { status = "pass", file = "x" },
           snapshots = {},
         }
