@@ -105,11 +105,13 @@ function M.parse(argv)
       elseif key == "state-dir" then
         args.state_dir = value
       else
+        -- the one VALUED key left: include or exclude
+        local list = key == "include" and args.include or args.exclude
         for _, name in ipairs(vim.split(value, ",", { plain = true, trimempty = true })) do
           if not require("testing.deps").is_valid_name(name) then
             return nil, ("--%s: %s is not a directory name"):format(key, name)
           end
-          table.insert(args[key], name)
+          list[#list + 1] = name
         end
       end
     elseif a:sub(1, 1) == "-" then

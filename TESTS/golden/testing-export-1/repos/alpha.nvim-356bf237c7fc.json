@@ -1,5 +1,6 @@
 {
   "capabilities": [
+    "data_classes",
     "fleet",
     "manifest",
     "repo"
@@ -7,7 +8,7 @@
   "cases": [],
   "cases_omitted": 0,
   "cases_red": 0,
-  "digest": "sha256:f44d527d5eb00e2f",
+  "digest": "sha256:e2ee0c43649c2c34",
   "engine": {
     "git": "fixture",
     "nvim": "0.0.0",
@@ -16,6 +17,7 @@
   "form": "export",
   "generated_at": "2026-10-31T12:00:00Z",
   "kind": "repo",
+  "local_read": true,
   "notes": [],
   "plugin": "testing.nvim",
   "remote": {

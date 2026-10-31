@@ -337,11 +337,13 @@ nvim -n -i NONE --headless -u NONE -l scripts/testing.lua call fleet --repos-roo
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua call repo <dir> [--export] [--remote]
 ```
 
-`testing call` prints one line of canonical JSON on stdout ([CLI.md](CLI.md#subcommands)). The Lua API is
-`testing.export`: `fleet(opts)`, `repo(dir, opts)`, `export(opts)` (the files of an export folder and the manifest,
-written by nothing yet: `testing export --out` will write them, the manifest last; `opts.previous(path)` gives the
-folder's current file texts so that an unchanged document keeps its bytes), `encode`, `read`, `validate`, `leaks`,
-`repo_key`.
+`testing call` prints one line of canonical JSON on stdout ([CLI.md](CLI.md#subcommands)); `testing export --out <dir>`
+writes an export folder ([below](#the-export-folder-testing-export---out)). The Lua API is `testing.export`:
+`fleet(opts)`, `repo(dir, opts)`, `export(opts)` (the files of an export folder and the manifest, with the data
+classes asked; `opts.previous(path)` gives the folder's current file texts so that an unchanged document keeps its
+bytes, `opts.classes` the options of `lib.nvim.data_classes.load`, `opts.no_local` reads no local result), `release`
+(the repositories that may leave this machine), `encode`, `read`, `validate`, `leaks`, `repo_key`; and
+`testing.export.folder`: `write(dir, opts)`, `inspect(dir)`.
 
 ### Head
 
@@ -357,7 +359,7 @@ Every document starts with the same fields:
 | `engine` | `{ version, git, nvim }` of testing.nvim. |
 | `rev` | What the sources looked like (`last.json`, `last_green.json`, `ci.json` with the paths of this machine replaced by their placeholders, the CI run). |
 | `digest` | `sha256:<16 hex>` of the content **without** `generated_at` and `engine`: two documents of an unchanged state have the same digest, whenever and wherever they were made. The manifest's `rev` and `digest` follow the path and digest of each of its files, not their bytes (which hold `generated_at`). |
-| `capabilities` | What this engine writes (`fleet`, `manifest`, `repo`); a client shows only what is listed. |
+| `capabilities` | What this engine writes (`data_classes`, `fleet`, `manifest`, `repo`); a client shows only what is listed. `data_classes`: the fleet carries `excluded_by` and `classes`, fleet and repo carry `local_read`. |
 | `root` | Only in the local form: the repos root (fleet, when exactly one `--repos-root` was named) or the repository (repo). |
 
 The bytes are canonical (`lib.nvim.json.canonical`): keys sorted by byte value, no whitespace (stdout, the form that is
@@ -366,9 +368,14 @@ hashed), or indented by two spaces with a final line feed (the files of an expor
 
 ### `fleet`
 
-`repos[]`, one row per repository, sorted by directory name; `excluded` (how many were left out: vaults and
-`--exclude`; their names are not in the document); `remote = { asked, error }` (whether the CI adapter was asked and
-why it failed, redacted). The repositories are found as `testing ci overview` finds them: below each `--repos-root`
+`repos[]`, one row per repository, sorted by directory name; `excluded` (how many were left out: vaults,
+`--exclude` and, in an export folder, the data classes; their names are not in the document); `excluded_by =
+{ selection, private, unclassified }` (the same by reason: `selection` the vaults and excludes, `private` and
+`unclassified` what the data classes kept on this machine; both `null` when the data classes were not asked, as in
+`testing call`, never 0); `classes = { checked, problem }` (whether the data classes were asked and why nothing or
+less was released: no `areas.json` on this device, an unusable one, named by its kind only); `local_read` (`false`
+on the workstation: no local result was read, see below); `remote = { asked, error }` (whether the CI adapter was
+asked and why it failed, redacted). The repositories are found as `testing ci overview` finds them: below each `--repos-root`
 every directory with workflows, a `ci` section or a `.testing.lua`, no vault (a name containing "vault"), `lib.nvim`
 taken in, `--include`/`--exclude` on top; or the directories named.
 
@@ -391,7 +398,8 @@ A row:
 The row of one repository as `repo`, and its red cases (`fail`, `error`, `timeout`, `crash`, `xpass`) by file and line
 as `cases[]`: `id`, `file`, `line`, `status`, `name`, `describe`, `duration_ms`, `flaky`, `message`, `expected`,
 `actual` (line breaks kept), `fails[{ line, msg }]`, `fails_total`. At most 500 cases; `cases_red` counts all,
-`cases_omitted` those left out. `notes` says why a source of the state could not be used.
+`cases_omitted` those left out (both `0` when `local_read` is false: required integers of version 1, read as unknown). `notes` says why a source of the state could
+not be used.
 
 ### `manifest`
 
@@ -405,6 +413,71 @@ sum, so it never sees half an export. The folder:
   fleet.json                 kind fleet (export form)
   repos/<key>.json           kind repo, one per repository of the fleet
 ```
+
+### The export folder (`testing export --out`)
+
+```sh
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua export --out <dir> [<repo>...] [--repos-root=<dir>]
+     [--include=<names>] [--exclude=<names>] [--remote] [--state-dir=<dir>]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci --repos-root=<dir> ... --export=<dir>
+```
+
+The folder testing-web reads (and a results repository such as `testing-results` commits): the layout above, every
+document in the export form, indented by two spaces with a final line feed. The repositories are found as for
+`testing call fleet`; then **only those whose data class is `public` or `internal` are exported**
+(`lib.nvim.data_classes`, the per-device `areas.json` of the desktop apps, fail-closed): `private` and
+`unclassified` (no entry, no `areas.json` on this device, a file that cannot be used, a lib.nvim without the reader)
+are left out and counted in the fleet's `excluded` and `excluded_by`, never named. Without an `areas.json` nothing is
+exported: the fleet has no repository, `classes.problem` says why, and the command says so on stderr (exit `0`).
+
+Atomic, and nothing of someone else is touched:
+
+- Every file is written into `<dir>/.tmp-<id>/new/` first, then moved into place file by file, **the manifest last**.
+  A file whose bytes did not change is not touched. A file that is replaced is moved to `<dir>/.tmp-<id>/old/` first;
+  when a step fails, every file already moved is put back: the old manifest stays valid and matches every file it
+  lists (exit `3`, "the folder is as it was"). Only when the folder cannot be put back either is `.tmp-<id>` kept (the
+  message names it; the old files are in its `old/`). A reader that checks every file against the manifest's
+  `sha256` never sees half an export, not even after a crash in the middle.
+- A `.tmp-<id>` an earlier write left behind (a crash, one it could not remove, one kept because the folder could not
+  be put back) can hold the documents of a repository that is no longer released, and a results repository would
+  commit it: **the next write removes it first, fail-closed**, before anything else happens, and says so on stderr
+  (a warning per removed folder: it may be the one a failed write named as the place of the old files). Only a
+  name of the shape a write makes is a leftover (`.tmp-<pid>-<hex>`; a `.tmp-review/` of yours is never touched,
+  and without a manifest it makes the folder one that is not empty). Only a plain directory whose entries are all
+  of the shapes a write creates there is removed (`new/` and `old/`, below each `fleet.json`,
+  `testing-export.json`, `repos/` and `repos/<key>.json`), entry by entry; one that cannot be removed fails the
+  export (exit `3`, nothing written). A `.tmp-<pid>-<hex>` that holds anything else (another file, another
+  directory, a link) or is no plain directory (a file, a link) refuses the folder (exit `2`, the message names the
+  entry, nothing is removed: remove it by hand). A folder without a manifest that holds nothing but such leftovers
+  (a crash in the very first export) is an empty one.
+- One write at a time per folder. The `.tmp-<pid>-<hex>` of a write that still runs (its process is alive, or it
+  is a write of the same process that is not done) is never taken for a leftover: the folder is refused (exit `2`,
+  "a write that is still running", nothing is removed; try again when it is done). A pid that a dead write left
+  behind and another process got since keeps the folder refused until that process ends (remove the folder by
+  hand if no write runs).
+- The files of repositories that are no longer exported (they left the selection, or became `private`) are moved
+  to `<dir>/.tmp-<id>/old/` right before the manifest goes in, and are gone with it. When one cannot be moved (a
+  reader holds it on Windows), everything is put back and the export fails (exit `3`, the old manifest still owns
+  it and the next export tries again): a file of a repository never stays next to a manifest that no longer lists
+  it. Only files the old manifest listed, and only of the shapes this command writes (`fleet.json`,
+  `repos/<key>.json`), are ever replaced or removed.
+- Refused with exit `2`, before anything is written: a folder that is not empty and has no `testing-export.json`
+  (an empty or missing folder is fine: export into a subfolder of a results repository), a `testing-export.json`
+  that is no manifest of this contract, a manifest that names another file (`../x`), a `repos` that is a link, a
+  file of the shape this command writes (`fleet.json`, `repos/*.json`) that the manifest does not list (in the way;
+  remove it by hand if it is no one's), a `.tmp-*` that is no leftover of a write (above).
+- The folder's current texts are passed as `previous`: a second export of an unchanged state writes the same bytes
+  and the same `digest` (nothing is moved; no git diff), whenever and on whichever system it runs.
+
+No absolute path in any file, and no `root`: the leak detector refuses a document that still holds one (exit `3`);
+the suite exports a fixture below `$HOME` and greps the folder for a drive letter, `/home/`, `/Users/`, the home
+directory and the user name (with a positive control that must hit).
+
+On the workstation (`NVIM_MACHINE_ROLE=workstation`) the export reads no local result (there are no local runs):
+`local_read` is `false`; `local`, `last_green`, `ci_local` and `counts` are `null`, a repo document has no case and
+`cases_red`/`cases_omitted` are `0` (required integers of version 1, never widened to `null`: with `local_read:
+false` a client shows them as unknown); `--remote` still asks the CI adapter. Another value than `workstation` or
+`default` is refused (exit `2`). The export never starts a test run, on any machine.
 
 ### Redaction and paths
 
@@ -424,7 +497,8 @@ environment and the user name (not in the name, the key and the file of a reposi
 
 - Refuse a higher `schema` (`testing-export/2` is a break); read a lower one.
 - Ignore unknown fields: additions come within version 1 and are announced in `capabilities`.
-- A missing or `null` value is unknown, never 0 (`local: null` is "no result", not "0 cases").
+- A missing or `null` value is unknown, never 0 (`local: null` is "no result", not "0 cases"). `cases_red` and
+  `cases_omitted` of a repo with `local_read: false` are unknown too (they stay integers of version 1).
 - Refuse a document bigger than 8 MiB and an unknown `kind`.
 
 `testing.export.read(text)` implements these rules; `testing.export.validate(doc)` checks a document against the

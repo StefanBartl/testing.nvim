@@ -1,19 +1,30 @@
 {
   "capabilities": [
+    "data_classes",
     "fleet",
     "manifest",
     "repo"
   ],
-  "digest": "sha256:dee2030448d47068",
+  "classes": {
+    "checked": true,
+    "problem": null
+  },
+  "digest": "sha256:e4259770b57246bc",
   "engine": {
     "git": "fixture",
     "nvim": "0.0.0",
     "version": "0.1.0-dev"
   },
   "excluded": 1,
+  "excluded_by": {
+    "private": 0,
+    "selection": 1,
+    "unclassified": 0
+  },
   "form": "export",
   "generated_at": "2026-10-31T12:00:00Z",
   "kind": "fleet",
+  "local_read": true,
   "plugin": "testing.nvim",
   "remote": {
     "asked": true,

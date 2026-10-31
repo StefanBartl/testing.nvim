@@ -315,7 +315,7 @@ The terminal (`testing ci`) shows everything as before.
 testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list>
            [--repos-include=<names>] [--repos-exclude=<names>] [--refresh]
            [--force] [--jobs=<n>] [--profile=<name>] [--keep-going] [--reuse] [--state-dir=<dir>]
-           [--json=<file>]
+           [--json=<file>] [--export=<dir>]
 ```
 
 The pipelines of several repositories, one after the other. Every repository is a child process of its own, so
@@ -330,6 +330,14 @@ the time) and a verdict line `ci repos: GREEN 3/3 (2 proven, not run)`. The exit
 `TESTING_CI_OK`. `--json=<file>` writes the rows as the document `testing-ci-repos/1`: `verdict`, `exit`, `profile` and
 `repos`, one entry per repository with `name`, `dir` (absolute), `verify`, `state` (`skipped` for a proven one),
 `code`, `ms` and `doc`, the `testing-ci/1` its run wrote (`null` when it did not run or wrote none).
+
+`--export=<dir>` writes the export folder of the repositories of this run once every run has ended, red ones too, as
+`testing export --out <dir>` does ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-export-folder-testing-export---out):
+manifest last, only `public` and `internal` repositories, no absolute path), and prints its summary line before the
+verdict line. A folder the export would refuse (not empty and without `testing-export.json`, a manifest that is
+none, a `fleet.json` or `repos/*.json` the manifest does not list) is exit `2` before anything runs, and so is a typo in
+`NVIM_MACHINE_ROLE`; an export that cannot be written makes the run `3` (no sentinel). On the workstation the export
+reads no local result (`local_read: false`), as `testing export` there.
 
 Which repositories: an explicit list (`--repos`, a list file with one directory per line), or every directory directly
 below a root (`--repos-root`, repeatable) whose `.testing.lua` has a `ci` section. That detection is textual (the file is

@@ -44,6 +44,10 @@
       "minLength": 1
     },
     "count": { "type": "integer", "minimum": 0 },
+    "local_read": {
+      "description": "Whether the local results of this machine were read. false on the workstation (NVIM_MACHINE_ROLE=workstation), where nothing runs: local, last_green, ci_local and counts are then null (unknown); cases_red and cases_omitted stay integers of version 1 and are 0, which a client reads as unknown when local_read is false.",
+      "type": "boolean"
+    },
     "text_or_null": { "type": ["string", "null"] },
     "key": {
       "description": "<basename>-<12 hex of sha256(basename, newline, root commit)>: the same for every clone of the repository wherever it lives; no path of this machine goes into it.",
@@ -294,6 +298,28 @@
           "description": "How many repositories were left out (vaults, excludes); their names are not in the document.",
           "$ref": "#/$defs/count"
         },
+        "excluded_by": {
+          "description": "The repositories left out by reason, never by name: selection (vaults, excludes), private and unclassified (the data classes of this device, fail-closed). null: the data classes were not asked (a document that stays on this machine, `testing call`). Capability data_classes.",
+          "type": "object",
+          "required": ["selection", "private", "unclassified"],
+          "properties": {
+            "selection": { "$ref": "#/$defs/count" },
+            "private": { "type": ["integer", "null"], "minimum": 0 },
+            "unclassified": { "type": ["integer", "null"], "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "classes": {
+          "description": "Whether the data classes were asked, and why nothing (or less) could be released: no areas.json on this device, an unusable one. Capability data_classes.",
+          "type": "object",
+          "required": ["checked", "problem"],
+          "properties": {
+            "checked": { "type": "boolean" },
+            "problem": { "$ref": "#/$defs/text_or_null" }
+          },
+          "additionalProperties": false
+        },
+        "local_read": { "$ref": "#/$defs/local_read" },
         "remote": { "$ref": "#/$defs/remote_info" }
       },
       "additionalProperties": false,
@@ -354,9 +380,12 @@
           "type": "array",
           "items": { "$ref": "#/$defs/case" }
         },
-        "cases_red": { "$ref": "#/$defs/count" },
+        "cases_red": {
+          "description": "All red cases of the last result. An integer in every document of version 1: 0 when the local results were not read (local_read false, capability data_classes), which a client reads as unknown.",
+          "$ref": "#/$defs/count"
+        },
         "cases_omitted": {
-          "description": "Red cases not listed because of the size limit.",
+          "description": "Red cases not listed because of the size limit (0 when the local results were not read).",
           "$ref": "#/$defs/count"
         },
         "notes": {
@@ -364,6 +393,7 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "local_read": { "$ref": "#/$defs/local_read" },
         "remote": { "$ref": "#/$defs/remote_info" }
       },
       "additionalProperties": false,

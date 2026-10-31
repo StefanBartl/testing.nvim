@@ -99,3 +99,17 @@ it is no verdict: red repositories are still exit `0`.
 | `0` | The document was printed (also with red repositories, and when the CI adapter failed: `remote.error` says so). |
 | `2` | Bad usage: an unknown method or option, a directory that is not there, no repository found. |
 | `3` | The document could not be built: it would leak a path of this machine (export form), it is larger than 8 MiB, an internal error. Nothing is printed on stdout. |
+
+`testing export --out <dir>` ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-export-folder-testing-export---out)) writes the
+export folder; it is no verdict either.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The folder was written: also when nothing changed (no file moved), when repositories are red, and when the data classes released none (no `areas.json` on this device: an empty fleet, the reason on stderr). |
+| `2` | Bad usage, nothing written: an unknown option, no `--out`, a directory that is not there, no repository found, `NVIM_MACHINE_ROLE` neither `workstation` nor `default`; or the folder is refused (not empty and without `testing-export.json`, a `testing-export.json` that is no manifest or names a file of another shape, `repos` a link, a `fleet.json` or `repos/*.json` in the way that the manifest does not list, a `.tmp-<pid>-<hex>` that holds anything a write never creates there or is no plain directory, or that belongs to a write that is still running). |
+| `3` | The documents could not be built (a leak, larger than 8 MiB) or the folder could not be written (also: the file of a repository no longer exported could not be moved aside, the leftover `.tmp-<id>` of an earlier write could not be removed). The folder is as it was: the old manifest stays valid and matches its files (only when even that fails is `.tmp-<id>` kept, and the message says so; the next write removes it). |
+
+`testing ci --repos... --export=<dir>` ([CI.md](CI.md#several-repositories)) keeps the codes of the fleet run and adds
+two: a folder the export would refuse is `2` before anything runs (the same checks as `testing export`, a file in the
+way included), an export that could not be written makes the run `3` (no sentinel); a folder that changed during the
+run and is refused at the end is `2` as well.

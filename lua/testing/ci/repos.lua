@@ -40,6 +40,7 @@ M.USAGE = table.concat({
   "  --reuse                 skip a suite whose stamp still verifies",
   "  --state-dir=<dir>       the state directory of the children and of the cache",
   "  --json=<file>           write the document testing-ci-repos/1 (one row per repository with its testing-ci/1)",
+  "  --export=<dir>          after the run, write the export folder of these repositories (testing export --out)",
 }, "\n")
 
 ---@class Testing.Ci.Repos.Args
@@ -56,9 +57,11 @@ M.USAGE = table.concat({
 ---@field reuse boolean
 ---@field state_dir? string
 ---@field json? string
+---@field export? string
 ---@field help boolean
 
 local VALUED = {
+  export = true,
   repos = true,
   ["repos-root"] = true,
   ["repos-file"] = true,
@@ -452,6 +455,19 @@ function M.main(argv, sv)
     sv.err("testing ci: " .. tostring(why))
     return M.EXIT_USAGE
   end
+  -- a folder the export would refuse is a usage error before anything runs, not after an hour of pipelines
+  local folder = require("testing.export.folder")
+  local workstation
+  if args.export then
+    local _, refused = folder.inspect(args.export)
+    local role_problem
+    workstation, role_problem = folder.workstation()
+    refused = refused or role_problem
+    if refused then
+      sv.err("testing ci: --export: " .. tostring(refused))
+      return M.EXIT_USAGE
+    end
+  end
 
   local width = 0
   for _, dir in ipairs(repos) do
@@ -630,6 +646,30 @@ function M.main(argv, sv)
     if not ok_w then
       sv.err(("testing ci: cannot write %s: %s"):format(args.json, tostring(werr)))
       exit = math.max(exit, M.EXIT_INFRA)
+    end
+  end
+  -- the export folder of the repositories of this run (D1: at the end of a fleet run, red ones too); an export that
+  -- could not be written makes the run infrastructure, as a document that could not be written does
+  if args.export then
+    local res, eerr = folder.write(args.export, {
+      roots = repos,
+      state_dir = args.state_dir and norm(args.state_dir) or sv.state_dir,
+      no_local = workstation == true,
+    })
+    if res then
+      local classes = res.bundle.docs["fleet.json"].classes
+      if type(classes) == "table" and type(classes.problem) == "string" then
+        sv.err("testing ci: export: note: " .. classes.problem)
+      end
+      for _, w in ipairs(res.warnings) do
+        sv.err("testing ci: export: warning: " .. w)
+      end
+      sv.out(folder.summary(res))
+    else
+      ---@cast eerr { code: integer, message: string }
+      sv.err("testing ci: --export: " .. eerr.message)
+      -- a folder refused only now (it changed during the run) is the refusal it is, as in `testing export`
+      exit = math.max(exit, eerr.code == M.EXIT_USAGE and M.EXIT_USAGE or M.EXIT_INFRA)
     end
   end
   sv.out(("ci repos: %s %d/%d (%d proven, not run)"):format(word(exit), green, #results, proven))

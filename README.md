@@ -131,7 +131,9 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   the versioned contract `testing-export/1` (JSON Schema in `schemas/testing-export/1/`, golden files):
   `testing call fleet|repo` prints the fleet (last local result, last green run, `ci.json`, GitHub Actions per
   system) or one repository with its red cases, redacted; the export form holds no absolute path. Runs nothing (with `--remote` the CI
-  adapter keeps its ETag cache in the state directory).
+  adapter keeps its ETag cache in the state directory). `testing export --out <dir>` (or `testing ci --repos... --export=<dir>`
+  at the end of a fleet run) writes the export folder for testing-web: manifest last and atomic, byte-stable, only the
+  `public` and `internal` repositories of this device's `areas.json` (fail-closed).
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
   redacted, validated after writing). Every reporter carries a three-valued **verdict**

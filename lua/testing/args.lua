@@ -943,6 +943,7 @@ function M.usage()
     "  ci       run the pipeline of the ci section of .testing.lua (ci --help)",
     "  lint     run the lint checks of the pipeline (stylua, luacheck, luals) on the changed files (lint --help)",
     "  call     print a document of the contract testing-export/1: call fleet|repo [options] (call --help)",
+    "  export   write the export folder of testing-export/1 (manifest last, public/internal only): export --out <dir> [options] (export --help)",
     "  explain  why a spec was selected, cached or run, and what its cache key is made of: explain <root> <spec>... [--all] [--json] [--parts]",
     "  stamp    run the suite and, after a COMPLETE green run, write the green stamp: stamp <root> [--out <file>] [--note] [run options]",
     "  verify   is the tree still the one a green stamp proved? (no spec runs; exit 0 + sentinel only when every file is proven): verify <root> [--stamp <file>|--from-note] [--max-age 7d] [--allow-dirty] [--require-hmac] [--allow-unsigned] [--json]",

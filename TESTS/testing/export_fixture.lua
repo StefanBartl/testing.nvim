@@ -53,9 +53,21 @@ local function spec_file(dir, rel, run)
   return { mtime_ns = st.mtime_ns, size = st.size, run = run, ts = M.TS }
 end
 
+---The text of an `areas.json` (schema 1) that gives each repository (by directory name) a class; an area per repository,
+---named like it, with `repo` set.
+---@param classes table<string, string>
+---@return string
+function M.areas(classes)
+  local areas = {}
+  for repo, class in pairs(classes) do
+    areas[repo] = { class = class, repo = repo }
+  end
+  return json.encode({ schema = 1, areas = areas })
+end
+
 ---Build the fleet below `base`.
 ---@param base string
----@return { root: string, state: string, alpha: string, beta: string, gamma: string, vault: string, home_file: string }
+---@return { areas: string, root: string, state: string, alpha: string, beta: string, gamma: string, vault: string, home_file: string }
 function M.build(base)
   local root = base .. "/fleet"
   local state = base .. "/state"
@@ -221,7 +233,14 @@ function M.build(base)
   )
   -- the vault has a state too: it must not show up anywhere
   M.write(sdir(vault) .. "/ci.json", json.encode({ schema = "testing-ci/1", verdict = "red" }))
+  -- the data classes of the fixture's "device" (never the real areas.json): every repository may leave
+  local areas = base .. "/config/areas.json"
+  M.write(
+    areas,
+    M.areas({ ["alpha.nvim"] = "public", ["beta.nvim"] = "internal", ["gamma.nvim"] = "internal" })
+  )
   return {
+    areas = areas,
     root = root,
     state = state,
     alpha = alpha,
@@ -378,6 +397,7 @@ function M.opts(fx, extra)
     repos_roots = { fx.root },
     state_dir = fx.state,
     remote = true,
+    classes = { path = fx.areas },
   }, extra or {})
 end
 

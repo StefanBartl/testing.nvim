@@ -35,8 +35,10 @@
 --- value is unknown (never 0), a document is at most 8 MiB. Additions come without a new version and are announced in
 --- `capabilities`; a break is `testing-export/2`. The JSON Schema is `schemas/testing-export/1/`.
 ---
---- The command `testing call fleet|repo` (`testing.export.call`) prints the documents; the writing of an export
---- folder (`testing export --out`) builds on `M.export`, which returns the files and the manifest.
+--- The command `testing call fleet|repo` (`testing.export.call`) prints the documents; `testing export --out`
+--- (`testing.export.folder`) writes an export folder from `M.export`, which returns the files and the manifest. Only
+--- `M.export` asks the data classes of this device (`M.release`, `lib.nvim.data_classes`, fail-closed): what leaves
+--- the machine is `public` or `internal`, the rest is counted in the fleet's `excluded_by`, never named.
 
 local M = {}
 
@@ -47,7 +49,7 @@ M.ENGINE_VERSION = "0.1.0-dev"
 
 ---What this engine writes; sorted.
 ---@type string[]
-M.CAPABILITIES = { "fleet", "manifest", "repo" }
+M.CAPABILITIES = { "data_classes", "fleet", "manifest", "repo" }
 
 ---The kinds a reader of this version knows.
 ---@type table<string, true>
@@ -127,7 +129,21 @@ function M.repo_key(dir, identity)
   return safe .. "-" .. vim.fn.sha256(name .. "\n" .. (identity or "")):sub(1, 12)
 end
 
+---The checkout of a repository as `M.deps.head` sees it.
+---@class Testing.Export.Head
+---@field sha string Lower-case hex.
+---@field branch string|nil
+---@field dirty boolean|nil nil: unknown.
+
+---The seams of the sources that are no files: git and the CI adapter.
+---@class Testing.Export.Deps
+---@field identity fun(dir: string): string|nil
+---@field key fun(dir: string): string
+---@field head fun(dir: string): Testing.Export.Head|nil
+---@field remote fun(repos: { dir: string, from_root: boolean }[], opts: { state_dir: string }): table[], table
+
 ---Replaced by a spec: the key of a repository, its head and the CI adapter.
+---@type Testing.Export.Deps
 M.deps = {
   ---The identity of a repository: its root commit (the smallest one when the history has several), nil outside git
   ---or without a commit. The same in every clone of the repository, wherever it lives.
@@ -158,7 +174,7 @@ M.deps = {
   end,
   ---The checkout now, nil outside git.
   ---@param dir string
-  ---@return { sha: string, branch: string|nil, dirty: boolean|nil }|nil
+  ---@return Testing.Export.Head|nil
   head = function(dir)
     local git = require("lib.nvim.git")
     local o = { dir = dir }
@@ -344,10 +360,24 @@ end
 ---@param state_dir? string
 ---@param remote_rec? table
 ---@param key string
+---@param no_local? boolean Read no local source (the workstation: no local runs there).
 ---@return Testing.Export.Sources
-local function sources(dir, state_dir, remote_rec, key)
+local function sources(dir, state_dir, remote_rec, key, no_local)
   local sopts = { state_dir = state_dir }
   local state = require("testing.state")
+  local run = remote_rec and type(remote_rec.run) == "table" and remote_rec.run or {}
+  local remote_line = ("remote:%s:%s:%s"):format(
+    tostring(remote_rec and remote_rec.overall or "-"),
+    tostring(run.id or "-"),
+    tostring(run.updated_at or "-")
+  )
+  if no_local then
+    return {
+      st = state.new(dir),
+      notes = {},
+      rev = table.concat({ key, "local:off", remote_line }, "\t"),
+    }
+  end
   local sdir = require("testing.history").dir(dir, sopts)
   local st = state.load(dir, sopts)
   local notes = vim.list_slice(st.notes or {}, 1)
@@ -365,18 +395,13 @@ local function sources(dir, state_dir, remote_rec, key)
       notes[#notes + 1] = sdir .. "/ci.json is not valid JSON: ignored"
     end
   end
-  local run = remote_rec and type(remote_rec.run) == "table" and remote_rec.run or {}
   local rev = table.concat({
     key,
     "last:" .. sha_or_dash(read_text(state.path(dir, sopts)), dir, state_dir),
     "green:"
       .. sha_or_dash(read_text(require("testing.run.green").path(dir, sopts)), dir, state_dir),
     "ci:" .. sha_or_dash(ci_text, dir, state_dir),
-    ("remote:%s:%s:%s"):format(
-      tostring(remote_rec and remote_rec.overall or "-"),
-      tostring(run.id or "-"),
-      tostring(run.updated_at or "-")
-    ),
+    remote_line,
   }, "\t")
   return { st = st, green = green, ci = ci, notes = notes, rev = rev }
 end
@@ -539,16 +564,17 @@ end
 
 ---The row of one repository and what its documents need besides.
 ---@param dir string Absolute.
----@param ctx { form: "local"|"export", state_dir?: string, remote: table<string, table>|nil }
+---@param ctx { form: "local"|"export", state_dir?: string, remote: table<string, table>|nil, no_local?: boolean }
 ---@return table row
 ---@return Testing.Export.Sources src
 local function row_of(dir, ctx)
   local rec = ctx.remote and ctx.remote[dir] or nil
-  local key = M.deps.key(dir, ctx.state_dir)
-  local src = sources(dir, ctx.state_dir, rec, key)
+  local key = M.deps.key(dir)
+  local src = sources(dir, ctx.state_dir, rec, key, ctx.no_local)
   local h = M.deps.head(dir)
   local head = NIL
   if h then
+    ---@type boolean|vim.NIL
     local dirty = NIL
     if type(h.dirty) == "boolean" then
       dirty = h.dirty -- `x and false or y` would turn a clean tree into unknown
@@ -815,11 +841,15 @@ end
 function M.resolve(sel)
   local overview = require("testing.ci.overview")
   local cfg = vim.deepcopy(require("testing.config.DEFAULTS").project.ci_overview)
+  -- `resolve` reads the four lists only; the flags of the overview's own command line are off
   return overview.resolve({
     roots = sel.roots or {},
     repos_roots = sel.repos_roots or {},
     include = sel.include or {},
     exclude = sel.exclude or {},
+    json = false,
+    no_remote = false,
+    help = false,
   }, cfg)
 end
 
@@ -830,6 +860,10 @@ end
 ---@field previous? fun(path: string): string|nil `export` only: the text of a file of the export folder as it is now
 ---(nil: none). A document whose digest did not change keeps that file's `generated_at` and `engine`, so an
 ---unchanged state is the same bytes (no git diff in a results repository).
+---@field no_local? boolean Read no local result (`last.json`, `last_green.json`, `ci.json`): `local`, `last_green`,
+---`ci_local`, `counts` are `null`, `cases_red` is 0 and `local_read` is false. The workstation, where nothing runs.
+---@field classes? table `export` only: the options of `lib.nvim.data_classes.load` (`path`, `dir`, `env`, `os`);
+---nil reads this device's `areas.json`. A spec always names its own file.
 
 ---The CI adapter's records by directory, and what the document says about asking it.
 ---@param dirs string[]
@@ -871,14 +905,21 @@ end
 
 -- ── documents ────────────────────────────────────────────────────────────────
 
+---What the data classes left out of a fleet (`M.export`); nil: not asked (`testing call`).
+---@class Testing.Export.Classed
+---@field n_private integer
+---@field n_unclassified integer
+---@field problem string|nil Why nothing (or less) could be released: no `areas.json`, an unusable one.
+
 ---@param dirs string[]
 ---@param info { excluded: string[] }
 ---@param opts Testing.Export.Opts
 ---@param remote table<string, table>|nil
 ---@param remote_info table
+---@param classed? Testing.Export.Classed
 ---@return table doc
 ---@return table<string, { row: table, src: Testing.Export.Sources, dir: string }> by_key
-local function build_fleet(dirs, info, opts, remote, remote_info)
+local function build_fleet(dirs, info, opts, remote, remote_info, classed)
   local form = opts.form or "export"
   local root
   if form == "local" and #(opts.repos_roots or {}) == 1 and #(opts.roots or {}) == 0 then
@@ -887,7 +928,10 @@ local function build_fleet(dirs, info, opts, remote, remote_info)
   local doc = head("fleet", form, root)
   local rows, lines, by_key = {}, {}, {}
   for _, dir in ipairs(dirs) do
-    local row, src = row_of(dir, { form = form, state_dir = opts.state_dir, remote = remote })
+    local row, src = row_of(
+      dir,
+      { form = form, state_dir = opts.state_dir, remote = remote, no_local = opts.no_local }
+    )
     if by_key[row.key] then
       error(
         ("two repositories have the key %s (%s and %s): one checkout inside the other?"):format(
@@ -903,7 +947,19 @@ local function build_fleet(dirs, info, opts, remote, remote_info)
     lines[#lines + 1] = src.rev
   end
   doc.repos = rows
-  doc.excluded = #(info.excluded or {})
+  local selection = #(info.excluded or {})
+  doc.excluded = selection + (classed and classed.n_private + classed.n_unclassified or 0)
+  -- by reason, never by name; null: the data classes were not asked (a document that stays on this machine)
+  doc.excluded_by = {
+    selection = selection,
+    private = classed and classed.n_private or NIL,
+    unclassified = classed and classed.n_unclassified or NIL,
+  }
+  doc.classes = {
+    checked = classed ~= nil,
+    problem = nn(classed and M.clean(classed.problem, dirs[1] or ".", opts.state_dir) or nil),
+  }
+  doc.local_read = opts.no_local ~= true
   doc.remote = remote_info
   return seal(doc, lines), by_key
 end
@@ -957,6 +1013,8 @@ local function build_repo(dir, row, src, opts, remote_info)
     cases[i] = case_of(red[i], dir, opts.state_dir)
   end
   doc.cases = cases
+  -- not read (the workstation): no red result was read, so 0; `local_read = false` says it is unknown. These are
+  -- required integers of version 1: widening them to null would break a reader of version 1
   doc.cases_red = #red
   doc.cases_omitted = #red - #cases
   local notes = {}
@@ -964,12 +1022,14 @@ local function build_repo(dir, row, src, opts, remote_info)
     notes[#notes + 1] = M.clean(n, dir, opts.state_dir) or ""
   end
   doc.notes = notes
+  doc.local_read = opts.no_local ~= true
   doc.remote = remote_info
   return seal(doc, { src.rev })
 end
 
+---Run `fn` with the secrets of the environment read once; an error becomes `nil, message`.
 ---@generic T
----@param fn fun(): T
+---@param fn fun(): T|nil, string|nil
 ---@return T|nil
 ---@return string|nil err
 local function protect(fn)
@@ -1020,7 +1080,10 @@ function M.repo(dir, opts)
     end
     local remote, remote_info = ask_remote({ dir }, opts)
     local form = opts.form or "export"
-    local row, src = row_of(dir, { form = form, state_dir = opts.state_dir, remote = remote })
+    local row, src = row_of(
+      dir,
+      { form = form, state_dir = opts.state_dir, remote = remote, no_local = opts.no_local }
+    )
     local doc = build_repo(dir, row, src, opts, remote_info)
     if form == "export" then
       local problem = refuse_leaks(doc, { dir }, opts.state_dir)
@@ -1030,6 +1093,46 @@ function M.repo(dir, opts)
     end
     return doc
   end)
+end
+
+---The note of a fleet whose device has no `areas.json`.
+M.NO_AREAS = "no areas.json on this device: every repository is unclassified, none is exported"
+
+---The repositories that may leave this machine, fail-closed (`lib.nvim.data_classes`): only `public` and `internal`;
+---`private` and `unclassified` (no entry, no file, a file that cannot be used, a lib.nvim without the reader) stay.
+---@param dirs string[]
+---@param copts? table The options of `lib.nvim.data_classes.load` (nil: this device's file).
+---@return string[] released
+---@return Testing.Export.Classed classed
+function M.release(dirs, copts)
+  local classed = { n_private = 0, n_unclassified = 0 }
+  local okl, dc = pcall(require, "lib.nvim.data_classes")
+  if not okl then
+    classed.n_unclassified = #dirs
+    classed.problem = "lib.nvim has no data_classes (older than e1c872d): none is exported"
+    return {}, classed
+  end
+  local classes = dc.load(copts or {})
+  if classes.problem then
+    -- the kind only: the problem text may name an area, and an area is often named like a repository
+    classed.problem = ("areas.json cannot be used (%s): none is exported"):format(
+      tostring(classes.kind or "invalid")
+    )
+  elseif classes.missing then
+    classed.problem = M.NO_AREAS
+  end
+  local out = {}
+  for _, dir in ipairs(dirs) do
+    local class = classes:class_of_repo(dir)
+    if class == "public" or class == "internal" then
+      out[#out + 1] = dir
+    elseif class == "private" then
+      classed.n_private = classed.n_private + 1
+    else
+      classed.n_unclassified = classed.n_unclassified + 1
+    end
+  end
+  return out, classed
 end
 
 ---The canonical bytes of a document: compact (the form that is hashed and printed), or with `indent` (the form of
@@ -1108,8 +1211,9 @@ function M.export(opts)
       return nil, tostring(info)
     end
     ---@cast info { excluded: string[], missing: string[] }
-    local remote, remote_info = ask_remote(dirs, o)
-    local fleet, by_key = build_fleet(dirs, info, o, remote, remote_info)
+    local released, classed = M.release(dirs, o.classes)
+    local remote, remote_info = ask_remote(released, o)
+    local fleet, by_key = build_fleet(released, info, o, remote, remote_info, classed)
     local docs = { ["fleet.json"] = fleet }
     local problem = refuse_leaks(fleet, dirs, o.state_dir)
     if problem then
@@ -1227,13 +1331,16 @@ end
 ---@return boolean ok
 ---@return string[] problems
 function M.validate(doc)
-  local text = doc
+  ---@type string|nil
+  local text
   if type(doc) == "table" then
     local err
     text, err = M.encode(doc)
     if not text then
       return false, { tostring(err) }
     end
+  else
+    text = doc
   end
   local ok, decoded = pcall(vim.json.decode, text)
   if not ok then

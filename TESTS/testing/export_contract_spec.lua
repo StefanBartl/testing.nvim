@@ -108,9 +108,11 @@ return function(H)
     export.clock = function()
       return "2030-01-01T00:00:00Z"
     end
-    local later, err = export.fleet(fixture.opts(fx2))
+    -- the fleet of an export folder (`export`: with the data classes; `fleet` alone does not ask them)
+    local later_bundle, err = export.export(fixture.opts(fx2))
     export.clock = saved_clock
     restore()
+    local later = later_bundle and later_bundle.docs["fleet.json"]
     ok(later, "fleet at another time: " .. tostring(err))
     eq(later.generated_at, "2030-01-01T00:00:00Z", "the clock is the seam of generated_at")
     eq(later.digest, first.docs["fleet.json"].digest, "the digest leaves generated_at out")
