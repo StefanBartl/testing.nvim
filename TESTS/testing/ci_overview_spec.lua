@@ -57,13 +57,20 @@ return function(H)
 
   local CI_LUA =
     "return { plugin = 'proj', minit = false, ci = { profiles = { full = { 'suite' } } } }\n"
+  -- delta's profile also has a step whose tool is asked for its version (when this machine has stylua)
+  local DELTA_LUA = vim.fn.executable("stylua") == 1
+      and "return { plugin = 'proj', minit = false, ci = { profiles = { full = { 'suite', 'stylua' } } } }\n"
+    or CI_LUA
   ---@param name string
-  ---@param o { ci?: boolean, workflows?: boolean, git?: boolean }
+  ---@param o { ci?: boolean|string, testing?: boolean, workflows?: boolean, git?: boolean }
   local function repo(name, o)
     local dir = root .. "/" .. name
     vim.fn.mkdir(dir, "p")
     if o.ci then
-      write(dir .. "/.testing.lua", CI_LUA)
+      write(dir .. "/.testing.lua", type(o.ci) == "string" and o.ci or CI_LUA)
+    elseif o.testing then
+      -- a suite without a pipeline: no `ci` section
+      write(dir .. "/.testing.lua", "return { plugin = 'proj', minit = false }\n")
     end
     if o.workflows then
       write(dir .. "/.github/workflows/ci.yml", "name: CI\n")
@@ -78,6 +85,10 @@ return function(H)
 
   local alpha = repo("alpha.nvim", { ci = true, git = true })
   local beta = repo("beta.nvim", { ci = true, git = true })
+  local delta = repo("delta.nvim", { ci = DELTA_LUA, git = true })
+  local epsilon = repo("epsilon.nvim", { ci = true })
+  repo("eta.nvim", { testing = true })
+  repo("iota.nvim", { ci = true })
   repo("gamma.nvim", { workflows = true })
   repo("lib.nvim", {})
   repo("tasks-vault", { ci = true })
@@ -117,8 +128,60 @@ return function(H)
     })
   )
 
+  -- epsilon: the last complete run of the profile was red, a later partial run (ci.json) green; not a git repository
+  write(
+    sdir(epsilon) .. "/ci-full.json",
+    vim.json.encode({
+      schema = "testing-ci/1",
+      verdict = "red",
+      first_red = "luacheck",
+      tree = "2222",
+      time = "2026-10-31T08:00:00Z",
+    })
+  )
+  write(
+    sdir(epsilon) .. "/ci.json",
+    vim.json.encode({
+      schema = "testing-ci/1",
+      verdict = "green",
+      partial = true,
+      tree = "2222",
+      time = "2026-10-31T11:00:00Z",
+    })
+  )
+  -- delta: a usable green proof of this system, this Neovim and this pipeline: verify goes as deep as it can without a
+  -- run (the tool versions, the suite's stamp through `testing verify`)
+  do
+    local pipeline = assert(require("testing.ci.schema").load(delta))
+    local tree = vim
+      .system({ "git", "rev-parse", "HEAD^{tree}" }, { cwd = delta, text = true })
+      :wait(30000).stdout
+      :gsub("%s+$", "")
+    write(
+      sdir(delta) .. "/ci-full.json",
+      vim.json.encode({
+        schema = "testing-ci/1",
+        verdict = "green",
+        partial = false,
+        head_moved = false,
+        tree_changed = false,
+        dirty = false,
+        tree = tree,
+        os = require("testing.ci").internal.this_os(),
+        nvim = tostring(vim.version()),
+        pipeline_sha = vim.fn.sha256(
+          require("lib.nvim.json.canonical").encode(pipeline.digest_input)
+        ),
+        steps = {},
+        time = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+      })
+    )
+  end
+
   local SECRET = HOME .. "/secret/project/file.lua"
   local SECRET_WIN = SECRET:gsub("/", "\\")
+  local USER = vim.env.USERNAME or vim.env.USER or "nobody-at-all"
+  vim.env.TESTING_OVERVIEW_SECRET = "s3cr3t-value"
   local remote_calls = 0
   ---The CI adapter's records, by directory name.
   local function fake_remote(repos)
@@ -139,7 +202,12 @@ return function(H)
           .. " and "
           .. SECRET_WIN
           .. " and E:/repos/other/x.lua"
+          .. " see https://github.com/o/r and error:/x/y `/opt/q/y` [/srv/a/b] /single C:/My Dir/a"
       elseif name == "gamma.nvim" then
+        -- no path in it: what only the IR's redaction removes (user, e-mail, an environment value)
+        rec.note = "owner "
+          .. USER
+          .. ", mail t@example.invalid, TESTING_OVERVIEW_SECRET=s3cr3t-value"
         rec.run = { id = 9, url = "javascript:alert(1)" }
         rec.os = {
           ubuntu = { state = "success" },
@@ -170,6 +238,7 @@ return function(H)
     -- nothing may start a pipeline or a suite: every entry point of a run fails loudly, and every process is recorded
     local ci, repos = require("testing.ci"), require("testing.ci.repos")
     local job = require("lib.nvim.system.job")
+    local inproc = require("testing.run.inproc")
     local saved = {
       ci_main = ci.main,
       run_process = ci.internal.run_process,
@@ -178,6 +247,11 @@ return function(H)
       job_start = job.start,
       cli_main = cli.main,
       system = vim.system,
+      spawn = vim.uv.spawn,
+      jobstart = vim.fn.jobstart,
+      fn_system = vim.fn.system,
+      inproc_run = inproc.run,
+      inproc_list = inproc.list,
     }
     local started = {}
     local function forbid(what)
@@ -190,16 +264,46 @@ return function(H)
     repos.main = forbid("ci.repos.main")
     repos.system = forbid("ci.repos.system")
     job.start = forbid("lib.nvim.system.job.start")
+    inproc.run = forbid("testing.run.inproc.run")
+    inproc.list = forbid("testing.run.inproc.list")
+    -- every way to start a process is recorded: the executable and its arguments
+    local function record(exe, rest)
+      spawned[#spawned + 1] = { exe = tostring(exe), args = rest or {} }
+    end
     ---@diagnostic disable-next-line: duplicate-set-field
     vim.system = function(argv, ...)
-      spawned[#spawned + 1] = argv[1]
+      record(argv[1], vim.list_slice(argv, 2))
       return saved.system(argv, ...)
     end
+    ---@diagnostic disable-next-line: duplicate-set-field
+    vim.uv.spawn = function(path, opts, ...)
+      record(path, opts and opts.args)
+      return saved.spawn(path, opts, ...)
+    end
+    rawset(vim.fn, "jobstart", function(cmd, ...)
+      record(
+        type(cmd) == "table" and cmd[1] or cmd,
+        type(cmd) == "table" and vim.list_slice(cmd, 2)
+      )
+      return saved.jobstart(cmd, ...)
+    end)
+    rawset(vim.fn, "system", function(cmd, ...)
+      record(
+        type(cmd) == "table" and cmd[1] or cmd,
+        type(cmd) == "table" and vim.list_slice(cmd, 2)
+      )
+      return saved.fn_system(cmd, ...)
+    end)
+    local store = require("testing.cache.store")
+    local rtp, key = vim.o.runtimepath, store.project_key
     local outer = saved.cli_main
-    local depth = 0
+    local depth, deep = 0, 0
     ---@diagnostic disable-next-line: duplicate-set-field
     cli.main = function(argv, sv)
       depth = depth + 1
+      if depth > 1 and argv[1] == "verify" then
+        deep = deep + 1
+      end
       -- the outer call is this spec's; inside it only `testing verify` (the suite's stamp) may be asked
       if depth > 1 and argv[1] ~= "verify" then
         started[#started + 1] = "testing " .. tostring(argv[1])
@@ -237,8 +341,13 @@ return function(H)
     })
     ci.main, ci.internal.run_process = saved.ci_main, saved.run_process
     repos.main, repos.system, job.start = saved.repos_main, saved.repos_system, saved.job_start
-    cli.main, vim.system = saved.cli_main, saved.system
+    cli.main, vim.system, vim.uv.spawn = saved.cli_main, saved.system, saved.spawn
+    rawset(vim.fn, "jobstart", saved.jobstart)
+    rawset(vim.fn, "system", saved.fn_system)
+    inproc.run, inproc.list = saved.inproc_run, saved.inproc_list
     overview.deps = real
+    local leaked = { vim.o.runtimepath ~= rtp, store.project_key ~= key }
+    vim.o.runtimepath, store.project_key = rtp, key
     if not pass then
       error(code, 0)
     end
@@ -247,6 +356,8 @@ return function(H)
       out = table.concat(out, "\n"),
       err = table.concat(err, "\n"),
       started = started,
+      deep = deep,
+      leaked = leaked,
     }
   end
 
@@ -259,13 +370,24 @@ return function(H)
   eq(r1.code, overview.EXIT_OK, "page: exit 0 although a repository is red (" .. r1.err .. ")")
   eq(r1.started, {}, "no run: no pipeline, no suite, no multi-repository run was started")
   local others = {}
-  for _, exe in ipairs(spawned) do
-    if vim.fs.basename(exe):gsub("%.exe$", "") ~= "git" then
-      others[#others + 1] = exe
+  for _, p in ipairs(spawned) do
+    local is_git = vim.fs.basename(p.exe):lower():gsub("%.exe$", "") == "git"
+    if not is_git and not vim.tbl_contains(p.args, "--version") then
+      others[#others + 1] = p.exe .. " " .. table.concat(p.args, " ")
     end
   end
-  eq(others, {}, "no run: the only processes are git (the facts ci verify reads)")
+  eq(
+    others,
+    {},
+    "no run: the only processes are git (the facts ci verify reads) and a tool's --version"
+  )
   ok(#spawned > 0, "no run: ... and verify did read the git facts of a proof (" .. #spawned .. ")")
+  ok(r1.deep > 0, "no run: ... verify went as deep as the suite's stamp (testing verify) for delta")
+  eq(
+    r1.leaked,
+    { false, false },
+    "isolation: no verify leaves 'runtimepath' or the cache key changed"
+  )
   has(r1.out, "wrote " .. page, "page: the path is printed")
   has(r1.out, "left out: tasks-vault, tricentis-vault", "list: the vaults are left out and named")
   local html = read(page)
@@ -278,8 +400,17 @@ return function(H)
     vim.tbl_map(function(r)
       return r.repo
     end, doc.repos),
-    { "alpha.nvim", "beta.nvim", "gamma.nvim", "lib.nvim" },
-    "list: sorted; a ci section, workflows, lib.nvim without either; no vault, not a plain directory"
+    {
+      "alpha.nvim",
+      "beta.nvim",
+      "delta.nvim",
+      "epsilon.nvim",
+      "eta.nvim",
+      "gamma.nvim",
+      "iota.nvim",
+      "lib.nvim",
+    },
+    "list: sorted; a ci section, a .testing.lua without one (eta), workflows, lib.nvim; no vault, no plain directory"
   )
   eq(doc.excluded, { "tasks-vault", "tricentis-vault" }, "json: the names left out")
   local by = {}
@@ -290,6 +421,28 @@ return function(H)
   eq(by["alpha.nvim"]["local"].state, "red", "alpha: the last run (ci.json) was red")
   eq(by["alpha.nvim"]["local"].age_s, 3 * 3600, "alpha: its age")
   has(by["alpha.nvim"]["local"].note, "lint", "alpha: the first red step")
+  has(
+    by["alpha.nvim"]["local"].note,
+    "(an older tree)",
+    "alpha: verify read no tree (no stamp), the page reads it: ci.json is of an older tree"
+  )
+  eq(
+    { by["epsilon.nvim"]["local"].state, by["epsilon.nvim"]["local"].age_s },
+    { "red", 4 * 3600 },
+    "epsilon: the last complete run (ci-full.json) red, a later partial run green: red, with its age"
+  )
+  has(
+    by["epsilon.nvim"]["local"].note,
+    "red: luacheck (profile full) (tree unknown)",
+    "epsilon: its first red step, the profile, no git tree to compare"
+  )
+  eq(by["delta.nvim"]["local"].verify, "no-stamp", "delta: the suite has no stamp")
+  eq(by["eta.nvim"]["local"].state, "unknown", "eta: a .testing.lua without a ci section")
+  has(
+    by["iota.nvim"]["local"].note or "",
+    "<STATE>",
+    "iota: the state directory of the page (--state-dir) is <STATE> in a reason"
+  )
   eq(by["beta.nvim"]["local"].state, "unknown", "beta: a proof of another system is no proof")
   eq(by["beta.nvim"]["local"].verify, "rejected", "beta: ... ci verify says rejected")
   eq(by["gamma.nvim"]["local"].state, "none", "gamma: workflows only")
@@ -299,7 +452,7 @@ return function(H)
   eq(by["alpha.nvim"].ci.os.macos.state, "none", "alpha: a system without a job is not configured")
   eq(
     { doc.counts["local"].red, doc.counts["local"].none, doc.counts.ci.red, doc.counts.ci.green },
-    { 1, 2, 1, 1 },
+    { 2, 2, 1, 1 },
     "json: the counts"
   )
   ok(read(state .. "/testing/overview.html") == nil, "json: no page unless --out is given")
@@ -322,6 +475,19 @@ return function(H)
     "links: the run of alpha"
   )
   lacks(doc_run.out, root, "json: no repository path either")
+  -- what only the IR's redaction takes out (gamma's note has no path in it)
+  for _, text in ipairs({ html, doc_run.out }) do
+    lacks(text, "owner " .. USER, "redaction: the user's name")
+    lacks(text, "t@example.invalid", "redaction: an e-mail address")
+    lacks(text, "s3cr3t-value", "redaction: the value of an environment variable")
+  end
+  -- the shapes of a path, and what is no path
+  local an = by["alpha.nvim"].ci.note
+  has(an, "https://github.com/o/r", "paths: a URL stays readable")
+  has(an, "error:<PATH>", "paths: a path after a colon goes, the word stays")
+  for _, gone in ipairs({ "/opt/q", "/srv/a", "/single", "Dir/a" }) do
+    lacks(an, gone, "paths: in backticks, brackets, of one part, with a space")
+  end
 
   -- self-contained, both schemes, the filter
   has(html, "default-src 'none'", "self-contained: a policy that forbids every request")
@@ -332,6 +498,7 @@ return function(H)
   has(html, "#red-only:checked~.wrap tbody tr:not(.red){display:none}", "filter: the rule")
   has(html, '<tr class="red"><td>alpha.nvim</td>', "filter: alpha's row is red")
   has(html, '<tr class="rest"><td>gamma.nvim</td>', "filter: gamma's row is not")
+  has(html, '<tr class="red"><td>epsilon.nvim</td>', "filter: epsilon's row is red")
   has(html, 'datetime="2026-10-31T12:00:00Z"', "page: generated_at")
 
   -- determinism
@@ -364,7 +531,16 @@ return function(H)
     vim.tbl_map(function(r)
       return r.repo
     end, exd.repos),
-    { "alpha.nvim", "beta.nvim", "lib.nvim", "tasks-vault" },
+    {
+      "alpha.nvim",
+      "beta.nvim",
+      "delta.nvim",
+      "epsilon.nvim",
+      "eta.nvim",
+      "iota.nvim",
+      "lib.nvim",
+      "tasks-vault",
+    },
     "--exclude leaves a name out, --include takes even a vault in"
   )
   eq(exd.excluded, { "gamma.nvim", "tricentis-vault" }, "--exclude: named as left out")
@@ -394,6 +570,92 @@ return function(H)
     end
   end
 
+  -- a note is cut at a character boundary: the page stays valid UTF-8
+  eq(
+    overview.clean(("a"):rep(296) .. "ääää", tmp),
+    ("a"):rep(296) .. "...",
+    "clean: a UTF-8 sequence is not cut"
+  )
+
+  -- the isolation of one verify: what it puts on 'runtimepath' and the cache key are restored
+  do
+    local vmod, store = require("testing.ci.verify"), require("testing.cache.store")
+    local saved, rtp, key = vmod.main, vim.o.runtimepath, store.project_key
+    vmod.main = function(_, sv)
+      vim.opt.rtp:append(tmp .. "/elsewhere")
+      store.project_key = "elsewhere@1"
+      sv.out('{"status":"no-stamp"}')
+      return 1
+    end
+    local okv, d = pcall(overview.deps.verify, alpha, state, {
+      out = function() end,
+      err = function() end,
+    })
+    vmod.main = saved
+    local after = { vim.o.runtimepath == rtp, store.project_key == key }
+    vim.o.runtimepath, store.project_key = rtp, key
+    ok(okv, "isolation: verify answered (" .. tostring(d) .. ")")
+    eq(after, { true, true }, "isolation: 'runtimepath' and the cache key are as before")
+    eq(d.status, "no-stamp", "isolation: ... and the answer is kept")
+  end
+
+  -- one repository that cannot be read is unknown, the page is still written
+  do
+    local broken = tmp .. "/broken"
+    local b1, b2, b3 = broken .. "/b1", broken .. "/b2", broken .. "/b3"
+    for _, d in ipairs({ b1, b2, b3 }) do
+      write(d .. "/.testing.lua", CI_LUA)
+    end
+    write(sdir(b1) .. "/ci.json", "not json {")
+    vim.fn.mkdir(sdir(b2) .. "/ci.json", "p")
+    write(sdir(b3) .. "/ci-full.json", "{")
+    local br = run({ b1, b2, b3, "--json", "--no-remote" })
+    eq(br.code, overview.EXIT_OK, "broken state: exit 0 (" .. br.err .. ")")
+    local states = vim.tbl_map(function(r)
+      return r["local"].state
+    end, vim.json.decode(br.out).repos)
+    eq(
+      states,
+      { "unknown", "unknown", "unknown" },
+      "broken state: not JSON, a directory, a broken proof"
+    )
+
+    local th = run({ b1, "--json", "--no-remote" }, {
+      verify = function()
+        error("verify boom", 0)
+      end,
+    })
+    eq(th.code, overview.EXIT_OK, "a throwing source: exit 0 (" .. th.err .. ")")
+    local tl = vim.json.decode(th.out).repos[1]["local"]
+    eq(tl.state, "unknown", "a throwing source: that repository is unknown")
+    has(tl.note, "verify boom", "a throwing source: ... with the reason")
+
+    local ad = run({ b1, "--json" }, {
+      remote = function()
+        error("adapter boom", 0)
+      end,
+    })
+    local ac = vim.json.decode(ad.out).repos[1].ci
+    eq(ac.overall, "unknown", "adapter: a failure is unknown, never green")
+    has(ac.note, "the CI adapter failed: adapter boom", "adapter: ... named")
+
+    local NG = "lib.nvim.net.github"
+    local loaded, preload = package.loaded[NG], package.preload[NG]
+    package.loaded[NG] = nil
+    package.preload[NG] = function()
+      error("no such module", 0)
+    end
+    local okn, ng = pcall(run, { b1, "--json" })
+    package.loaded[NG], package.preload[NG] = loaded, preload
+    ok(okn, "an old lib.nvim: the page is written (" .. tostring(ng) .. ")")
+    local nc = vim.json.decode(ng.out).repos[1].ci
+    eq(
+      { nc.overall, nc.note },
+      { "unknown", "lib.nvim has no net.github" },
+      "an old lib.nvim: unknown"
+    )
+  end
+
   -- exit codes
   local u = run({ "--frobnicate" })
   eq(u.code, overview.EXIT_USAGE, "usage: an unknown flag is exit 2")
@@ -408,6 +670,13 @@ return function(H)
   vim.fn.mkdir(tmp .. "/adir", "p")
   local w = run({ alpha, "--no-remote", "--out=" .. tmp .. "/adir" })
   eq(w.code, overview.EXIT_INFRA, "exit 3: the page cannot be written")
+  for _, bad in ipairs({ "--include=..", "--include=../x", "--exclude=a/b" }) do
+    local b = run({ "--repos-root=" .. root, "--json", bad })
+    eq(b.code, overview.EXIT_USAGE, "usage: " .. bad .. " is no directory name below the root")
+    has(b.err, "not a directory name", "usage: ... said")
+  end
+
+  vim.env.TESTING_OVERVIEW_SECRET = nil
 
   vim.fn.delete(tmp, "rf")
 end

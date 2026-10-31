@@ -441,17 +441,24 @@ proven (minutes per repository).
 Per repository it reads three things:
 
 1. The answer of `testing ci verify --json` ([Verify](#verify-is-this-state-already-proven)), asked in the same process
-   (git facts and tool versions, as `verify` reads them; no step runs).
-2. `ci.json` in the repository's state directory (the last `testing ci`, [the document](#the-document-testing-ci1)).
+   (git facts and tool versions, as `verify` reads them; no step runs). The only processes it starts are `git` and the
+   `--version` of a profile's tools; the CI adapter asks `gh auth token` for a token. `verify` runs the repository's
+   `.testing.lua`, and its suite answer puts the repository on `'runtimepath'` and sets the cache's project key: both
+   are restored after each repository, so one repository's modules never reach the next.
+2. `ci.json` and `ci-<profile>.json` in the repository's state directory (the last `testing ci` and the last complete
+   run of the profile, [the document](#the-document-testing-ci1)).
 3. The CI adapter of `testing ci remote` ([above](#the-github-actions-status-testing-ci-remote)): the same token, ETag
    cache and states. `--no-remote` skips it (offline): the CI columns are then `?`.
+
+A repository whose state cannot be read (a broken file, a source that fails) is `unknown` with the reason in its note;
+the page is written all the same.
 
 The local column:
 
 | State | When |
 | --- | --- |
 | `proven` | `ci verify` says `verified`; the age is that of the proof (`ci-<profile>.json`) |
-| `red` | the last run (`ci.json`) was red; the note names the first red step and says when the tree changed since |
+| `red` | the last run (`ci.json`) or the last complete run of the profile (`ci-<profile>.json`) was red (a later green partial run does not undo it; of two red ones the newer counts, also for the age); the note names the first red step (and the profile for the complete run) and says `(an older tree)` when the tree changed since, `(tree unknown)` when git cannot tell (the page reads `HEAD^{tree}` itself when `verify` did not) |
 | `unknown` | anything else, with the answer of `ci verify` (`no-stamp`, `changed`, `dirty`, `rejected`, ...) and its first reason |
 | `no testing.nvim` | the repository has no `.testing.lua` (lib.nvim: CI only) |
 
@@ -459,12 +466,14 @@ A run of several repositories (`testing ci --repos-root`) does not write each re
 `no-stamp` here until a `testing ci` ran in them.
 
 **Which repositories.** The roots named (default: the current directory) and, below each `--repos-root` (repeatable),
-the repositories that `testing ci remote --repos-root` finds (`.github/workflows` and a GitHub origin) together with
-those `testing ci --repos-root` finds (a `ci` section in `.testing.lua`, read uncached). A name containing `vault` is
+the repositories with `.github/workflows` (as `testing ci remote --repos-root` finds them; one without a GitHub origin
+is listed too, as `no GitHub`), those `testing ci --repos-root` finds (a `ci` section in `.testing.lua`, read uncached)
+and every other one with a `.testing.lua` (a suite without a pipeline). The named-roots registry of the concept is not
+read: a repository outside every `--repos-root` is named as a root. A name containing `vault` is
 left out (tasks-vault, rules-vault, tricentis-vault: notes, no code; the last one is company context). Then
 `ci_overview.include` (default `{ "lib.nvim" }`: it has no `.testing.lua`) and `--include=<a,b>` are taken in even when
 the detection misses them (an included vault is taken in too), and `ci_overview.exclude` and `--exclude=<a,b>` are left
-out. `ci_overview` is read from the `.testing.lua` of the current directory ([CONFIG.md](CONFIG.md)). The names left
+out. Both take directory names only (no separator, no `..`; otherwise exit `2`), as `ci_overview` does. `ci_overview` is read from the `.testing.lua` of the current directory ([CONFIG.md](CONFIG.md)). The names left
 out are printed (`ci overview: left out: ...`) and listed in `--json`; the page only counts them. An included name
 that no `--repos-root` has is reported on stderr.
 
@@ -475,8 +484,10 @@ one row per repository, sorted by directory name: local state with its age, ubun
 only)" hides every row that is neither locally red nor `failure`/`rejected` on CI (CSS only). Every text is
 HTML-escaped. Free texts (the notes of `ci verify` and of the adapter) are redacted as the IR redacts a case's
 message, expected and actual (`testing.run.inproc.redact_text`: the roots become `<REPO>`, `<HOME>`, `<TMP>`,
-`<STATE>`, then user, host, environment values and e-mail shapes), and every absolute path that is left becomes
-`<PATH>`: a repository appears by its directory name only. Links only to `https://github.com/`. The same inputs give
+`<STATE>` (the `--state-dir` of the page), then user, host, environment values and e-mail shapes), and every absolute
+path that is left becomes `<PATH>` (a drive, UNC or POSIX path, also in backticks or brackets, of one part or with a
+space in it; a URL such as `https://github.com/...` stays): a repository appears by its directory name only. A note
+is cut after about 300 bytes, at a character boundary. Links only to `https://github.com/`. The same inputs give
 the same bytes.
 
 **Where.** `--out=<file.html>`, default `<state>/testing/overview.html` (`--state-dir`, default `stdpath('state')`);
@@ -485,9 +496,10 @@ the path is printed (`ci overview: wrote <path>`). `--json` prints the document 
 `profile`, `time`, `age_s`, `note`) and `ci` (`overall`, `os.<system>.state`/`url`, `run_url`, `note`); no absolute
 path), and writes the page only when `--out` is given too.
 
-Exit codes: `0` the page was written (also when repositories are red: it is a report, not a gate; `testing ci remote`
-and `testing ci verify` are the gates), `2` usage (an unknown flag, a root or `--repos-root` that is not a directory, no
-repository), `3` the page could not be written ([EXIT-CODES.md](EXIT-CODES.md)).
+Exit codes: `0` the page was written, or with `--json` alone the document printed (also when repositories are red: it
+is a report, not a gate; `testing ci remote` and `testing ci verify` are the gates), `2` usage (an unknown flag, a root
+or `--repos-root` that is not a directory, an `--include`/`--exclude` that is no directory name, no repository), `3` the
+page could not be written ([EXIT-CODES.md](EXIT-CODES.md)).
 
 ## Events of a run
 

@@ -6,13 +6,16 @@
 ---                     [--json] [--no-remote] [--state-dir=<dir>]
 --- ```
 ---
---- Per repository it only reads: the answer of `testing ci verify --json` (in this process, `testing.ci.verify`), the
---- `ci.json` of the repository's state directory, and the CI adapter (`testing.ci.remote.collect`). It never starts a
---- pipeline or a suite: not `testing ci --repos-root`, which runs every repository that is not proven.
+--- Per repository it only reads: the answer of `testing ci verify --json` (in this process, `testing.ci.verify`;
+--- 'runtimepath' and the cache key are restored after it), `ci.json` and `ci-<profile>.json` of the repository's state
+--- directory, and the CI adapter (`testing.ci.remote.collect`). It never starts a pipeline or a suite: not
+--- `testing ci --repos-root`, which runs every repository that is not proven. The processes are git and the
+--- `--version` of a profile's tools. A repository that cannot be read is unknown, the page is written all the same.
 ---
 --- Which repositories: the roots named, and below each `--repos-root` the repositories `testing ci remote` finds
---- (`.github/workflows`, GitHub origin) and those `testing ci --repos-root` finds (a `ci` section), without the vaults
---- (a name containing "vault"); then `ci_overview.include` (default lib.nvim, it has no `.testing.lua`) and
+--- (`.github/workflows`; without a GitHub origin it is "no GitHub"), those `testing ci --repos-root` finds (a `ci`
+--- section) and any other with a `.testing.lua`, without the vaults (a name containing "vault"); then
+--- `ci_overview.include` (default lib.nvim, it has no `.testing.lua`) and
 --- `--include` are taken in, `ci_overview.exclude` and `--exclude` left out (the `.testing.lua` of the current
 --- directory; an included name wins over the vault rule).
 ---
@@ -21,8 +24,8 @@
 --- CSS. Every text is HTML-escaped; free texts are redacted as the IR redacts a message, and every absolute path that is
 --- left becomes `<PATH>`: a repository is shown by its directory name. Links only to `https://github.com/`.
 ---
---- Exit codes: 0 written (also with red repositories: the page is a report, not a gate), 2 usage, 3 the page could
---- not be written.
+--- Exit codes: 0 written or (`--json` alone) printed (also with red repositories: the page is a report, not a gate),
+--- 2 usage, 3 the page could not be written.
 
 local M = {}
 
@@ -34,7 +37,7 @@ M.USAGE = table.concat({
   "usage: testing ci overview [<root>...] [--repos-root=<dir>] [--include=<names>] [--exclude=<names>]",
   "                           [--out=<file.html>] [--json] [--no-remote] [--state-dir=<dir>]",
   "  <root>              a repository (default: the current directory)",
-  "  --repos-root=<dir>  the repositories below <dir> (workflows or a ci section; no vault; repeatable)",
+  "  --repos-root=<dir>  the repositories below <dir> (workflows or a .testing.lua; no vault; repeatable)",
   "  --include=<names>   also these directory names below --repos-root (added to ci_overview.include, lib.nvim)",
   "  --exclude=<names>   leave these directory names out (added to ci_overview.exclude)",
   "  --out=<file.html>   where the page goes (default: <state>/testing/overview.html)",
@@ -42,7 +45,7 @@ M.USAGE = table.concat({
   "  --no-remote         do not ask GitHub (the CI columns are unknown)",
   "  --state-dir=<dir>   the state directory (default: stdpath('state'))",
   "  reads only: never starts a pipeline or a suite",
-  "  exit: 0 written (also with red repositories), 2 usage, 3 the page could not be written",
+  "  exit: 0 written or printed (also with red repositories), 2 usage, 3 the page could not be written",
 }, "\n")
 
 ---The cells of the CI columns.
@@ -64,32 +67,13 @@ M.deps = {
   ---@return table|nil doc
   ---@return string|nil problem
   verify = function(dir, state_dir, sv)
-    local lines = {}
-    local errs = {}
-    local argv = { "--json", "--root=" .. dir }
-    if state_dir then
-      argv[#argv + 1] = "--state-dir=" .. state_dir
-    end
-    local ok, code = pcall(
-      require("testing.ci.verify").main,
-      argv,
-      vim.tbl_extend("force", sv, {
-        out = function(s)
-          lines[#lines + 1] = s
-        end,
-        err = function(s)
-          errs[#errs + 1] = s
-        end,
-      })
-    )
-    if not ok then
-      return nil, tostring(code)
-    end
-    local okd, doc = pcall(vim.json.decode, table.concat(lines, "\n"))
-    if not okd or type(doc) ~= "table" then
-      return nil, (errs[1] or "no answer"):gsub("^testing ci verify: ", "")
-    end
-    return doc
+    -- verify runs the repository's `.testing.lua`, and its suite answer (`testing verify`) puts the repository and its
+    -- dependencies on 'runtimepath' and sets the cache's project key: one repository must not leave them to the next
+    local store = require("testing.cache.store")
+    local rtp, key = vim.o.runtimepath, store.project_key
+    local doc, problem = M.ask_verify(dir, state_dir, sv)
+    vim.o.runtimepath, store.project_key = rtp, key
+    return doc, problem
   end,
   ---@param repos { dir: string, from_root: boolean }[]
   ---@param opts { state_dir: string }
@@ -98,6 +82,41 @@ M.deps = {
     return (require("testing.ci.remote").collect(repos, opts))
   end,
 }
+
+---The `testing-ci-verify/1` document of a repository, asked in this process (`M.deps.verify` restores what it changes).
+---@param dir string
+---@param state_dir string|nil
+---@param sv table
+---@return table|nil doc
+---@return string|nil problem
+function M.ask_verify(dir, state_dir, sv)
+  local lines = {}
+  local errs = {}
+  local argv = { "--json", "--root=" .. dir }
+  if state_dir then
+    argv[#argv + 1] = "--state-dir=" .. state_dir
+  end
+  local ok, code = pcall(
+    require("testing.ci.verify").main,
+    argv,
+    vim.tbl_extend("force", sv, {
+      out = function(s)
+        lines[#lines + 1] = s
+      end,
+      err = function(s)
+        errs[#errs + 1] = s
+      end,
+    })
+  )
+  if not ok then
+    return nil, tostring(code)
+  end
+  local okd, doc = pcall(vim.json.decode, table.concat(lines, "\n"))
+  if not okd or type(doc) ~= "table" then
+    return nil, (errs[1] or "no answer"):gsub("^testing ci verify: ", "")
+  end
+  return doc
+end
 
 ---@class Testing.Ci.Overview.Args
 ---@field roots string[]
@@ -152,7 +171,13 @@ function M.parse(argv)
       if key == "repos-root" then
         args.repos_roots[#args.repos_roots + 1] = value
       elseif key == "include" or key == "exclude" then
-        vim.list_extend(args[key], vim.split(value, ",", { plain = true, trimempty = true }))
+        -- a directory name below --repos-root, as `ci_overview` checks it: `..` or `../x` would leave the root
+        for _, name in ipairs(vim.split(value, ",", { plain = true, trimempty = true })) do
+          if not require("testing.deps").is_valid_name(name) then
+            return nil, ("--%s: %s is not a directory name"):format(key, name)
+          end
+          table.insert(args[key], name)
+        end
       elseif key == "state-dir" then
         args.state_dir = value
       else
@@ -241,7 +266,20 @@ function M.resolve(args, cfg)
     for _, r in ipairs(listed) do
       add(r.dir)
     end
-    for _, dir in ipairs(repos.scan(parent)) do
+    -- a `ci` section (`testing ci --repos-root`), and any `.testing.lua` (a suite without a pipeline is still one)
+    local own = repos.scan(parent)
+    for name, kind in vim.fs.dir(parent) do
+      local dir = parent .. "/" .. name
+      if
+        name:sub(1, 1) ~= "."
+        and (kind == "directory" or kind == "link")
+        and vim.uv.fs_stat(dir .. "/.testing.lua")
+      then
+        own[#own + 1] = dir
+      end
+    end
+    table.sort(own)
+    for _, dir in ipairs(own) do
       if is_vault(vim.fs.basename(dir)) then
         vaults[#vaults + 1] = vim.fs.basename(dir)
       else
@@ -303,18 +341,36 @@ end
 ---home paths, the roots of `dir`), every absolute path that is left `<PATH>`, no control characters, bounded.
 ---@param s any
 ---@param dir string
+---@param state_dir? string The state directory of the page (`--state-dir`): `<STATE>` as well.
 ---@return string|nil
-function M.clean(s, dir)
+function M.clean(s, dir, state_dir)
   if type(s) ~= "string" or s == "" then
     return nil
   end
-  s = require("testing.run.inproc").redact_text(s, dir)
+  s = require("testing.run.inproc").redact_text(s, dir, { state = state_dir })
   s = s:gsub("%c", " ")
-  -- a drive path (`E:/x`, `C:\x`), a UNC path, an absolute POSIX path of two or more parts
-  s = s:gsub("%a:[\\/][^%s\"'<>]*", "<PATH>")
-  s = s:gsub("\\\\[^%s\"'<>]+", "<PATH>")
-  s = (" " .. s):gsub("([%s(\"'=,;])/[%w._%-]+/[^%s\"'<>]*", "%1<PATH>"):sub(2)
-  return #s > 300 and (s:sub(1, 297) .. "...") or s
+  -- a drive path (`E:/x`, `C:\x`) at the start of a word (not the `s:/` of `https://`), a UNC path
+  s = s:gsub("%f[%w]%a:[\\/][^%s\"'<>`]*", "<PATH>")
+  s = s:gsub("\\\\[^%s\"'<>`]+", "<PATH>")
+  -- an absolute POSIX path after any character that is no part of a path, of a URL (`https://`) or of a placeholder
+  -- (`<REPO>/x`) or of a closing tag (`</b>`): `` `/opt/x` ``, `[/srv/a]`, `error:/x`, `/x`
+  s = (" " .. s):gsub("([^%w._~%-/\\<>])/[%w._%-]+[^%s\"'<>`]*", "%1<PATH>"):sub(2)
+  -- a path with a space in it (`C:/My Dir/a`): the rest after the space is part of it
+  for _, ph in ipairs({ "PATH", "REPO", "HOME", "TMP", "STATE" }) do
+    local n
+    repeat
+      s, n = s:gsub("(<" .. ph .. ">[^%s\"'<>`]*) [^%s\"'<>`/\\]+[\\/][^%s\"'<>`]*", "%1")
+    until n == 0
+  end
+  if #s > 300 then
+    -- at a character boundary: a cut UTF-8 sequence would make the page invalid
+    local cut = 297
+    while cut > 0 and (s:byte(cut + 1) or 0) >= 0x80 and s:byte(cut + 1) < 0xC0 do
+      cut = cut - 1
+    end
+    s = s:sub(1, cut) .. "..."
+  end
+  return s
 end
 
 ---@param path string
@@ -334,8 +390,8 @@ local function str(v)
   return type(v) == "string" and v or nil
 end
 
----The local state of a repository: proven (`ci verify` says verified), red (the last run, `ci.json`, was red),
----unknown (anything else), none (no `.testing.lua`).
+---The local state of a repository: proven (`ci verify` says verified), red (the last run, `ci.json`, or the last
+---complete run of the profile, `ci-<profile>.json`, was red), unknown (anything else), none (no `.testing.lua`).
 ---@param dir string
 ---@param state_dir string|nil
 ---@param sv table
@@ -351,15 +407,38 @@ local function local_state(dir, state_dir, sv, now)
   local rec =
     { verify = vdoc and str(vdoc.status) or "error", profile = vdoc and str(vdoc.profile) }
   local reason = vdoc and type(vdoc.reasons) == "table" and str(vdoc.reasons[1]) or problem
+  -- the last complete run of the profile: red there is red, whatever partial run came after it
+  local proof = rec.profile and read_json(sdir .. "/ci-" .. rec.profile .. ".json")
+  local epoch = require("testing.ci.remote").epoch
+  local red
+  for _, d in ipairs({ last or false, proof or false }) do
+    if
+      d
+      and d.verdict == "red"
+      and (not red or (epoch(str(d.time)) or 0) > (epoch(str(red.time)) or 0))
+    then
+      red = d
+    end
+  end
   if rec.verify == "verified" then
     rec.state = "proven"
-    local proof = rec.profile and read_json(sdir .. "/ci-" .. rec.profile .. ".json")
     rec.time = proof and str(proof.time)
-  elseif last and last.verdict == "red" then
+  elseif red then
     rec.state = "red"
-    rec.time = str(last.time)
-    local note = "red: " .. (str(last.first_red) or "?")
-    if vdoc and str(vdoc.tree) and str(last.tree) and vdoc.tree ~= last.tree then
+    rec.time = str(red.time)
+    local note = "red: " .. (str(red.first_red) or "?")
+    if red == proof then
+      note = ("%s (profile %s)"):format(note, rec.profile)
+    end
+    -- the tree now: verify reads it only for a usable proof, so read it here when it did not
+    local tree = vdoc and str(vdoc.tree)
+    if not tree then
+      local okf, facts = pcall(require("testing.ci").internal.git_facts, dir)
+      tree = okf and type(facts) == "table" and str(facts.tree) or nil
+    end
+    if not tree or not str(red.tree) then
+      note = note .. " (tree unknown)"
+    elseif tree ~= red.tree then
       note = note .. " (an older tree)"
     end
     rec.note = note
@@ -377,7 +456,7 @@ local function local_state(dir, state_dir, sv, now)
   end
   local t = require("testing.ci.remote").epoch(rec.time)
   rec.age_s = t and math.max(0, now - t) or nil
-  rec.note = M.clean(rec.note, dir)
+  rec.note = M.clean(rec.note, dir, state_dir)
   return rec
 end
 
@@ -394,8 +473,9 @@ end
 ---@param r table|nil
 ---@param dir string
 ---@param why string
+---@param state_dir string|nil
 ---@return table
-local function ci_state(r, dir, why)
+local function ci_state(r, dir, why, state_dir)
   if not r then
     local os_ = {}
     for _, sys in ipairs(M.OS) do
@@ -419,7 +499,7 @@ local function ci_state(r, dir, why)
     overall = r.overall,
     os = os_,
     run_url = r.run and github_url(r.run.url) or nil,
-    note = M.clean(r.note, dir),
+    note = M.clean(r.note, dir, state_dir),
   }
 end
 
@@ -452,11 +532,25 @@ function M.collect(dirs, opts, sv)
   local out = {}
   for _, dir in ipairs(dirs) do
     local r = by_dir[dir]
-    out[#out + 1] = {
-      repo = vim.fs.basename(dir),
-      ["local"] = local_state(dir, opts.state_dir, sv, opts.now),
-      ci = ci_state(r, dir, M.clean(why or (r and "" or "no record of the CI adapter"), dir)),
-    }
+    -- one repository that cannot be read (a broken file in its state, a throwing source) is unknown, not the page
+    local okl, l = pcall(local_state, dir, opts.state_dir, sv, opts.now)
+    if not okl then
+      l = {
+        state = "unknown",
+        verify = "error",
+        note = M.clean("the local state could not be read: " .. tostring(l), dir, opts.state_dir),
+      }
+    end
+    local why_r = M.clean(why or (r and "" or "no record of the CI adapter"), dir, opts.state_dir)
+    local okc, c = pcall(ci_state, r, dir, why_r, opts.state_dir)
+    if not okc then
+      c = ci_state(
+        nil,
+        dir,
+        M.clean("the CI record could not be read: " .. tostring(c), dir, opts.state_dir)
+      )
+    end
+    out[#out + 1] = { repo = vim.fs.basename(dir), ["local"] = l, ci = c }
   end
   return out
 end

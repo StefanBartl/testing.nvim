@@ -951,13 +951,15 @@ end
 ---paths, e-mail shapes). For a document outside the IR that shows such a text (`testing ci overview`).
 ---@param s string
 ---@param root string
+---@param opts? { state?: string } `state`: the state directory of the document (`--state-dir`), `<STATE>` instead of
+---`stdpath('state')`.
 ---@return string
-function M.redact_text(s, root)
-  s = result.normalize(
-    s,
-    M.path_roots(root),
-    { case_insensitive = require("testing.platform").is_windows() }
-  ) --[[@as string]]
+function M.redact_text(s, root, opts)
+  local roots = M.path_roots(root)
+  if opts and type(opts.state) == "string" and opts.state ~= "" then
+    roots.state = opts.state
+  end
+  s = result.normalize(s, roots, { case_insensitive = require("testing.platform").is_windows() }) --[[@as string]]
   return result.redact_text(s, (redaction()))
 end
 
