@@ -39,6 +39,8 @@ M.MAX_REPOS = 200
 M.HOOK_VAR = "ACTIONS_RUNNER_HOOK_JOB_STARTED"
 M.ENV_ROOT = "TESTING_RUNNER_ROOT"
 M.MODES = { auto = true, always = true, off = true }
+M.EVENTS =
+  { push = true, workflow_dispatch = true, workflow_run = true, schedule = true, release = true }
 
 M.USAGE = table.concat({
   "usage: testing ci runner-guard check",
@@ -240,6 +242,14 @@ function M.decide(f)
   end
   if f.event == "pull_request" or f.event == "pull_request_target" then
     return false, ("event %s: the code of a pull request never runs on this runner"):format(f.event)
+  end
+  -- an allowlist: events that run the code of a ref the maintainer pushed or chose (pull_request_review and
+  -- the like run the merge ref of a pull request)
+  if not M.EVENTS[f.event] then
+    return false,
+      ("event %s is not one this runner takes (push, workflow_dispatch, workflow_run, schedule, release)"):format(
+        f.event
+      )
   end
   local owner = lc(f.owner ~= "" and f.owner or (f.repo or ""):match("^([^/]+)/"))
   if lc(f.actor) ~= owner then
@@ -634,8 +644,16 @@ function M.hook_text(nvim, script)
     "  [Console]::Error.WriteLine('runner-guard: nvim or testing.lua is missing: job refused (testing ci runner-guard install, or remove)')",
     "  exit 1",
     "}",
-    "& $nvim --headless -u NONE -l $script ci runner-guard check",
-    "exit $LASTEXITCODE",
+    -- a nvim that cannot start leaves $LASTEXITCODE empty, and `exit $null` is 0: the job would run
+    "$global:LASTEXITCODE = $null",
+    "$code = 1",
+    "try {",
+    "  & $nvim --headless -u NONE -l $script ci runner-guard check",
+    "  if ($null -ne $LASTEXITCODE) { $code = $LASTEXITCODE }",
+    "} catch {",
+    "  [Console]::Error.WriteLine('runner-guard: the check could not run: ' + $_)",
+    "}",
+    "exit $code",
     "",
   }
   return table.concat(lines, "\r\n")
@@ -671,6 +689,28 @@ local function tools(ctx)
   return nvim, script
 end
 
+---Text of a `.env` ("" when there is none); nil and the reason when it exists but cannot be read.
+---@param path string
+---@return string|nil text
+---@return string|nil err
+local function read_env(path)
+  if not uv.fs_stat(path) then
+    return ""
+  end
+  return require("lib.nvim.fs.read")(path)
+end
+
+---The value of a hook line (name compared without regard to case, as Windows does), else nil.
+---@param line string
+---@return string|nil
+local function hook_value(line)
+  local name, v = line:match("^%s*([%w_]+)=(.*)$")
+  if name and name:upper() == M.HOOK_VAR then
+    return v
+  end
+  return nil
+end
+
 ---Rewrite the `.env` of a runner without the hook line; with `value`, add it.
 ---@param env_path string
 ---@param value string|nil
@@ -678,10 +718,13 @@ end
 ---@return boolean ok
 ---@return string|nil err_or_state "foreign" when a hook of someone else is there and nothing was changed
 local function edit_env(env_path, value, ours)
-  local text = uv.fs_stat(env_path) and require("lib.nvim.fs.read")(env_path) or ""
+  local text, rerr = read_env(env_path)
+  if not text then
+    return false, "cannot read .env: " .. tostring(rerr)
+  end
   local keep = {}
-  for line in (text or ""):gmatch("[^\r\n]+") do
-    local v = line:match("^" .. M.HOOK_VAR .. "=(.*)$")
+  for line in text:gmatch("[^\r\n]+") do
+    local v = hook_value(line)
     if v == nil then
       keep[#keep + 1] = line
     elseif not ours(v) then
@@ -740,10 +783,14 @@ local function manage(action, argv, sv, ctx)
   end
   for _, name in ipairs(runner_dirs(root)) do
     local env_path = root .. "/" .. name .. "/.env"
-    local text = uv.fs_stat(env_path) and require("lib.nvim.fs.read")(env_path) or ""
-    local current = (text or ""):match(M.HOOK_VAR .. "=([^\r\n]*)")
-    local state = current == nil and "not guarded"
-      or (ours(current) and "guarded" or "foreign hook")
+    local text = read_env(env_path)
+    local values = {}
+    for line in (text or ""):gmatch("[^\r\n]+") do
+      values[#values + 1] = hook_value(line)
+    end
+    local state = not text and "unreadable .env"
+      or (#values == 0 and "not guarded")
+      or (#values == 1 and ours(values[1]) and "guarded" or "foreign hook")
     if action == "status" then
       sv.out(("%-16s %s"):format(name, state))
     else

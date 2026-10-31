@@ -122,6 +122,23 @@ return function(H)
     )
     eq(run, true, "decide: the owner compares without regard to case")
 
+    for _, ev in ipairs({
+      "pull_request_review",
+      "pull_request_review_comment",
+      "issue_comment",
+      "bogus",
+    }) do
+      run = guard.decide(facts({
+        event = ev,
+        is_private = true,
+        entry = { mode = "auto", shas = { { sha = SHA, at = 1 } } },
+      }))
+      eq(run, false, "decide: event " .. ev .. " is not on the allowlist")
+    end
+    for _, ev in ipairs({ "push", "workflow_dispatch", "workflow_run", "schedule", "release" }) do
+      run = guard.decide(facts({ event = ev, is_private = true }))
+      eq(run, true, "decide: event " .. ev .. " runs for the maintainer")
+    end
     run = guard.decide(facts({ is_private = true }))
     eq(run, true, "decide: a private repository runs for the maintainer")
     run = guard.decide(facts({ is_private = true, entry = { mode = "always", shas = {} } }))
@@ -433,7 +450,8 @@ return function(H)
     has(script, "$script = 'E:/it''s/testing.lua'", "hook script: a quote is doubled")
     has(script, "ci runner-guard check", "hook script: calls the check")
     has(script, "exit 1", "hook script: a missing tool refuses the job")
-    has(script, "exit $LASTEXITCODE", "hook script: hands the exit code on")
+    has(script, "exit $code", "hook script: hands the exit code on")
+    has(script, "$null -ne $LASTEXITCODE", "hook script: no exit code is a refusal")
     local env_tasks = slurp(root .. "/tasks.nvim/.env")
     has(env_tasks, "FOO=bar", "install: other lines of .env stay")
     has(env_tasks, guard.HOOK_VAR .. "=" .. hook:gsub("/", "\\"), "install: the hook line is set")
@@ -457,6 +475,48 @@ return function(H)
     guard.main({ "status" }, o.sv, ctx)
     has(joined(o), ("%-16s %s"):format("tasks.nvim", "guarded"), "status: guarded")
 
+    -- a commented line is no hook; a hook line in other case is a hook (Windows variables ignore case)
+    write(root .. "/rules.nvim/.env", "#" .. guard.HOOK_VAR .. "=" .. hook .. "\r\n")
+    o = sink()
+    guard.main({ "status" }, o.sv, ctx)
+    has(
+      joined(o),
+      ("%-16s %s"):format("rules.nvim", "not guarded"),
+      "status: a comment is not a hook"
+    )
+    write(root .. "/rules.nvim/.env", guard.HOOK_VAR:lower() .. "=C:\\other.ps1\r\n")
+    o = sink()
+    guard.main({ "status" }, o.sv, ctx)
+    has(
+      joined(o),
+      ("%-16s %s"):format("rules.nvim", "foreign hook"),
+      "status: the name is read without case"
+    )
+    write(
+      root .. "/rules.nvim/.env",
+      "A=1\r\n"
+        .. guard.HOOK_VAR
+        .. "="
+        .. hook:gsub("/", "\\")
+        .. "\r\n"
+        .. guard.HOOK_VAR
+        .. "=x\r\n"
+    )
+    o = sink()
+    guard.main({ "status" }, o.sv, ctx)
+    has(
+      joined(o),
+      ("%-16s %s"):format("rules.nvim", "foreign hook"),
+      "status: two hook lines are not guarded"
+    )
+    -- an .env that cannot be read is never replaced by one with the hook line alone
+    vim.fn.delete(root .. "/rules.nvim/.env")
+    vim.fn.mkdir(root .. "/rules.nvim/.env", "p")
+    o = sink()
+    eq(guard.main({ "install" }, o.sv, ctx) ~= 0, true, "install: an unreadable .env is an error")
+    eq(vim.fn.isdirectory(root .. "/rules.nvim/.env"), 1, "install: ... and left as it was")
+    vim.fn.delete(root .. "/rules.nvim/.env", "d")
+    write(root .. "/rules.nvim/.env", "")
     o = sink()
     guard.main({ "remove" }, o.sv, ctx)
     eq(slurp(root .. "/tasks.nvim/.env"), "FOO=bar\r\n", "remove: only our line goes")
@@ -477,6 +537,33 @@ return function(H)
     eq(guard.main({ "bogus" }, o.sv, ctx), 2, "main: unknown action")
     o = sink()
     eq(guard.main({ "check", "extra" }, o.sv, ctx), 2, "main: check takes no argument")
+  end
+
+  -- ------------------------------------------------------------------ the hook script, run for real
+
+  do
+    if vim.fn.executable("pwsh") ~= 1 then
+      print("n/a  hook script run: no pwsh on this machine")
+    else
+      local d = tmp()
+      local textfile = d .. "/not-a-program.txt"
+      write(textfile, "x")
+      local hook_file = d .. "/hook.ps1"
+      -- a program that cannot be started must refuse the job (exit 0 here would let it run)
+      write(hook_file, guard.hook_text(textfile, textfile))
+      local r = vim
+        .system({ "pwsh", "-NoProfile", "-Command", ". '" .. hook_file .. "'" }, { text = true })
+        :wait()
+      ok(
+        r.code ~= 0,
+        "hook script: nvim that cannot start refuses (exit " .. tostring(r.code) .. ")"
+      )
+      write(hook_file, guard.hook_text(d .. "/missing.exe", textfile))
+      r = vim
+        .system({ "pwsh", "-NoProfile", "-Command", ". '" .. hook_file .. "'" }, { text = true })
+        :wait()
+      ok(r.code ~= 0, "hook script: a missing nvim refuses (exit " .. tostring(r.code) .. ")")
+    end
   end
 
   -- ------------------------------------------------------------------ the entry through `testing ci`

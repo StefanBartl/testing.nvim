@@ -22,6 +22,7 @@ only calls `testing ci runner-guard check`, which decides from the `GITHUB_*` va
 | --- | --- | --- |
 | 1 | mode of the repository is `off` | run |
 | 2 | event `pull_request` or `pull_request_target` | **refuse** (the code of a pull request never runs here) |
+| 2b | any event other than `push`, `workflow_dispatch`, `workflow_run`, `schedule`, `release` (an allowlist: `pull_request_review` and the like run the merge ref of a pull request) | **refuse** |
 | 3 | actor, or the actor who triggered a re-run, is not the owner of the repository (the maintainer) | **refuse** |
 | 4 | the repository is private and the mode is not `always` | run |
 | 5 | the commit (`GITHUB_SHA`) is on the list of reviewed commits | run, else **refuse** |

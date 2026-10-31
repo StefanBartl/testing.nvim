@@ -41,7 +41,8 @@ return {
     scheduled_error = "error",
     prompt = "error",
     deprecation = "error",
-    process_net = "error",
+    -- ci_runner_guard_spec runs the generated hook script with pwsh
+    process_net = { mode = "error", allow_exec = { "pwsh" } },
   },
   -- `testing ci remote`: the job "lib.nvim suite via testing.nvim (<os>)" runs lib.nvim's suite on this runner, it is
   -- no verdict on testing.nvim's own system legs and must not share their cells (docs/CI.md).
