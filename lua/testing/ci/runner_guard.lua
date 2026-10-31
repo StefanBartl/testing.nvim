@@ -157,14 +157,18 @@ function M.read(path)
       ("%s is not a list of version %d: nothing is trusted from it"):format(path, M.VERSION),
       ok and type(doc) == "table"
   end
-  local out, n = {}, 0
+  local out, n, truncated = {}, 0, false
   for k, e in pairs(doc.repos) do
     local key = repo_key(k)
-    if key and type(e) == "table" and n < M.MAX_REPOS then
+    if key and type(e) == "table" and n >= M.MAX_REPOS then
+      truncated = true
+    elseif key and type(e) == "table" then
       local entry = { mode = M.MODES[e.mode] and e.mode or "auto", shas = {} }
       if type(e.shas) == "table" then
         for _, s in ipairs(e.shas) do
-          if type(s) == "table" and is_sha(s.sha) and #entry.shas < M.MAX_SHAS then
+          if type(s) == "table" and is_sha(s.sha) and #entry.shas >= M.MAX_SHAS then
+            truncated = true
+          elseif type(s) == "table" and is_sha(s.sha) then
             local at = type(s.at) == "number"
                 and s.at == s.at
                 and s.at >= 0
@@ -179,6 +183,16 @@ function M.read(path)
       out[key] = entry
       n = n + 1
     end
+  end
+  if truncated then
+    -- a writer would drop the rest for good
+    return out,
+      ("%s holds more than %d repositories or %d commits per repository: the rest is ignored"):format(
+        path,
+        M.MAX_REPOS,
+        M.MAX_SHAS
+      ),
+      true
   end
   return out, nil
 end
@@ -351,13 +365,20 @@ local SENSITIVE = {
   { "%.ps1$", "powershell" },
   { "%.cmd$", "cmd" },
   { "%.bat$", "cmd" },
-  { "^%.testing%.lua$", ".testing.lua" },
-  { "^TESTS/", "specs" },
+  { "%.testing%.lua$", ".testing.lua" },
+  { "^makefile$", "makefile" },
+  { "dockerfile", "dockerfile" },
+  { "%.py$", "python" },
+  { "%.[cm]?[jt]s$", "javascript" },
+  { "%.npmrc$", ".npmrc" },
+  { "%.envrc$", ".envrc" },
+  { "^%.cargo/", ".cargo" },
+  { "^tests/", "specs" },
   { "package%.json$", "package.json" },
   { "package%-lock%.json$", "lockfile" },
   { "pnpm%-lock%.yaml$", "lockfile" },
-  { "Cargo%.lock$", "lockfile" },
-  { "Cargo%.toml$", "Cargo.toml" },
+  { "cargo%.lock$", "lockfile" },
+  { "cargo%.toml$", "Cargo.toml" },
   { "build%.rs$", "build.rs" },
   { "%.deps/", ".deps" },
 }
@@ -366,6 +387,7 @@ local SENSITIVE = {
 ---@param path string
 ---@return string|nil
 function M.flag(path)
+  path = path:lower() -- Windows and macOS file systems do not tell `Scripts/` from `scripts/`
   for _, r in ipairs(SENSITIVE) do
     if path:find(r[1]) then
       return r[2]
@@ -478,7 +500,7 @@ local function summary(sv, repo, prev, sha, ctx)
   local flagged, total = {}, 0
   for _, f in ipairs(doc.files or {}) do
     total = total + 1
-    local why = M.flag(tostring(f.filename))
+    local why = M.flag(tostring(f.filename)) or M.flag(tostring(f.previous_filename or ""))
     if why then
       flagged[#flagged + 1] = ("  look closely [%s] %s (%s)"):format(
         why,
@@ -781,7 +803,12 @@ local function manage(action, argv, sv, ctx)
       return 3
     end
   end
-  for _, name in ipairs(runner_dirs(root)) do
+  local dirs = runner_dirs(root)
+  if #dirs == 0 then
+    sv.err("testing ci runner-guard: no runner folder (with a run.cmd) in " .. root)
+    return 1
+  end
+  for _, name in ipairs(dirs) do
     local env_path = root .. "/" .. name .. "/.env"
     local text = read_env(env_path)
     local values = {}

@@ -217,6 +217,38 @@ return function(H)
     )
   end
 
+  -- a list larger than the caps is kept as it is (a writer would drop the rest for good)
+  do
+    local root = tmp()
+    local many = {}
+    for i = 1, guard.MAX_SHAS + 1 do
+      many[i] = { sha = ("%040x"):format(i), at = i }
+    end
+    write(guard.store_path(root), vim.json.encode({ v = 1, repos = { ["o/r"] = { shas = many } } }))
+    local repos, note, keep = guard.read(guard.store_path(root))
+    eq(#repos["o/r"].shas, guard.MAX_SHAS, "read: the cap holds")
+    eq(keep, true, "read: ... and the file is kept")
+    has(note, "ignored", "read: ... with a note")
+    local o = sink()
+    eq(
+      guard.trust_main({ "o/r", ("a"):rep(40) }, o.sv, {
+        root = root,
+        gh = function()
+          return ("a"):rep(40)
+        end,
+      }),
+      3,
+      "trust: a list over the cap is not rewritten"
+    )
+  end
+
+  -- the review aid reads paths without regard to case and also looks at the old name of a rename
+  eq(guard.flag("Scripts/Deploy.sh"), "scripts", "flag: case")
+  eq(guard.flag("src/tool.PY"), "python", "flag: python")
+  eq(guard.flag("Makefile"), "makefile", "flag: makefile")
+  eq(guard.flag("sub/.testing.lua"), ".testing.lua", "flag: .testing.lua below the root too")
+  eq(guard.flag("docs/a.md"), nil, "flag: an ordinary file")
+
   -- ------------------------------------------------------------------ the hook entry
 
   local function env(over)
@@ -532,6 +564,12 @@ return function(H)
       guard.main({ "install", "--runners=" .. root .. "/nope" }, o.sv, ctx),
       2,
       "install: no such folder"
+    )
+    o = sink()
+    eq(
+      guard.main({ "install", "--runners=" .. tmp() }, o.sv, ctx),
+      1,
+      "install: no runner folder is no success"
     )
     o = sink()
     eq(guard.main({ "bogus" }, o.sv, ctx), 2, "main: unknown action")
