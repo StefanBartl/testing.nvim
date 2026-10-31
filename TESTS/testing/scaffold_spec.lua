@@ -321,10 +321,19 @@ return function(H)
   eq(loaded.problems, {}, ".testing.lua has no warning")
   eq(loaded.config.plugin, "myplug", ".testing.lua names the plugin")
   eq(loaded.config.deps, { "lib.nvim" }, ".testing.lua names the dependency")
+  eq(loaded.config.guards, {
+    fs = "error",
+    state = "error",
+    scheduled_error = "error",
+    prompt = "error",
+    deprecation = "error",
+    process_net = "warn",
+    clock = false,
+  }, ".testing.lua starts strict, the process/network guard only reports (warn)")
   eq(
-    loaded.config.guards and loaded.config.guards.process_net,
-    "warn",
-    ".testing.lua switches the process/network guard on (warn)"
+    loaded.config.guard_allow,
+    { fs = {}, spawn = {}, network = {} },
+    ".testing.lua has an empty allowlist"
   )
   if not is_windows then
     local stat = vim.uv.fs_stat(root .. "/scripts/test.sh")

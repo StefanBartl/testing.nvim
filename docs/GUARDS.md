@@ -86,7 +86,9 @@ These are the defaults of the guard layer itself (`guard.install` called by a sp
 `state = "warn"`, `process_net = "warn"` (a spawn or a connection is a finding, nothing turns red), the rest
 as below. A project lists what is expected in `guard_allow` and makes it strict with
 `guards = { process_net = "error" }`; `"off"` switches it off (its ledger then says "not measured"). The
-`.testing.lua` written by `:Testing init` sets `process_net = "warn"` explicitly.
+`.testing.lua` written by `:Testing init` starts a new project strict, as the fleet runs: `fs`, `state`,
+`scheduled_error`, `prompt` and `deprecation` on `"error"`, `process_net` on `"warn"`, and an empty
+`guard_allow`.
 
 | Guard | Default mode (guard layer) | Fails the case by default |
 | --- | --- | --- |
