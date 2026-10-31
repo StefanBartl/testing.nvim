@@ -220,14 +220,17 @@ testing sheets accept --task <area/slug> --from <file> [--repo <dir>] [--name <f
   the first differing rows), its snapshot files and its source; the answer asked for is the cause and, for a bug of
   the plugin, one ```task block (`title:`, `summary:`) that tasks.nvim turns into a bug task after confirmation. No
   red sheet: nothing is written (exit 0, a note on stderr).
-* `accept`: takes the answer (or just its ```lua block) and writes `TESTS/sheets/<id>.sheet.lua` of the area's
-  repository (`--repo`, else `$REPOS_DIR/<area>`) only when it loads (`sheet.load`, as data), names the task and no
-  sheet of that name exists (created exclusively).
+* `accept`: takes the answer's last ```lua block (at the start of a line, any case; the whole text when it has
+  none) and writes `TESTS/sheets/<id>.sheet.lua` of the area's repository (`--repo`, else `$REPOS_DIR/<area>`, else
+  beside `--vault`) only when it loads (`sheet.load`, as data; reading stops after a million instructions, so a loop
+  in a draft ends), names the task and no sheet of that name exists (created exclusively).
 
 What the model sees is exactly the document: the task's title and body, the sheet format, the skeleton, and for
-`explain` the failure lines, snapshot file names and the sheet's source. No file of the project beyond the sheet,
-no environment, no path of the vault. A vault or root whose path names `tricentis` is refused (exit 2): its tasks may
-carry customer data, and nothing of them is handed to an AI.
+`explain` the failure lines, snapshot file names and the sheet's source. A project's path is written as its name
+(`ui.nvim/TESTS/...`). The failure lines show what the child editor showed or returned (a snapshot's differing rows,
+`got <value>`): what a sheet puts on the screen goes to the model too. A vault or root whose path names `tricentis`,
+as written, made absolute or resolved (a link, `--vault .`), is refused (exit 2): its tasks may carry customer data,
+and nothing of them is handed to an AI.
 
 ## Limits
 

@@ -1856,6 +1856,127 @@ return function(H)
         "return { id = 'z' }\n",
         "an answer without a block is the sheet itself"
       )
+
+      -- review of 601b2ce
+      eq(
+        prompt.lua_block(
+          "Your skeleton was:\n```lua\nreturn { id = 'skel' }\n```\nThe sheet:\n```Lua\r\nreturn { id = 'full' }\r\n```\r\n"
+        ),
+        "return { id = 'full' }\n",
+        "the last block, any case, CRLF"
+      )
+      eq(
+        prompt.lua_block("````lua\nreturn { notes = [[\n```\n]] }\n````"),
+        "return { notes = [[\n```\n]] }\n",
+        "a longer fence around a ``` line, closed at the end"
+      )
+      eq(
+        prompt.lua_block("say ```lua\nreturn 1\n``` inline"),
+        "say ```lua\nreturn 1\n``` inline",
+        "a fence in the middle of a line is no block"
+      )
+      write("repo7/loop.md", "```lua\nwhile true do end\n```\n")
+      local started7 = os.clock()
+      errs7 = {}
+      eq(
+        prompt.accept({
+          "--task",
+          "ui.nvim/float-hotkeys",
+          "--from",
+          repo7 .. "/loop.md",
+          "--repo",
+          repo7,
+          "--name",
+          "loop",
+        }, sv7),
+        2,
+        "a draft that loops does not load"
+      )
+      ok(os.clock() - started7 < 10, "and ends")
+      has(table.concat(errs7, "\n"), "takes too long", "with the reason")
+      -- a draft and a sheet that name `../x` themselves: only the id check stops them
+      write(
+        "repo7/trav.md",
+        "```lua\n"
+          .. 'return { id = "trav", title = "T", task = "../x", steps = { { keys = "x" } } }\n```\n'
+      )
+      eq(
+        prompt.accept({ "--task", "../x", "--from", repo7 .. "/trav.md", "--repo", repo7 }, sv7),
+        2,
+        "an area that is a path step is no task id"
+      )
+      ok(vim.uv.fs_stat(repo7 .. "/TESTS/sheets/trav.sheet.lua") == nil, "nothing written")
+      write(
+        "p7c/TESTS/sheets/t.sheet.lua",
+        'return { id = "t", title = "T", task = "../x", steps = { { keys = "x" } } }'
+      )
+      eq(
+        require("testing.sheet.run").main(
+          { "--task", "../x", "--root", root .. "/p7c" },
+          sv7,
+          deps7({ t = pass })
+        ),
+        2,
+        "nor for sheets run"
+      )
+      write(
+        "beside7/ui.nvim/answer.md",
+        "```lua\n"
+          .. 'return { id = "b7", title = "B", task = "ui.nvim/b7", steps = { { keys = "x" } } }\n'
+          .. "```\n"
+      )
+      vim.fn.mkdir(root .. "/beside7/vault", "p")
+      eq(
+        prompt.accept(
+          {
+            "--task",
+            "ui.nvim/b7",
+            "--from",
+            root .. "/beside7/ui.nvim/answer.md",
+            "--vault",
+            root .. "/beside7/vault",
+          },
+          sv7,
+          {
+            getenv = function()
+              return nil
+            end,
+          }
+        ),
+        0,
+        "accept finds the area's repository beside the vault"
+      )
+      ok(
+        vim.uv.fs_stat(root .. "/beside7/ui.nvim/TESTS/sheets/b7.sheet.lua") ~= nil,
+        "and writes there"
+      )
+      -- the guard on the real path: `--vault .` inside a tricentis vault
+      vim.fn.mkdir(root .. "/tricentis-v7", "p")
+      local cwd7 = vim.fn.getcwd()
+      vim.fn.chdir(root .. "/tricentis-v7")
+      outs7 = {}
+      local relative = prompt.draft(
+        { "--from-task", "a/b", "--vault", ".", "--repo", root },
+        sv7,
+        { call = engine7 }
+      )
+      vim.fn.chdir(cwd7)
+      eq(relative, 2, "a relative path into a tricentis vault is refused too")
+      eq(#outs7, 0, "nothing handed over")
+      -- no path of this machine in an explain hand-over
+      write(
+        "p7b/TESTS/sheets/u.sheet.lua",
+        'return {\n  id = "u",\n  task = "x/u",\n  steps = {{\n'
+      )
+      outs7 = {}
+      eq(
+        prompt.explain({ "--task", "x/u", "--root", root .. "/p7b" }, sv7, deps7({})),
+        0,
+        "explain a sheet that does not load"
+      )
+      local xu = table.concat(outs7, "\n")
+      has(xu, "It does not load: p7b/TESTS/sheets/u.sheet.lua", "the project by its name")
+      ok(not xu:find(root, 1, true), "and no path of this machine")
       eq(
         report.main(
           { "prompt", "draft", "--from-task", "a/b", "--repo", root },

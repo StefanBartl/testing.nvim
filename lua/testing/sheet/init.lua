@@ -47,6 +47,7 @@ M.ACTIONS = { "keys", "input", "lua", "settle", "wait", "expect", "screen" }
 M.DEFAULT_MINIT = "TESTS/minimal_init.lua"
 M.DEFAULT_WAIT_MS = 2000
 M.MAX_BYTES = 256 * 1024
+M.MAX_LOAD_INSTRUCTIONS = 1000000
 
 ---@class Testing.Sheet.Step
 ---@field keys? string
@@ -297,7 +298,17 @@ function M.load(path)
   if not chunk then
     return nil, tostring(perr)
   end
+  -- data never needs a million instructions: a loop in a sheet (an AI's draft too) ends instead of hanging the reader
+  local old_hook, old_mask, old_count = debug.gethook()
+  debug.sethook(function()
+    error(("%s: reading the sheet takes too long (a loop?)"):format(path), 0)
+  end, "", M.MAX_LOAD_INSTRUCTIONS)
   local ok, value = pcall(chunk)
+  if old_hook then
+    debug.sethook(old_hook, old_mask, old_count)
+  else
+    debug.sethook()
+  end
   if not ok then
     return nil, tostring(value) -- already starts with `<path>:<line>:` (the chunk name)
   end

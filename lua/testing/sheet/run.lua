@@ -106,7 +106,7 @@ function M.main(argv, sv, deps)
       i = i + 2
     end
   end
-  if not o.id or not o.id:match("^[%w_.%-]+/[%w_.%-]+$") then
+  if not o.id or not o.id:match("^[%w_][%w_.%-]*/[%w_.%-]+$") then
     sv.err("testing sheets: --task <area/slug> is required\n" .. M.USAGE)
     return 2
   end

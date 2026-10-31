@@ -22,7 +22,7 @@ local M = {}
 M.USAGE = table.concat({
   "usage: testing sheets prompt draft --from-task <area/slug> [--repo <dir>] [--vault <dir>] [--tasks-cli <tasks.lua>] [--out <file>]",
   "       testing sheets prompt explain --task <area/slug> [--root <dir>]... [--tasks <vault>] [--out <file>]",
-  "       testing sheets accept --task <area/slug> --from <file> [--repo <dir>] [--name <file-name>]",
+  "       testing sheets accept --task <area/slug> --from <file> [--repo <dir> | --vault <dir>] [--name <file-name>]",
 }, "\n")
 M.MAX_BODY = 32768
 M.MAX_SOURCE = 32768
@@ -58,7 +58,10 @@ check into steps (wait/expect/screen) and only the judgement into judge.]]
 ---@return string|nil refusal
 local function confidential(vault, roots)
   for _, p in ipairs(vim.list_extend({ vault }, roots)) do
-    if p and p:lower():find("tricentis", 1, true) then
+    -- the path as written, absolute and real: `--vault .` inside the vault, a link to it
+    local abs = p and vim.fn.fnamemodify(p, ":p")
+    local real = abs and (vim.uv.fs_realpath(abs) or abs)
+    if p and (p .. "\n" .. abs .. "\n" .. real):lower():find("tricentis", 1, true) then
       return ("%s names tricentis: its tasks may carry customer data, nothing is handed to an AI"):format(
         p
       )
@@ -151,7 +154,7 @@ function M.draft(argv, sv, deps)
     sv.err("testing sheets: " .. perr .. "\n" .. M.USAGE)
     return 2
   end
-  if not o.id or not o.id:match("^[%w_.%-]+/[%w_.%-]+$") then
+  if not o.id or not o.id:match("^[%w_][%w_.%-]*/[%w_.%-]+$") then
     sv.err("testing sheets: --from-task <area/slug> is required\n" .. M.USAGE)
     return 2
   end
@@ -316,15 +319,25 @@ function M.explain(argv, sv, deps)
   }
   for _, e in ipairs(red) do
     local name = vim.fs.basename(e.root) .. "/" .. e.rel
+    ---@param s string
+    ---@return string
+    local function redact(s)
+      for _, form in ipairs({ e.root, (e.root:gsub("/", "\\")) }) do
+        s = s:gsub(vim.pesc(form), (vim.fs.basename(e.root):gsub("%%", "%%%%")))
+      end
+      -- Lua cuts a long chunk name to `...<tail>`: whatever stands before the sheet's own path is the machine's
+      s = s:gsub("[^%s\"'`]*" .. vim.pesc(e.rel), (name:gsub("%%", "%%%%")))
+      return s
+    end
     out[#out + 1] = ""
     out[#out + 1] = "## " .. name
     out[#out + 1] = ""
     if not e.sheet then
-      out[#out + 1] = "It does not load: " .. tostring(e.error)
+      out[#out + 1] = "It does not load: " .. redact(tostring(e.error))
     else
       out[#out + 1] = "Failures (size, step, what):"
       out[#out + 1] = ""
-      out[#out + 1] = fenced(table.concat(e.result.failures, "\n"), "text")
+      out[#out + 1] = fenced(redact(table.concat(e.result.failures, "\n")), "text")
       if #e.snapshots > 0 then
         out[#out + 1] = ""
         out[#out + 1] = "Snapshot files: "
@@ -360,15 +373,25 @@ function M.explain(argv, sv, deps)
   return emit(table.concat(out, "\n") .. "\n", o.out, sv)
 end
 
----The sheet in an AI's answer: its ```lua block (the first), or the whole text when it has none.
+---The sheet in an AI's answer: its last ```lua block (at the start of a line, any case), or the whole text.
 ---@param text string
 ---@return string
 function M.lua_block(text)
-  local f, body = text:match("\n?(```+)lua[ \t]*\r?\n(.-)\r?\n%1")
-  if f then
-    return body .. "\n"
+  local last
+  for _, body in
+    ("\n" .. text:gsub("\r\n?", "\n")):gmatch("\n(```+)[Ll][Uu][Aa][ \t]*\n(.-)\n%1[ \t]*\n")
+  do
+    last = body
   end
-  return text
+  if not last then
+    -- the closing fence at the very end of the text
+    for _, body in
+      ("\n" .. text:gsub("\r\n?", "\n")):gmatch("\n(```+)[Ll][Uu][Aa][ \t]*\n(.-)\n%1[ \t]*$")
+    do
+      last = body
+    end
+  end
+  return last and (last .. "\n") or text
 end
 
 ---`testing sheets accept`: 0 written, 2 bad usage, the draft does not load, names another task, or the sheet exists,
@@ -384,12 +407,13 @@ function M.accept(argv, sv, deps)
     ["--from"] = "from",
     ["--repo"] = "repo",
     ["--name"] = "name",
+    ["--vault"] = "vault",
   })
   if not o then
     sv.err("testing sheets: " .. perr .. "\n" .. M.USAGE)
     return 2
   end
-  if not o.id or not o.id:match("^[%w_.%-]+/[%w_.%-]+$") or not o.from then
+  if not o.id or not o.id:match("^[%w_][%w_.%-]*/[%w_.%-]+$") or not o.from then
     sv.err("testing sheets: --task <area/slug> and --from <file> are required\n" .. M.USAGE)
     return 2
   end
@@ -408,7 +432,7 @@ function M.accept(argv, sv, deps)
   if not repo then
     local r, tried = require("testing.sheet.run").area_root(
       o.id:match("^[^/]+"),
-      nil,
+      o.vault and vim.fs.normalize(vim.fn.fnamemodify(o.vault, ":p")):gsub("/+$", "") or nil,
       deps.getenv or vim.uv.os_getenv
     )
     if not r then
