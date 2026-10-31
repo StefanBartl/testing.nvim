@@ -176,6 +176,9 @@ Known limits, not hidden:
 - Screen snapshots exist for RPC children only (`testing.screen`, [docs/CHILD.md](docs/CHILD.md#screen-snapshots-testingscreen)):
   a text grid with attribute letters, no pixels, and no value snapshots (`a.snapshot`) yet; a spec that uses them
   declares the snapshot directory for the cache by hand (`-- @cache-inputs TESTS/__snapshots__/`).
+- Test sheets ([docs/SHEETS.md](docs/SHEETS.md)) run live checks written as data through the RPC klicker and
+  `testing sheets report` lists what is left for a person; only that one engine exists (no browser, desktop
+  window or terminal byte stream yet), and the `judge` criteria are for a person, no AI reviewer.
 - Not implemented at all: a test UI (tree, hover), adapters for other test frameworks. Keys for
   some of these exist in `.testing.lua` and are validated, but nothing acts on them.
 
@@ -395,6 +398,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
   settings and the other isolation keys.
 - [docs/GUARDS.md](docs/GUARDS.md): the guards (safety nets, not a sandbox) and the effects ledger.
 - [docs/CHILD.md](docs/CHILD.md): the RPC child driver `testing.rpc` and the warm pool.
+- [docs/SHEETS.md](docs/SHEETS.md): test sheets (live checks as data) and `testing sheets report`.
 - [docs/EXIT-CODES.md](docs/EXIT-CODES.md): what `0`, `1`, `2` and `3` promise.
 - [docs/DIALECTS.md](docs/DIALECTS.md): which spec styles run, and exactly what each shim supports.
 - [docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md): reporters and the Result-IR.
