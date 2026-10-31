@@ -32,7 +32,7 @@ return {
 
 | Step | Does | Fails when |
 |---|---|---|
-| `keys = s` | typed through `child.feed` (mappings apply, returns when the typeahead is empty) | the keys left an error message (`v:errmsg`, e.g. `E492`) |
+| `keys = s` | typed through `child.feed` (mappings apply, returns when the typeahead is empty) | the keys left an error message (`v:errmsg`, e.g. `E492`); `ignore_errmsg = true` for keys that run `silent! cmd` on purpose (it still sets `v:errmsg`) |
 | `input = s` | queued through `child.input` (returns at once) | never |
 | `lua = s` | runs in the child | it raises |
 | `settle = ms` | waits until the child is idle | it is not idle in time |
@@ -40,7 +40,9 @@ return {
 | `expect = expr` | evaluates a Lua expression in the child now | it is not truthy |
 | `screen = name` (`masks`, `cursor`, `mode`) | compares the screen with a snapshot ([CHILD.md](CHILD.md#screen-snapshots-testingscreen)); the name gets the size: `float.80x24` | the snapshot differs (or is missing on CI) |
 
-Every step may carry a `note`; a failure names the size, the step number and the note. The first failed
+Milliseconds are whole numbers up to 600000 (10 minutes), sizes up to 1000 rows or columns: an endless wait
+is a mistake, not a check. Every step may carry a `note`; a failure names the size, the step number and the
+note, and all failures of a sheet are one line. The first failed
 step ends that size (the steps after it depend on it). The UI is attached before the first step, so windows
 and floats are laid out for the sheet's size.
 
@@ -88,12 +90,13 @@ staleness (it is one run); several `--from` files are merged by case name.
 
 | Section | What is in it |
 |---|---|
-| Red, stale or not run | the case failed, its spec file changed since it ran, it never ran, or the sheet does not load |
+| Red, stale or not run | the case failed, its spec file, the sheet or one of its snapshots changed since it ran, it never ran, or the sheet does not load |
 | Review inbox | the automated part is green and the sheet has `judge` criteria: the criteria as checkboxes and the snapshot files to look at |
 | Manual | the `manual` steps (of a manual sheet, or of a green sheet without `judge`) |
 | Automated | green, nothing left for a person |
 
-Nothing is run by the report: run the suite first. Exit codes: 0 written or printed, 2 bad usage, 3 the
+Text from a sheet or a result is written on one line (a newline in a title cannot start a heading or a
+checkbox), and a backtick cannot end an inline code span. Nothing is run by the report: run the suite first. Exit codes: 0 written or printed, 2 bad usage, 3 the
 file could not be written.
 
 ## Limits

@@ -96,6 +96,30 @@ function M.cases_from_ir(path)
   return out, nil
 end
 
+---Was the sheet or one of its snapshots written after the spec file's result was recorded? The state
+---only watches the spec file (`TESTS/sheets_spec.lua`), a sheet is data that file reads.
+---@param root string
+---@param rel string
+---@param snapshots string[]
+---@param st Testing.State
+---@param spec_file string
+---@return string|nil reason
+local function changed_since(root, rel, snapshots, st, spec_file)
+  local rec = st.files and st.files[(spec_file:gsub("\\", "/"))]
+  if not rec or type(rec.ts) ~= "number" or rec.ts <= 0 then
+    return nil
+  end
+  local files = { rel }
+  vim.list_extend(files, snapshots)
+  for _, f in ipairs(files) do
+    local stat = vim.uv.fs_stat(root .. "/" .. f)
+    if stat and stat.mtime.sec > rec.ts then
+      return ("%s changed since the run"):format(f)
+    end
+  end
+  return nil
+end
+
 ---Read the sheets and last results of the projects. `opts.cases` (from `cases_from_ir`) replaces the
 ---editor's state; it says nothing about staleness (an IR is one run).
 ---@param roots string[]
@@ -128,7 +152,8 @@ function M.collect(roots, opts)
         e.case = by_name[sheet_mod.spec_name(s)]
         if e.case and st then
           local stale, why = state.is_stale(st, e.case.file)
-          e.stale = stale and (why or "stale") or nil
+          e.stale = stale and (why or "stale")
+            or changed_since(root, rel, e.snapshots, st, e.case.file)
         end
       end
       out[#out + 1] = e
@@ -160,6 +185,21 @@ function M.bucket(e)
   return "automated"
 end
 
+---Text from a sheet or a result on ONE line: a newline in a title or a criterion would start a heading
+---or a checkbox of its own in the list.
+---@param v any
+---@return string
+local function one_line(v)
+  return (tostring(v):gsub("[\r\n]+", " "))
+end
+
+---An inline code span that a backtick in the text cannot end.
+---@param v any
+---@return string
+local function code(v)
+  return "`" .. (one_line(v):gsub("`", "'")) .. "`"
+end
+
 ---@param e Testing.SheetReport.Entry
 ---@param multi boolean Several projects: name the project.
 ---@return string
@@ -167,10 +207,10 @@ local function head(e, multi)
   local s = e.sheet
   local where = multi and (vim.fs.basename(e.root) .. "/" .. e.rel) or e.rel
   if not s then
-    return ("- [ ] **%s**: does not load: %s"):format(where, e.error or "?")
+    return ("- [ ] **%s**: does not load: %s"):format(one_line(where), one_line(e.error or "?"))
   end
-  local task = s.task and (", task `" .. s.task .. "`") or ""
-  return ("- [ ] **%s** (`%s`%s) — `%s`"):format(s.title, s.id, task, where)
+  local task = s.task and (", task " .. code(s.task)) or ""
+  return ("- [ ] **%s** (%s%s) — %s"):format(one_line(s.title), code(s.id), task, code(where))
 end
 
 ---Checkbox items below an entry (`depth` 1) or below one of its lines (`depth` 2).
@@ -180,7 +220,7 @@ end
 local function sub_items(out, list, depth)
   local indent = ("  "):rep(depth)
   for _, item in ipairs(list) do
-    out[#out + 1] = indent .. "- [ ] " .. item
+    out[#out + 1] = indent .. "- [ ] " .. one_line(item)
   end
 end
 
@@ -233,9 +273,15 @@ function M.render(entries, opts)
         .. sheet_mod.spec_name(e.sheet)
         .. "` has no result)"
     elseif e.stale then
-      out[#out + 1] = ("  - last result `%s` is not current: %s"):format(e.case.status, e.stale)
+      out[#out + 1] = ("  - last result %s is not current: %s"):format(
+        code(e.case.status),
+        one_line(e.stale)
+      )
     else
-      out[#out + 1] = ("  - `%s`: %s"):format(e.case.status, e.case.message or "(no message)")
+      out[#out + 1] = ("  - %s: %s"):format(
+        code(e.case.status),
+        one_line(e.case.message or "(no message)")
+      )
     end
   end)
   section("Review inbox", buckets.inbox, function(e)

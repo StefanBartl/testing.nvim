@@ -25,7 +25,8 @@
 --- Steps (exactly one action each, `note` optional):
 ---
 ---   keys = s      typed through `child.feed` (mappings apply; returns when the typeahead is empty);
----                 an error message the keys cause (`v:errmsg`) fails the step
+---                 an error message the keys cause (`v:errmsg`) fails the step, unless
+---                 `ignore_errmsg = true` (a mapping that runs `silent! cmd` on purpose still sets it)
 ---   input = s     queued through `child.input` (returns at once)
 ---   lua = s       run in the child (`child.lua`)
 ---   settle = ms   wait until the child is idle (`child.settle`; not idle is a failure)
@@ -93,6 +94,7 @@ local STEP_KEYS = {
   cursor = "boolean",
   mode = "boolean",
   note = "string",
+  ignore_errmsg = "boolean",
 }
 local SHEET_KEYS = {
   id = "string",
@@ -113,17 +115,32 @@ local function is_list(v)
   if type(v) ~= "table" then
     return false
   end
+  -- every key an integer 1..n and n keys: `{ nil, x, y = 1 }` has `#v == 2` and two keys, yet
+  -- `ipairs` sees nothing of it
   local n = 0
-  for _ in pairs(v) do
+  for k in pairs(v) do
+    if type(k) ~= "number" or k < 1 or k ~= math.floor(k) then
+      return false
+    end
     n = n + 1
   end
-  return n == #v
+  for i = 1, n do
+    if v[i] == nil then
+      return false
+    end
+  end
+  return true
 end
 
+---Upper bounds: an endless wait (`timeout = 1/0`) or a screen of a billion rows is a mistake, not a check.
+M.MAX_MS = 10 * 60 * 1000
+M.MAX_CELLS = 1000
+
 ---@param v any
+---@param max number
 ---@return boolean
-local function pos_int(v)
-  return type(v) == "number" and v == math.floor(v) and v >= 1
+local function pos_int(v, max)
+  return type(v) == "number" and v == math.floor(v) and v >= 1 and v <= max
 end
 
 ---@param list any
@@ -174,10 +191,13 @@ local function check_step(step, i)
     return at .. " has no action (one of " .. table.concat(M.ACTIONS, ", ") .. ")"
   end
   if
-    (action == "settle" and not pos_int(step.settle))
-    or (step.timeout and not pos_int(step.timeout))
+    (action == "settle" and not pos_int(step.settle, M.MAX_MS))
+    or (step.timeout and not pos_int(step.timeout, M.MAX_MS))
   then
-    return at .. ": milliseconds must be a positive integer"
+    return at .. ": milliseconds must be a whole number from 1 to " .. M.MAX_MS
+  end
+  if step.ignore_errmsg ~= nil and action ~= "keys" then
+    return at .. ": ignore_errmsg belongs to a keys step"
   end
   if step.timeout and action ~= "wait" then
     return at .. ": timeout belongs to a wait step"
@@ -238,8 +258,13 @@ function M.validate(s)
     return nil, "sizes must be a non-empty list"
   end
   for i, size in ipairs(s.sizes) do
-    if type(size) ~= "table" or not pos_int(size.rows) or not pos_int(size.cols) then
-      return nil, ("sizes[%d] must be { rows = n, cols = n }"):format(i)
+    if
+      type(size) ~= "table"
+      or not pos_int(size.rows, M.MAX_CELLS)
+      or not pos_int(size.cols, M.MAX_CELLS)
+    then
+      return nil,
+        ("sizes[%d] must be { rows = n, cols = n } with 1 <= n <= %d"):format(i, M.MAX_CELLS)
     end
   end
   for _, f in ipairs({ "judge", "manual" }) do
@@ -274,7 +299,7 @@ function M.load(path)
   end
   local ok, value = pcall(chunk)
   if not ok then
-    return nil, ("%s: %s"):format(path, tostring(value))
+    return nil, tostring(value) -- already starts with `<path>:<line>:` (the chunk name)
   end
   local s, err = M.validate(value)
   if not s then
@@ -339,7 +364,7 @@ local function run_step(child, step, ctx)
     child.lua("vim.v.errmsg = ''")
     child.feed(step.keys)
     local msg = child.lua_get("vim.v.errmsg")
-    if msg ~= nil and msg ~= "" then
+    if msg ~= nil and msg ~= "" and not step.ignore_errmsg then
       return "the keys caused an error: " .. msg
     end
   elseif step.input then
@@ -405,7 +430,8 @@ function M.run(s, opts)
   local root =
     vim.fs.normalize(vim.fn.fnamemodify(opts.root or vim.fn.getcwd(), ":p")):gsub("/+$", "")
   local minit = s.minit or M.DEFAULT_MINIT
-  if not minit:match("^%a:[/\\]") and minit:sub(1, 1) ~= "/" then
+  -- absolute: a drive (`C:/`, `C:\`), a POSIX root or a UNC path in either slash style
+  if not minit:match("^%a:[/\\]") and not minit:match("^[/\\]") then
     minit = root .. "/" .. minit
   end
   for _, size in ipairs(s.sizes) do
@@ -415,7 +441,12 @@ function M.run(s, opts)
       { root = root, minit = minit, size = size, guard = false },
       opts.spawn or {}
     )
-    local child, err = require("testing.rpc").spawn(spawn)
+    -- a spawn that raises is a failure of this size, not an error out of `run` (expect hands the
+    -- verdict to the harness, it must not throw past it)
+    local spawned, child, err = pcall(require("testing.rpc").spawn, spawn)
+    if not spawned then
+      child, err = nil, child
+    end
     if not child then
       result.failures[#result.failures + 1] = ("%s: the child did not start: %s"):format(
         tag,

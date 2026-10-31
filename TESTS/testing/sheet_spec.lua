@@ -78,7 +78,11 @@ return function(H)
         "no action",
         "a step without an action"
       )
-      refused({ id = "a", title = "T", steps = { { settle = 0 } } }, "positive integer", "settle 0")
+      refused(
+        { id = "a", title = "T", steps = { { settle = 0 } } },
+        "milliseconds must be a whole number",
+        "settle 0"
+      )
       refused(
         { id = "a", title = "T", steps = { { keys = "x", timeout = 5 } } },
         "timeout belongs",
@@ -119,6 +123,40 @@ return function(H)
         "judge[1]",
         "an empty judge entry"
       )
+      -- a list with a hole: `#` and the key count agree, ipairs sees nothing (review 2026-10-31)
+      refused(
+        { id = "a", title = "T", steps = { nil, { bogus = 1 }, x = 1 } },
+        "steps must be a list",
+        "steps with a hole"
+      )
+      refused({
+        id = "a",
+        title = "T",
+        steps = { { keys = "x" } },
+        sizes = { nil, { rows = 1, cols = 1 }, y = 1 },
+      }, "sizes must be", "sizes with a hole")
+      -- upper bounds: an endless wait is a mistake
+      refused(
+        { id = "a", title = "T", steps = { { wait = "x", timeout = 1 / 0 } } },
+        "milliseconds",
+        "timeout = inf"
+      )
+      refused(
+        { id = "a", title = "T", steps = { { settle = 1 / 0 } } },
+        "milliseconds",
+        "settle = inf"
+      )
+      refused({
+        id = "a",
+        title = "T",
+        steps = { { keys = "x" } },
+        sizes = { { rows = 1e12, cols = 80 } },
+      }, "sizes[1]", "a billion rows")
+      refused(
+        { id = "a", title = "T", steps = { { lua = "x", ignore_errmsg = true } } },
+        "ignore_errmsg belongs",
+        "ignore_errmsg outside keys"
+      )
     end
 
     -- loading is data only: the file sees no globals
@@ -135,6 +173,8 @@ return function(H)
         es == nil and tostring(eerr):find("os", 1, true) ~= nil,
         "a sheet cannot call os (empty environment): " .. tostring(eerr)
       )
+      local _, n_path = tostring(eerr):gsub(vim.pesc(vim.fs.basename(evil)), "")
+      eq(n_path, 1, "the path is named once in a load error, not twice")
       local bad = write("TESTS/sheets/bad.sheet.lua", "return { id = ")
       ok(sheet.load(bad) == nil, "a syntax error is refused")
       eq(#sheet.files(root .. "/TESTS/sheets"), 3, "files finds *.sheet.lua")
@@ -228,6 +268,39 @@ return function(H)
       )
       has(tostring(err), "; 40x12 step 1, wait false", "the second failure follows on that line")
       has(tostring(err), "still false after 100 ms", "a wait that never holds")
+
+      -- ignore_errmsg: a mapping that runs `silent! cmd` on purpose still sets v:errmsg
+      local quiet = vim.deepcopy(slow)
+      quiet.sizes = { { rows = 24, cols = 80 } }
+      quiet.steps = { { keys = ":silent! NoSuchCommandHere<CR>", ignore_errmsg = true } }
+      eq(sheet.run(quiet, { root = root }).failures, {}, "ignore_errmsg lets such keys pass")
+
+      -- a spawn that raises, and where the minit points: through a stand-in spawn
+      local rpc = require("testing.rpc")
+      local orig_spawn = rpc.spawn
+      local seen_minit
+      local stand_ok, stand_err = pcall(function()
+        rpc.spawn = function()
+          error("boom from spawn")
+        end
+        local verdict
+        local _, raised_res = sheet.expect(function(v)
+          verdict = v
+        end, quiet, { root = root })
+        eq(verdict, false, "a spawn that raises still hands a verdict to the harness")
+        has(raised_res.failures[1], "the child did not start", "and is a failure of that size")
+        has(raised_res.failures[1], "boom from spawn", "with the reason")
+        rpc.spawn = function(o)
+          seen_minit = o.minit
+          return nil, "not started"
+        end
+        local unc = vim.deepcopy(quiet)
+        unc.minit = "\\\\server\\share\\init.lua"
+        sheet.run(unc, { root = root })
+        eq(seen_minit, "\\\\server\\share\\init.lua", "a UNC minit with backslashes is absolute")
+      end)
+      rpc.spawn = orig_spawn
+      ok(stand_ok, "stand-in spawn checks: " .. tostring(stand_err))
       local lr, lerr = pcall(sheet.check, root .. "/TESTS/sheets/bad.sheet.lua")
       ok(
         not lr and tostring(lerr):find("test sheet:", 1, true) ~= nil,
@@ -406,6 +479,52 @@ return function(H)
       f2:close()
       has(from_md, "## Automated (1)", "the IR's green case is automated")
       has(from_md, "- `fail`: boom", "and its red case says why")
+
+      -- a sheet written after the run makes the result stale (the state watches only the spec file)
+      local root3 = root .. "/p3"
+      write("p3/TESTS/s_spec.lua", "-- spec")
+      write(
+        "p3/TESTS/sheets/z.sheet.lua",
+        'return { id = "z", title = "Z", steps = { { keys = "x" } } }'
+      )
+      local state = require("testing.state")
+      local rec = assert(state.stat(root3, "TESTS/s_spec.lua"))
+      local function st_with(ts)
+        rec.ts = ts
+        return {
+          root = root3,
+          files = { ["TESTS/s_spec.lua"] = rec },
+          cases = {
+            { name = "sheet:z", status = "pass", file = "TESTS/s_spec.lua", duration_ms = 1 },
+          },
+        }
+      end
+      local old = report.collect({ root3 }, { states = { [root3] = st_with(1) } })[1]
+      has(old.stale, "z.sheet.lua changed since the run", "a sheet newer than the run is stale")
+      eq(report.bucket(old), "red", "and not green")
+      local fresh = report.collect({ root3 }, { states = { [root3] = st_with(4102444000) } })[1]
+      eq(
+        { fresh.stale, report.bucket(fresh) },
+        { nil, "automated" },
+        "a run after the sheet is current"
+      )
+
+      -- text from a sheet stays on its line and inside its code span
+      local tricky = report.render({
+        {
+          root = root,
+          rel = "TESTS/sheets/t.sheet.lua",
+          sheet = sh({ id = "t", title = "T `x`\n# H", task = "a`b", judge = { "a\n- [x] fake" } }),
+          case = pass,
+          snapshots = {},
+        },
+      })
+      ok(not tricky:find("\n# H", 1, true), "a newline in a title starts no heading")
+      ok(
+        not tricky:find("\n- [x] fake", 1, true),
+        "a newline in a criterion starts no checked item"
+      )
+      has(tricky, "task `a'b`", "a backtick cannot end the code span")
 
       local out_file = root .. "/out/list.md"
       eq(report.main({ "report", root, "--out", out_file }, sv), 0, "report writes the file")
