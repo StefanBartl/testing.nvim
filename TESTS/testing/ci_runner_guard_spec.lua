@@ -142,16 +142,12 @@ return function(H)
     end
   end
 
-  eq(
-    {
-      guard.repo_key("a/.."),
-      guard.repo_key("a/."),
-      guard.repo_key("../x"),
-      guard.repo_key("a/b/c"),
-    },
-    {},
-    "repo_key: no path segments"
-  )
+  eq({
+    guard.repo_key("a/.."),
+    guard.repo_key("a/."),
+    guard.repo_key("../x"),
+    guard.repo_key("a/b/c"),
+  }, {}, "repo_key: no path segments")
   eq(guard.repo_key("A-b/C_d.e"), "a-b/c_d.e", "repo_key: a usual name, lower case")
 
   -- ------------------------------------------------------------------ the list is untrusted data
