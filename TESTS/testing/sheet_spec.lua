@@ -997,6 +997,53 @@ return function(H)
       )
       eq(new.acceptance("## Acceptance\n- [ ] english"), { "english" }, "the English heading")
       eq(new.acceptance("no sections"), {}, "a body without acceptance")
+      -- fences and headings as CommonMark reads them (review of 3aaceb2)
+      eq(
+        new.acceptance(
+          "## Akzeptanz\n```\n- [ ] in fence\n```lua\n- [ ] still fence\n```\n- [ ] real box"
+        ),
+        { "real box" },
+        "a fence with an info string does not close a fence"
+      )
+      eq(
+        new.acceptance("## Akzeptanz\n```code``` sample\n- [ ] real box"),
+        { "real box" },
+        "inline code at the start of a line is no fence"
+      )
+      eq(
+        new.acceptance("## Akzeptanz\n    ```\n- [ ] after indented code"),
+        { "after indented code" },
+        "a fence indented by 4 spaces is no fence"
+      )
+      eq(
+        new.acceptance("## Akzeptanz\n~~~\n- [ ] in tildes\n```\n- [ ] still\n~~~~\n- [ ] out"),
+        { "out" },
+        "a tilde fence closes with tildes only, at least as many"
+      )
+      eq(
+        new.acceptance("## Akzeptanz\n- [ ] a\n# Anhang\n- [ ] other section"),
+        { "a" },
+        "a level 1 heading ends the section"
+      )
+      eq(
+        new.acceptance("## Akzeptanz\n### Detail\n- [ ] a\n## Notizen\n- [ ] n"),
+        { "a" },
+        "a level 3 heading stays in the section"
+      )
+      eq(
+        new.acceptance("## Akzeptanz ##\n+ [ ] plus\n1. [ ] one\n2) [x] two"),
+        { "plus", "one", "two" },
+        "closing hashes, '+' and numbered boxes"
+      )
+      eq(
+        new.acceptance("  ## Acceptance\n- [ ] x"),
+        { "x" },
+        "a heading indented by up to 3 spaces"
+      )
+      local long = new.acceptance("## Akzeptanz\n- [ ] " .. ("ä"):rep(1000))[1]
+      eq(vim.fn.strchars(long), new.MAX_TEXT, "a long entry is cut to MAX_TEXT characters")
+      eq(long, ("ä"):rep(new.MAX_TEXT - 1) .. "…", "cut between characters, marked with '…'")
+
       eq(new.id_of("ui-option-float"), "ui-option-float", "a slug is an id")
       eq(new.id_of("-a b/c"), "a-b-c", "what the id does not allow becomes '-'")
 
@@ -1097,7 +1144,33 @@ return function(H)
         "no acceptance boxes: one judge entry from the title"
       )
 
+      eq(s6 and s6.id, "other", "--name names the id too: two sheets of one task are two cases")
+      -- an empty title, huge acceptance texts: the draft still loads
+      eq(
+        new.main({ "--from-task", "area/empty-title", "--repo", repo }, sv5, {
+          call = engine5({
+            task = { title = "  ", slug = "empty-title" },
+            body = "## Akzeptanz\n" .. ("- [ ] " .. ("x"):rep(9000) .. "\n"):rep(30),
+          }),
+        }),
+        0,
+        "an empty title and 30 boxes of 9000 characters"
+      )
+      local s7, lerr7 = sheet.load(repo .. "/TESTS/sheets/empty-title.sheet.lua")
+      ok(s7 ~= nil, "and the draft loads: " .. tostring(lerr7))
+      eq(s7 and s7.title, "area/empty-title", "the title falls back to the id")
+
       -- usage and engine errors
+      eq(
+        new.main(
+          { "--from-task", "a/nl\nreturn 1", "--repo", repo },
+          sv5,
+          { call = engine5({ task = { title = "T", slug = "nl" }, body = "" }) }
+        ),
+        2,
+        "a task id with a newline is refused (it goes into a comment line)"
+      )
+      ok(vim.uv.fs_stat(repo .. "/TESTS/sheets/nl.sheet.lua") == nil, "and nothing is written")
       eq(new.main({ "--repo", repo }, sv5, { call = engine5(doc5) }), 2, "--from-task is required")
       eq(
         new.main({ "--from-task", "noslash" }, sv5, { call = engine5(doc5) }),

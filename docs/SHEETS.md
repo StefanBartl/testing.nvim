@@ -59,18 +59,23 @@ testing sheets new --from-task <area/slug> [--repo <dir>] [--vault <dir>] [--tas
 reads the live-check task through tasks.nvim (`call task`) and writes a **draft** `TESTS/sheets/<slug>.sheet.lua`
 into the repository (default the current directory):
 
-* `id` is the task's slug, `title` its title, `task` the id given; strings are quoted as Lua strings, so any title
-  loads.
+* `id` is the task's slug (or `--name`), with what an id does not allow (`/`, spaces, non-ASCII) made `-`; the
+  file is named like the id, so a second sheet of the same task (`--name`) is a case of its own. `title` is the
+  task's title (the id when it is empty), `task` the id given (letters, digits, `_`, `-`, `.` and one `/`).
+  Strings are quoted as Lua strings and cut to 300 characters, so any title loads.
 * `steps` is a skeleton that runs as it is: the intro screen off (it names the Neovim version), a setup step to
   fill in, `settle`, one `screen`. It checks nothing yet: write what a person would do.
-* `judge` has one entry per checkbox under `## Akzeptanz` / `## Acceptance` (ticked or not, at most 30; boxes in a
-  fenced code block or another section do not count). A task without boxes gets one entry from its title.
+* `judge` has one entry per checkbox (`-`, `*`, `+` or `1.` list items) under a level 1 or 2 heading `Akzeptanz` /
+  `Acceptance`, up to the next such heading (ticked or not, at most 30). Boxes in a fenced code block or another
+  section do not count; fences and headings are read as CommonMark does. A task without boxes gets one entry
+  from its title.
 * `notes` and the header comment say `DRAFT`: drop them once the steps are real and the snapshot is reviewed.
 
-An existing sheet is **never overwritten** (exit 2; `--name` writes another file). The written file is loaded
-right away; a draft that does not load is removed again. The vault is `--vault`, else `$TASKS_VAULT`, else
+An existing sheet is **never overwritten** (exit 2; `--name` writes another file): the file is created
+exclusively, so one that appears meanwhile is not written over either. The written file is loaded right away; a
+draft that does not load is removed again. The vault is `--vault`, else `$TASKS_VAULT`, else
 `<repo>/../tasks-vault`; the engine is found as for `--tasks` below. Exit codes: 0 written, 2 bad usage or the
-sheet exists, 3 the task could not be read or the file not written.
+sheet exists, 3 no vault or engine, the task could not be read, the file not written or the draft does not load.
 
 ## Running sheets
 

@@ -525,9 +525,9 @@ See docs/SHEETS.md.
 `testing sheets new --from-task {area/slug} [--repo <dir>] [--vault <dir>]`:
 writes a draft sheet `TESTS/sheets/<slug>.sheet.lua` from a live-check task
 (read through tasks.nvim): a skeleton of steps and one `judge` entry per
-acceptance checkbox. Never overwrites a sheet (`--name` for another file). 0
-written, 2 bad usage or the sheet exists, 3 the task could not be read or the
-file not written.
+acceptance checkbox. Never overwrites a sheet (`--name` for another file and
+id). 0 written, 2 bad usage or the sheet exists, 3 no vault or engine, the task
+could not be read, the file not written or the draft does not load.
 
 ==============================================================================
 11. Dialects                                                      *testing-dialects*

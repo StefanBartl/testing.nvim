@@ -20,28 +20,62 @@ local M = {}
 M.USAGE =
   "usage: testing sheets new --from-task <area/slug> [--repo <dir>] [--vault <dir>] [--tasks-cli <tasks.lua>] [--name <file-name>]"
 M.MAX_JUDGE = 30
+M.MAX_TEXT = 300 -- characters of a title or a judge entry (a sheet loads up to 256 KiB)
+
+---A text cut to `M.MAX_TEXT` characters (not bytes, so UTF-8 stays whole).
+---@param s string
+---@return string
+local function cut(s)
+  if vim.fn.strchars(s) <= M.MAX_TEXT then
+    return s
+  end
+  return vim.fn.strcharpart(s, 0, M.MAX_TEXT - 1) .. "…"
+end
+
+---The fence a line opens (CommonMark: up to 3 spaces, 3+ backticks without a backtick in the info string, or
+---3+ tildes).
+---@param line string
+---@return string|nil
+local function opens(line)
+  local ticks, info = line:match("^ ? ? ?(```+)(.*)$")
+  if ticks and not info:find("`", 1, true) then
+    return ticks
+  end
+  return line:match("^ ? ? ?(~~~+)")
+end
 
 ---The checkbox texts of the acceptance section of a body (ticked ones too), one line each; headings and
----boxes inside a fenced code block do not count.
+---boxes inside a fenced code block do not count. The section ends at the next heading of level 1 or 2.
 ---@param body string
 ---@return string[]
 function M.acceptance(body)
   local out, inside, fence = {}, false, nil
   for line in (body .. "\n"):gmatch("(.-)\r?\n") do
-    local mark = line:match("^%s*(```+)") or line:match("^%s*(~~~+)")
-    local heading = not fence and line:match("^##%s+(.-)%s*$")
-    if mark then
-      if not fence then
-        fence = mark
-      elseif mark:sub(1, 1) == fence:sub(1, 1) and #mark >= #fence then
+    if fence then
+      -- a closing fence: the same character, at least as long, nothing but blanks after it
+      local close = line:match("^ ? ? ?(" .. fence:sub(1, 1):rep(3) .. "+)%s*$")
+      if close and #close >= #fence then
         fence = nil
       end
-    elseif heading then
-      inside = heading == "Akzeptanz" or heading == "Acceptance"
-    elseif inside and not fence then
-      local text = line:match("^%s*[-*] %[[ xX]%] (.-)%s*$")
-      if text and text ~= "" and #out < M.MAX_JUDGE then
-        out[#out + 1] = text
+    else
+      local hashes, title = line:match("^ ? ? ?(#+)%s+(.-)%s*$")
+      if not hashes then
+        hashes = line:match("^ ? ? ?(#+)%s*$")
+        title = ""
+      end
+      if opens(line) then
+        fence = opens(line)
+      elseif hashes and #hashes <= 6 then
+        title = title:gsub("%s+#+$", ""):gsub("^#+$", "")
+        if #hashes <= 2 then
+          inside = title == "Akzeptanz" or title == "Acceptance"
+        end
+      elseif inside then
+        local text = line:match("^%s*[-*+] %[[ xX]%] (.-)%s*$")
+          or line:match("^%s*%d+[.)] %[[ xX]%] (.-)%s*$")
+        if text and text ~= "" and #out < M.MAX_JUDGE then
+          out[#out + 1] = cut(text)
+        end
       end
     end
   end
@@ -57,7 +91,7 @@ function M.id_of(slug)
 end
 
 ---The text of the draft sheet.
----@param task { id: string, title: string, slug: string }
+---@param task { id: string, title: string, sheet_id: string }
 ---@param judge string[]
 ---@return string
 function M.render(task, judge)
@@ -69,7 +103,7 @@ function M.render(task, judge)
     "-- DRAFT: the steps are a skeleton. Write what a person would do (docs/SHEETS.md of testing.nvim),",
     "-- run the spec once to write the snapshot, review it, then drop the DRAFT note below.",
     "return {",
-    "  id = " .. q(M.id_of(task.slug)) .. ",",
+    "  id = " .. q(task.sheet_id) .. ",",
     "  title = " .. q(task.title) .. ",",
     "  task = " .. q(task.id) .. ",",
     '  engine = "rpc",',
@@ -142,7 +176,8 @@ function M.main(argv, sv, deps)
     o[key] = argv[i + 1]
     i = i + 2
   end
-  if not o.id or not o.id:match("^[^/]+/[^/]+$") then
+  -- only the characters of a task id: it is written into a comment line of the sheet
+  if not o.id or not o.id:match("^[%w_.%-]+/[%w_.%-]+$") then
     sv.err("testing sheets: --from-task <area/slug> is required\n" .. M.USAGE)
     return 2
   end
@@ -172,24 +207,34 @@ function M.main(argv, sv, deps)
     return 3
   end
   local t = type(doc.task) == "table" and doc.task or {}
-  local task = {
-    id = o.id,
-    title = type(t.title) == "string" and t.title or o.id,
-    slug = type(t.slug) == "string" and t.slug or o.id:match("/(.+)$"),
-  }
-  local name = (o.name or M.id_of(task.slug)):gsub("%.sheet%.lua$", "")
+  local title = type(t.title) == "string" and vim.trim(t.title) or ""
+  local slug = type(t.slug) == "string" and t.slug ~= "" and t.slug or o.id:match("/(.+)$")
+  -- the file name and the id go together: a second sheet of the same task (--name) is a case of its own
+  local name = o.name and o.name:gsub("%.sheet%.lua$", "") or M.id_of(slug)
+  local task = { id = o.id, title = cut(title ~= "" and title or o.id), sheet_id = M.id_of(name) }
   local rel = "TESTS/sheets/" .. name .. ".sheet.lua"
   local path = repo .. "/" .. rel
-  if vim.uv.fs_stat(path) then
-    sv.err(
-      "testing sheets: " .. rel .. " exists; a sheet is never overwritten (--name for another file)"
-    )
-    return 2
-  end
   local judge = M.acceptance(type(doc.body) == "string" and doc.body or "")
   local text = M.render(task, judge)
-  local wrote, werr = require("lib.nvim.fs.write.atomic")(path, text, { mkdirp = true })
-  if not wrote then
+  vim.fn.mkdir(vim.fs.dirname(path), "p")
+  -- created exclusively: a sheet that exists (or appears meanwhile, or is a symlink) is never written over
+  local fd, oerr, code = vim.uv.fs_open(path, "wx", 420)
+  if not fd then
+    if code == "EEXIST" then
+      sv.err(
+        "testing sheets: "
+          .. rel
+          .. " exists; a sheet is never overwritten (--name for another file)"
+      )
+      return 2
+    end
+    sv.err("testing sheets: cannot write " .. rel .. ": " .. tostring(oerr))
+    return 3
+  end
+  local n, werr = vim.uv.fs_write(fd, text)
+  vim.uv.fs_close(fd)
+  if n ~= #text then
+    os.remove(path)
     sv.err("testing sheets: cannot write " .. rel .. ": " .. tostring(werr))
     return 3
   end
