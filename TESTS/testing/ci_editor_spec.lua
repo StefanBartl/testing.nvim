@@ -1157,8 +1157,11 @@ return function(H)
       return true
     end
     config.setup({ ci = { repos = { roots = { "/r1" } }, export_remote = "ask" } })
+    -- the editor's cwd as the editor reports it (macOS resolves /var to /private/var)
+    local rel_seen
     local passed_rel, err_rel = pcall(function()
       vim.cmd.cd(vim.fn.fnameescape(rel_cwd))
+      rel_seen = vim.fs.normalize(vim.fn.getcwd())
       usrcmds.ci_repos({ args = {}, flags = { export = "rel-out", ["export-remote"] = "never" } })
       -- Esc at the question: nothing starts, and it says so
       usrcmds.ask = function(_, _, cb)
@@ -1178,7 +1181,7 @@ return function(H)
     ok(passed_rel, "ci_repos relative export raised: " .. tostring(err_rel))
     eq(
       rel_args[1] and rel_args[1][2],
-      "--export=" .. rel_cwd .. "/rel-out",
+      "--export=" .. tostring(rel_seen) .. "/rel-out",
       "ci_repos: a relative --export is absolute (the editor's cwd)"
     )
     eq(dismissed_runs, 0, "ci_repos ask dismissed: nothing started")
