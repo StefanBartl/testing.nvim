@@ -1302,12 +1302,13 @@ return function(H)
         end,
       }
       local ran, written = {}, nil
+      local body6 = "Summary.\n\n## Notizen\n"
       local function engine6(method, params)
         if method == "bodies" then
           return {
             kind = "tasks.bodies",
             items = vim.tbl_map(function(id)
-              return { id = id, etag = "sha256:1", body = "Summary.\n\n## Notizen\n" }
+              return { id = id, etag = "sha256:1", body = body6 }
             end, params.ids),
           }
         end
@@ -1487,6 +1488,118 @@ return function(H)
         0,
         "through `testing sheets run`"
       )
+
+      -- review of 50cfed1: the machine role trimmed, an unknown one refused
+      for _, v in ipairs({ "workstation ", " Workstation", "workstaton" }) do
+        ran = {}
+        eq(
+          run.main(
+            { "--task", "x/live", "--root", p6 },
+            sv6,
+            deps6(green, {
+              getenv = function(name)
+                return name == "NVIM_MACHINE_ROLE" and v or nil
+              end,
+            })
+          ),
+          2,
+          ("NVIM_MACHINE_ROLE=%q is refused"):format(v)
+        )
+        eq(#ran, 0, "nothing ran")
+      end
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6 },
+          sv6,
+          deps6(green, {
+            getenv = function(name)
+              return name == "NVIM_MACHINE_ROLE" and "default" or nil
+            end,
+          })
+        ),
+        0,
+        "default is the private machine"
+      )
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6 },
+          sv6,
+          deps6(green, {
+            getenv = function(name)
+              return name == "NVIM_MACHINE_ROLE" and " default " or nil
+            end,
+          })
+        ),
+        0,
+        "the value is trimmed (cmd keeps a blank after set X=...)"
+      )
+
+      -- a sheet of the task in another project, named by the block, runs too and stays in it
+      write(
+        "repos6/other/TESTS/sheets/o.sheet.lua",
+        'return { id = "o", title = "O", task = "x/live", steps = { { keys = "x" } } }'
+      )
+      local in_repos = function(name)
+        return name == "REPOS_DIR" and (root .. "/repos6") or nil
+      end
+      body6 = "Summary.\n\n"
+        .. tasks.render_block({
+          {
+            root = root .. "/repos6/other",
+            rel = "TESTS/sheets/o.sheet.lua",
+            snapshots = {},
+            sheet = assert(sheet.load(root .. "/repos6/other/TESTS/sheets/o.sheet.lua")),
+          },
+        })
+        .. "\n\n## Notizen\n"
+      ran, written = {}, nil
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6, "--tasks", root },
+          sv6,
+          deps6(green, { getenv = in_repos })
+        ),
+        0,
+        "a run with the other project"
+      )
+      eq(
+        vim.tbl_map(function(r)
+          return r[1]
+        end, ran),
+        { "a", "o" },
+        "the sheet of the other project ran too"
+      )
+      has(written, "a=inbox o=green", "and both are in the block")
+      body6 = body6:gsub("other/TESTS", "gone/TESTS")
+      ran = {}
+      errs6 = {}
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6, "--tasks", root },
+          sv6,
+          deps6(green, { getenv = in_repos })
+        ),
+        2,
+        "a project the block names that is not found: refused"
+      )
+      eq(#ran, 0, "before anything ran")
+      has(table.concat(errs6, "\n"), "would drop out", "it says why")
+      body6 = "Summary.\n\n## Notizen\n"
+
+      -- the engine is found before a sheet runs
+      ran = {}
+      local no_engine = deps6(green)
+      no_engine.call = nil
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6, "--tasks", root, "--tasks-cli", root .. "/nope.lua" },
+          sv6,
+          no_engine
+        ),
+        3,
+        "no engine: exit 3"
+      )
+      eq(#ran, 0, "and nothing ran")
     end
   end, debug.traceback)
 

@@ -5,14 +5,15 @@
 --- The way from a live-check task to its result without running a whole suite: the sheets of the given roots
 --- that name the task (`task = "<area/slug>"`, a sheet that does not load too) run here, one child editor each,
 --- and with `--tasks <vault>` their state goes into the task's block as `testing sheets report --tasks` writes
---- it (`testing.sheet.tasks.sync`). tasks.nvim's `:Tasks sheet run` calls this command; the two plugins meet
+--- it (`testing.sheet.tasks.sync`). tasks.nvim's `:Tasks sheet-run` calls this command; the two plugins meet
 --- only on the command line and the block.
 ---
 --- * The roots are `--root <dir>` (repeatable), else the task's area as a repository: `$REPOS_DIR/<area>`,
----   else `<vault>/../<area>`.
+---   else `<vault>/../<area>`; with `--tasks` also the projects the task's block names (it is written whole).
 --- * Each root passes the workspace trust gate (`testing.trust`) first: a sheet runs the project's minimal init.
 --- * A missing snapshot is a failure, as on CI (`ci = true`): a run from a task never writes a reference image.
---- * On the workstation (`NVIM_MACHINE_ROLE=workstation`) it refuses, unless `TESTING_ALLOW_WORKSTATION=1`.
+--- * On the workstation (`NVIM_MACHINE_ROLE=workstation`) it refuses, unless `TESTING_ALLOW_WORKSTATION=1`; another
+---   value than `workstation` / `default` is refused as a typo.
 --- * A red sheet carries its first failure line into the block (`red: <line>`).
 
 local M = {}
@@ -111,7 +112,16 @@ function M.main(argv, sv, deps)
     sv.err("testing sheets: --tasks-cli and --dry-run belong to --tasks <vault>\n" .. M.USAGE)
     return 2
   end
-  local role = (getenv("NVIM_MACHINE_ROLE") or ""):lower()
+  -- trimmed: `set NVIM_MACHINE_ROLE=workstation ` in cmd keeps the blank (the nvim config's machine.lua trims too)
+  local role = vim.trim(getenv("NVIM_MACHINE_ROLE") or ""):lower()
+  if role ~= "" and role ~= "default" and role ~= "workstation" then
+    sv.err(
+      ("testing sheets: NVIM_MACHINE_ROLE=%q is neither workstation nor default (a typo?): refused until it is set right"):format(
+        role
+      )
+    )
+    return 2
+  end
   if role == "workstation" and getenv("TESTING_ALLOW_WORKSTATION") ~= "1" then
     sv.err(
       "testing sheets: refused on the workstation (NVIM_MACHINE_ROLE=workstation): a sheet starts editors and runs "
@@ -121,6 +131,18 @@ function M.main(argv, sv, deps)
   end
   local vault = o.vault and vim.fs.normalize(vim.fn.fnamemodify(o.vault, ":p")):gsub("/+$", "")
     or nil
+  local tasks = require("testing.sheet.tasks")
+  -- the engine first: nothing runs when the result could not be written, and the task's block names the
+  -- projects its sheets live in
+  local call = deps.call
+  if vault and not call then
+    local cli, lerr = tasks.locate(vault, { cli = o.cli })
+    if not cli then
+      sv.err("testing sheets: " .. tostring(lerr))
+      return 3
+    end
+    call = tasks.caller(cli, vault)
+  end
   if #roots == 0 then
     local r, tried = area_root(o.id:match("^[^/]+"), vault, getenv)
     if not r then
@@ -142,6 +164,34 @@ function M.main(argv, sv, deps)
     end
     roots[k] = vim.fs.normalize(vim.fn.fnamemodify(r, ":p")):gsub("/+$", "")
   end
+  -- the block is written whole: a sheet of the task in another project must run too, or it drops out of it
+  if vault then
+    local have = {}
+    for _, r in ipairs(roots) do
+      have[vim.fs.basename(r)] = true
+    end
+    local doc = call("bodies", { ids = { o.id } })
+    local item = type(doc) == "table" and type(doc.items) == "table" and doc.items[1] or nil
+    local block = item
+      and type(item.body) == "string"
+      and tasks.extract((item.body:gsub("\r\n?", "\n")))
+    for project in (block or ""):gmatch("`([%w_.%-]+)/TESTS/sheets/[^`\n]-%.sheet%.lua`") do
+      if not have[project] then
+        local r = area_root(project, vault, getenv)
+        if not r then
+          sv.err(
+            (
+              "testing sheets: the block of %s names sheets of %s, which is not found: pass --root <dir> for it, "
+              .. "or its sheets would drop out of the block"
+            ):format(o.id, project)
+          )
+          return 2
+        end
+        have[project] = true
+        roots[#roots + 1] = r
+      end
+    end
+  end
   local trust_check = deps.trust_check or require("testing.trust").check
   for _, r in ipairs(roots) do
     local refusal = trust_check(r)
@@ -152,7 +202,6 @@ function M.main(argv, sv, deps)
   end
 
   local report = require("testing.sheet.report")
-  local tasks = require("testing.sheet.tasks")
   local mine = {}
   for _, e in ipairs(report.collect(roots, { cases = {} })) do
     local id = e.sheet and e.sheet.task or (not e.sheet and tasks.task_of_unloadable(e))
@@ -198,15 +247,6 @@ function M.main(argv, sv, deps)
 
   if not o.vault then
     return red and 1 or 0
-  end
-  local call = deps.call
-  if not call then
-    local cli, lerr = tasks.locate(vault, { cli = o.cli })
-    if not cli then
-      sv.err("testing sheets: " .. tostring(lerr))
-      return 3
-    end
-    call = tasks.caller(cli, vault)
   end
   local results, serr = tasks.sync(mine, { call = call, dry_run = o.dry_run })
   if not results then

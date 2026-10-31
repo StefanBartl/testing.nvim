@@ -186,13 +186,16 @@ testing sheets run --task <area/slug> [--root <dir>]... [--tasks <vault> [--task
 ```
 
 runs the sheets that name the task (a sheet that does not load too) and, with `--tasks`, writes their state into
-the task's block as the report does: no suite, no second command. tasks.nvim's `:Tasks sheet run` calls it.
+the task's block: no suite, no second command. tasks.nvim's `:Tasks sheet-run` calls it.
 
 * The roots are `--root` (repeatable), else the task's area as a repository: `$REPOS_DIR/<area>`, else
-  `<vault>/../<area>`.
+  `<vault>/../<area>`. With `--tasks` the projects the task's block already names join them (found the same way):
+  the block is written whole, so a sheet of the task in another project runs too instead of dropping out. A project
+  that is not found is refused (pass `--root`). The engine is found before a sheet runs.
 * Each root passes the workspace trust gate first (a sheet runs the project's minimal init).
 * A missing snapshot is a failure, as on CI: a run from a task never writes a reference image (run the spec once).
-* On the workstation (`NVIM_MACHINE_ROLE=workstation`) it refuses, unless `TESTING_ALLOW_WORKSTATION=1`.
+* On the workstation (`NVIM_MACHINE_ROLE=workstation`, trimmed, any case) it refuses, unless
+  `TESTING_ALLOW_WORKSTATION=1`; a value that is neither `workstation` nor `default` is refused as a typo.
 * A red sheet carries its first failure line into the block (`red: 80x24 step 3, keys ...`).
 
 Exit codes: 0 green (or waiting for a person) and written, 1 a sheet is red or the task could not be written, 2 bad
