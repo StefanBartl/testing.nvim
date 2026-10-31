@@ -42,6 +42,8 @@ M.USAGE = table.concat({
   "       testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>] [--state-dir=<dir>]",
   "       testing ci overview [<root>...] [--repos-root=<dir>] [--out=<file.html>] [--json] [--no-remote] ...",
   "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
+  "       testing ci runner-guard check|install|remove|status [--runners=<dir>]",
+  "       testing ci trust [<owner/repo>] [<sha>] [--show|--list|--revoke|--mode=<m>] [--runners=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
   "  --step=<a,b>      only these steps (a partial run: no proof, no sentinel)",
@@ -1025,6 +1027,13 @@ function M.main(argv, sv)
   end
   if argv[1] == "hook" then
     return require("testing.ci.hook").main(vim.list_slice(argv, 2), sv)
+  end
+  -- the protection of the local self-hosted runner from foreign code (docs/RUNNER-GUARD.md)
+  if argv[1] == "runner-guard" then
+    return require("testing.ci.runner_guard").main(vim.list_slice(argv, 2), sv)
+  end
+  if argv[1] == "trust" then
+    return require("testing.ci.runner_guard").trust_main(vim.list_slice(argv, 2), sv)
   end
   local out, err = sv.out, sv.err
   local args, problem = M.parse(argv)

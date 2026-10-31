@@ -361,6 +361,15 @@ verdict names the repositories that are not green, and their findings fill the q
 repository's name in front (a repository without findings gets a text-only entry with its state and exit code). The
 list opens only on red.
 
+## Foreign code on a local runner: `testing ci runner-guard` and `testing ci trust`
+
+A self-hosted runner runs a job with your rights. For a public repository a pull request that edits the workflow, or
+the push run after a merge, would run foreign code there. `testing ci runner-guard install` puts a job-started hook
+on the machine of the runner (outside every work folder, so a pull request cannot edit it): it refuses pull requests,
+actors other than the maintainer, and commits of a public repository that you have not released. `testing ci trust
+<owner/repo> [<sha>]` releases a commit after you reviewed it (`--show` lists what changed and which files deserve a
+close look), then re-run the refused job. Details, the way back and the limits: [RUNNER-GUARD.md](RUNNER-GUARD.md).
+
 ## The GitHub Actions status: `testing ci remote`
 
 ```
