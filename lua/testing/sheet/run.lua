@@ -26,6 +26,8 @@ M.USAGE =
 ---@field getenv? fun(name: string): string|nil
 ---@field run? fun(s: Testing.Sheet, opts: table): Testing.Sheet.Result A stand-in for `testing.sheet.run` (specs).
 ---@field trust_check? fun(root: string): string|nil A stand-in for `testing.trust.check` (specs).
+---@field on_ran? fun(entries: Testing.SheetReport.Entry[]) Called with the task's sheets after they ran (`e.result`).
+---@field no_write? boolean Run only, never write the task (`testing sheets prompt explain`).
 
 ---The first line of the first failure: what the block shows of a red run.
 ---@param res Testing.Sheet.Result
@@ -42,7 +44,7 @@ end
 ---@param vault string|nil
 ---@param getenv fun(name: string): string|nil
 ---@return string|nil root, string|nil tried
-local function area_root(area, vault, getenv)
+function M.area_root(area, vault, getenv)
   local tried, bases = {}, {}
   local repos = getenv("REPOS_DIR")
   if repos and repos ~= "" then
@@ -144,7 +146,7 @@ function M.main(argv, sv, deps)
     call = tasks.caller(cli, vault)
   end
   if #roots == 0 then
-    local r, tried = area_root(o.id:match("^[^/]+"), vault, getenv)
+    local r, tried = M.area_root(o.id:match("^[^/]+"), vault, getenv)
     if not r then
       sv.err(
         "testing sheets: no repository for the area of "
@@ -177,7 +179,7 @@ function M.main(argv, sv, deps)
       and tasks.extract((item.body:gsub("\r\n?", "\n")))
     for project in (block or ""):gmatch("`([%w_.%-]+)/TESTS/sheets/[^`\n]-%.sheet%.lua`") do
       if not have[project] then
-        local r = area_root(project, vault, getenv)
+        local r = M.area_root(project, vault, getenv)
         if not r then
           sv.err(
             (
@@ -226,6 +228,7 @@ function M.main(argv, sv, deps)
     else
       local started = vim.uv.hrtime()
       local res = run(e.sheet, { root = e.root, ci = true })
+      e.result = res
       local status = res.status == "fail" and "fail" or "pass"
       e.case = {
         name = sheet.spec_name(e.sheet),
@@ -245,7 +248,10 @@ function M.main(argv, sv, deps)
     end
   end
 
-  if not o.vault then
+  if deps.on_ran then
+    deps.on_ran(mine)
+  end
+  if not o.vault or deps.no_write then
     return red and 1 or 0
   end
   local results, serr = tasks.sync(mine, { call = call, dry_run = o.dry_run })

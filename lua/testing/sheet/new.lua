@@ -134,7 +134,7 @@ end
 ---@param given? string
 ---@param getenv fun(name: string): string|nil
 ---@return string|nil vault, string|nil err
-local function find_vault(repo, given, getenv)
+function M.find_vault(repo, given, getenv)
   local v = given or getenv("TASKS_VAULT")
   if not v or v == "" then
     v = vim.fs.dirname(repo) .. "/tasks-vault"
@@ -188,7 +188,7 @@ function M.main(argv, sv, deps)
   local repo = vim.fs.normalize(vim.fn.fnamemodify(o.repo or vim.fn.getcwd(), ":p")):gsub("/+$", "")
   local call = deps.call
   if not call then
-    local vault, verr = find_vault(repo, o.vault, deps.getenv or vim.uv.os_getenv)
+    local vault, verr = M.find_vault(repo, o.vault, deps.getenv or vim.uv.os_getenv)
     if not vault then
       sv.err("testing sheets: " .. verr)
       return 3

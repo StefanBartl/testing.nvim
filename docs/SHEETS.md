@@ -201,6 +201,34 @@ the task's block: no suite, no second command. tasks.nvim's `:Tasks sheet-run` c
 Exit codes: 0 green (or waiting for a person) and written, 1 a sheet is red or the task could not be written, 2 bad
 usage, refused (trust, workstation) or no sheet names the task, 3 the engine of tasks.nvim could not be reached.
 
+## Hand over to an AI (`testing sheets prompt`, `testing sheets accept`)
+
+Stage 0 of the AI link: no model is called here (ai.nvim's headless entry comes later). The commands write a Markdown
+document a person pastes into the AI of their choice, and take the answer back only through a check.
+
+```
+testing sheets prompt draft --from-task <area/slug> [--repo <dir>] [--vault <dir>] [--out <file>]
+testing sheets prompt explain --task <area/slug> [--root <dir>]... [--tasks <vault>] [--out <file>]
+testing sheets accept --task <area/slug> --from <file> [--repo <dir>] [--name <file>]
+```
+
+* `prompt draft`: asks for a sheet for the live check. The document holds the task (title and body, without the
+  generated block of the last report, cut at 32 KiB), the rules of the sheet format and the skeleton
+  `testing sheets new` would write; the answer asked for is one ```lua block that returns the sheet.
+* `prompt explain`: runs the task's sheets as `testing sheets run` does (trust gate, workstation rule, as on CI) and
+  writes nothing into the task. For each red sheet the document holds every failure line (a snapshot failure shows
+  the first differing rows), its snapshot files and its source; the answer asked for is the cause and, for a bug of
+  the plugin, one ```task block (`title:`, `summary:`) that tasks.nvim turns into a bug task after confirmation. No
+  red sheet: nothing is written (exit 0, a note on stderr).
+* `accept`: takes the answer (or just its ```lua block) and writes `TESTS/sheets/<id>.sheet.lua` of the area's
+  repository (`--repo`, else `$REPOS_DIR/<area>`) only when it loads (`sheet.load`, as data), names the task and no
+  sheet of that name exists (created exclusively).
+
+What the model sees is exactly the document: the task's title and body, the sheet format, the skeleton, and for
+`explain` the failure lines, snapshot file names and the sheet's source. No file of the project beyond the sheet,
+no environment, no path of the vault. A vault or root whose path names `tricentis` is refused (exit 2): its tasks may
+carry customer data, and nothing of them is handed to an AI.
+
 ## Limits
 
 * Only the RPC engine exists; browser and desktop windows (Playwright, WebDriver) and terminal byte streams

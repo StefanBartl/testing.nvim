@@ -1601,6 +1601,271 @@ return function(H)
       )
       eq(#ran, 0, "and nothing ran")
     end
+
+    -- ===================================================================
+    -- 7. hand a sheet over to an AI (testing.sheet.prompt): draft, explain, accept
+    do
+      local prompt = require("testing.sheet.prompt")
+      local tasks = require("testing.sheet.tasks")
+      local outs7, errs7 = {}, {}
+      local sv7 = {
+        out = function(s)
+          outs7[#outs7 + 1] = s
+        end,
+        err = function(s)
+          errs7[#errs7 + 1] = s
+        end,
+      }
+      local body7 = table.concat({
+        "The float must show the hotkeys.",
+        "",
+        "## Akzeptanz",
+        "- [ ] Hotkeys underlined",
+        "",
+        "```lua",
+        "-- a ``` fence inside",
+        "```",
+        "",
+        tasks.BEGIN,
+        "## Test sheets",
+        "- old state SECRET-OLD",
+        tasks.END,
+      }, "\n")
+      local function engine7()
+        return { task = { title = "Float hotkeys", slug = "float-hotkeys" }, body = body7 }
+      end
+      eq(
+        prompt.draft(
+          { "--from-task", "ui.nvim/float-hotkeys", "--repo", root },
+          sv7,
+          { call = engine7 }
+        ),
+        0,
+        "prompt draft"
+      )
+      local d = table.concat(outs7, "\n")
+      has(d, "# Draft a test sheet for the live check ui.nvim/float-hotkeys", "the heading")
+      has(d, "**Float hotkeys**", "the title")
+      has(d, "The float must show the hotkeys.", "the body")
+      ok(not d:find("SECRET-OLD", 1, true), "without the generated block of the last report")
+      has(d, '"Hotkeys underlined"', "the skeleton with the acceptance as judge")
+      has(d, '| wait = "expr"', "the format rules")
+      has(d, "Exactly one ```lua block", "what to answer")
+      has(d, "````markdown", "a fence longer than the ``` inside the body")
+      outs7, errs7 = {}, {}
+      eq(
+        prompt.draft(
+          { "--from-task", "a/b", "--repo", root, "--vault", "E:/repos/tricentis-vault" },
+          sv7,
+          { call = engine7 }
+        ),
+        2,
+        "a tricentis vault is refused"
+      )
+      has(table.concat(errs7, "\n"), "customer data", "with the reason")
+      eq(#outs7, 0, "and nothing handed over")
+      local out_file = root .. "/p7/prompt.md"
+      eq(
+        prompt.draft(
+          { "--from-task", "a/b", "--repo", root, "--out", out_file },
+          sv7,
+          { call = engine7 }
+        ),
+        0,
+        "--out"
+      )
+      ok(vim.uv.fs_stat(out_file) ~= nil, "writes the file")
+      eq(prompt.draft({ "--repo", root }, sv7, { call = engine7 }), 2, "--from-task is required")
+
+      -- explain: the red sheets of the task, run as sheets run does, nothing written
+      write(
+        "p7/TESTS/sheets/r.sheet.lua",
+        'return { id = "r", title = "R", task = "x/red", steps = { { keys = "x" } } }'
+      )
+      write(
+        "p7/TESTS/sheets/g.sheet.lua",
+        'return { id = "g", title = "G", task = "x/red", steps = { { keys = "y" } } }'
+      )
+      local p7 = root .. "/p7"
+      local function deps7(by_id, extra)
+        return vim.tbl_extend("force", {
+          getenv = function()
+            return nil
+          end,
+          trust_check = function()
+            return nil
+          end,
+          run = function(s)
+            return by_id[s.id]
+          end,
+          call = function()
+            error("explain must not write")
+          end,
+        }, extra or {})
+      end
+      local fail = {
+        ok = false,
+        status = "fail",
+        failures = { "80x24 step 1, keys x: E492: Not an editor command", "  second line" },
+        snapshots = {},
+      }
+      local pass = { ok = true, status = "pass", failures = {}, snapshots = {} }
+      outs7 = {}
+      eq(
+        prompt.explain({ "--task", "x/red", "--root", p7 }, sv7, deps7({ r = fail, g = pass })),
+        0,
+        "prompt explain"
+      )
+      local x = table.concat(outs7, "\n")
+      local wrote7 = false
+      outs7 = {}
+      eq(
+        prompt.explain(
+          { "--task", "x/red", "--root", p7, "--tasks", root },
+          sv7,
+          deps7({ r = fail, g = pass }, {
+            call = function(method)
+              if method == "bodies" then
+                return {
+                  kind = "tasks.bodies",
+                  items = { { id = "x/red", etag = "sha256:1", body = "Summary.\n" } },
+                }
+              end
+              wrote7 = true
+              return {
+                kind = "tasks.result",
+                results = { { n = 1, ok = true, outcome = "changed" } },
+              }
+            end,
+          })
+        ),
+        0,
+        "explain with a vault"
+      )
+      ok(not wrote7, "never writes the task")
+      has(x, "## p7/TESTS/sheets/r.sheet.lua", "the red sheet")
+      ok(not x:find("g.sheet.lua", 1, true), "not the green one")
+      has(x, "E492: Not an editor command\n  second line", "every failure line")
+      has(x, 'id = "r"', "the sheet's source")
+      has(x, "```task\ntitle:", "the bug-task block asked for")
+      outs7, errs7 = {}, {}
+      eq(
+        prompt.explain({ "--task", "x/red", "--root", p7 }, sv7, deps7({ r = pass, g = pass })),
+        0,
+        "nothing red"
+      )
+      eq(#outs7, 0, "nothing handed over")
+      has(table.concat(errs7, "\n"), "nothing to explain", "it says so")
+      eq(
+        prompt.explain(
+          { "--task", "x/red", "--root", p7 },
+          sv7,
+          deps7({ r = fail, g = pass }, {
+            getenv = function(name)
+              return name == "NVIM_MACHINE_ROLE" and "workstation" or nil
+            end,
+          })
+        ),
+        2,
+        "the workstation rule of sheets run holds"
+      )
+      write(
+        "tricentis-x/TESTS/sheets/t.sheet.lua",
+        'return { id = "t", title = "T", task = "x/red", steps = { { keys = "x" } } }'
+      )
+      eq(
+        prompt.explain(
+          { "--task", "x/red", "--root", root .. "/tricentis-x" },
+          sv7,
+          deps7({ t = fail })
+        ),
+        2,
+        "a tricentis root is refused"
+      )
+
+      -- accept: the answer back, only through sheet.load
+      local answer = table.concat({
+        "Here is the sheet:",
+        "",
+        "```lua",
+        'return { id = "float-hotkeys", title = "Float hotkeys", task = "ui.nvim/float-hotkeys",',
+        '  notes = "DRAFT", steps = { { lua = "vim.cmd(\'UI\')" }, { screen = "float" } }, judge = { "j" } }',
+        "```",
+        "",
+        "Check the colours by hand.",
+      }, "\n")
+      local repo7 = root .. "/repo7"
+      write("repo7/answer.md", answer)
+      outs7 = {}
+      eq(
+        prompt.accept(
+          { "--task", "ui.nvim/float-hotkeys", "--from", repo7 .. "/answer.md", "--repo", repo7 },
+          sv7
+        ),
+        0,
+        "accept"
+      )
+      local s7 = sheet.load(repo7 .. "/TESTS/sheets/float-hotkeys.sheet.lua")
+      eq(s7 and #s7.steps, 2, "the sheet of the lua block is written and loads")
+      has(table.concat(outs7, "\n"), "sheet float-hotkeys, 2 steps", "it says what it wrote")
+      eq(
+        prompt.accept(
+          { "--task", "ui.nvim/float-hotkeys", "--from", repo7 .. "/answer.md", "--repo", repo7 },
+          sv7
+        ),
+        2,
+        "never over an existing sheet"
+      )
+      eq(
+        prompt.accept({
+          "--task",
+          "ui.nvim/other",
+          "--from",
+          repo7 .. "/answer.md",
+          "--repo",
+          repo7,
+          "--name",
+          "x",
+        }, sv7),
+        2,
+        "a draft that names another task"
+      )
+      write(
+        "repo7/bad.md",
+        "```lua\nreturn { id = 'b', title = 'B', task = 'ui.nvim/float-hotkeys', os = os }\n```"
+      )
+      errs7 = {}
+      eq(
+        prompt.accept({
+          "--task",
+          "ui.nvim/float-hotkeys",
+          "--from",
+          repo7 .. "/bad.md",
+          "--repo",
+          repo7,
+          "--name",
+          "b",
+        }, sv7),
+        2,
+        "a draft that does not load"
+      )
+      has(table.concat(errs7, "\n"), "does not load", "with the reason")
+      ok(vim.uv.fs_stat(repo7 .. "/TESTS/sheets/b.sheet.lua") == nil, "and nothing written")
+      eq(
+        prompt.lua_block("return { id = 'z' }\n"),
+        "return { id = 'z' }\n",
+        "an answer without a block is the sheet itself"
+      )
+      eq(
+        report.main(
+          { "prompt", "draft", "--from-task", "a/b", "--repo", root },
+          sv7,
+          { call = engine7 }
+        ),
+        0,
+        "through `testing sheets prompt draft`"
+      )
+    end
   end, debug.traceback)
 
   S.cleanup()

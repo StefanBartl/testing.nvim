@@ -535,6 +535,12 @@ runs the sheets that name the task now and writes their state into its block
 unless TESTING_ALLOW_WORKSTATION=1). 0 green, 1 red or not written, 2 bad
 usage, refused or no sheet, 3 the engine of tasks.nvim could not be reached.
 
+`testing sheets prompt draft --from-task {id}` / `prompt explain --task {id}`:
+a Markdown hand-over for an AI (draft a sheet from the task; explain a red
+run). `testing sheets accept --task {id} --from <file>` writes the AI's sheet
+only when it loads and names the task. A vault or root naming tricentis is
+refused. See docs/SHEETS.md, "Hand over to an AI".
+
 ==============================================================================
 11. Dialects                                                      *testing-dialects*
 

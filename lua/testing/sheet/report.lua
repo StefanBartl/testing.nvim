@@ -332,6 +332,12 @@ function M.main(argv, sv, deps)
   if argv[1] == "run" then
     return require("testing.sheet.run").main(vim.list_slice(argv, 2), sv, deps)
   end
+  if argv[1] == "accept" then
+    return require("testing.sheet.prompt").accept(vim.list_slice(argv, 2), sv, deps)
+  end
+  if argv[1] == "prompt" and (argv[2] == "draft" or argv[2] == "explain") then
+    return require("testing.sheet.prompt")[argv[2]](vim.list_slice(argv, 3), sv, deps)
+  end
   if argv[1] ~= "report" then
     sv.err(
       M.USAGE
@@ -339,6 +345,8 @@ function M.main(argv, sv, deps)
         .. require("testing.sheet.new").USAGE
         .. "\n"
         .. require("testing.sheet.run").USAGE
+        .. "\n"
+        .. require("testing.sheet.prompt").USAGE
     )
     return 2
   end
