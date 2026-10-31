@@ -339,7 +339,12 @@ end
 local function describe(step)
   for _, a in ipairs(M.ACTIONS) do
     if step[a] ~= nil then
-      local what = ("%s %s"):format(a, tostring(step[a]))
+      -- one short line: a multi-line `wait`/`lua` would push the reason off the first line
+      local value = tostring(step[a]):gsub("%s+", " ")
+      if #value > 60 then
+        value = value:sub(1, 57) .. "..."
+      end
+      local what = ("%s %s"):format(a, value)
       return step.note and (step.note .. " (" .. what .. ")") or what
     end
   end
@@ -496,13 +501,28 @@ local function load_and_run(target, opts)
   return s, M.run(s, opts)
 end
 
----The failures on ONE line: the state and the report keep the first line of a message.
+---Every failed step on the FIRST line: the state and the report keep only that line of a message.
 ---@param s Testing.Sheet
 ---@param res Testing.Sheet.Result
 ---@return string
 local function failed_text(s, res)
-  return ("test sheet %s failed: %s"):format(s.id, table.concat(res.failures, "; "))
+  -- the first line of each failure (size, step, reason) on the first line; details such as a
+  -- snapshot diff follow on the lines below
+  local firsts, details = {}, {}
+  for _, f in ipairs(res.failures) do
+    local first, more = f:match("^([^\n]*)\n?(.*)$")
+    firsts[#firsts + 1] = first
+    if more and more ~= "" then
+      details[#details + 1] = more
+    end
+  end
+  local text = ("test sheet %s failed: %s"):format(s.id, table.concat(firsts, "; "))
+  if #details > 0 then
+    text = text .. "\n" .. table.concat(details, "\n")
+  end
+  return text
 end
+M._failed_text = failed_text -- for the spec
 
 ---Run a sheet and raise on a failure (busted style specs): `it(sheet.spec_name(s), function() sheet.check(path) end)`.
 ---@param target string|Testing.Sheet A path or a loaded sheet.

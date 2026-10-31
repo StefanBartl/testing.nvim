@@ -33,7 +33,7 @@ return {
 | Step | Does | Fails when |
 |---|---|---|
 | `keys = s` | typed through `child.feed` (mappings apply, returns when the typeahead is empty) | the keys left an error message (`v:errmsg`, e.g. `E492`); `ignore_errmsg = true` for keys that run `silent! cmd` on purpose (it still sets `v:errmsg`) |
-| `input = s` | queued through `child.input` (returns at once) | never |
+| `input = s` | queued through `child.input` (returns at once); the way into insert mode (`input = "A"`, then a `wait` for the mode): `keys` feeds with `x`, which ends insert mode again | never |
 | `lua = s` | runs in the child | it raises |
 | `settle = ms` | waits until the child is idle | it is not idle in time |
 | `wait = expr` (`timeout` ms, default 2000) | polls a Lua expression in the child | it is not truthy in time |

@@ -269,6 +269,39 @@ return function(H)
       has(tostring(err), "; 40x12 step 1, wait false", "the second failure follows on that line")
       has(tostring(err), "still false after 100 ms", "a wait that never holds")
 
+      -- a multi-line step and a multi-line reason: every step and its reason stay on the first line
+      local long = vim.deepcopy(slow)
+      long.sizes = { { rows = 24, cols = 80 } }
+      long.steps = {
+        {
+          wait = "false\n or false\n or (1 == 2 and 'a long expression that goes on and on' == 'x')",
+          timeout = 100,
+        },
+      }
+      local _, long_err = pcall(sheet.check, long, { root = root })
+      local first_line = tostring(long_err):match("^[^\n]*")
+      has(
+        first_line,
+        "still false after 100 ms",
+        "the reason of a multi-line step is on the first line"
+      )
+      has(first_line, "...", "a long step is cut")
+      local fake = { id = "f", title = "F", steps = {} }
+      local multi = {
+        ok = false,
+        failures = {
+          "80x24 step 2, screen x: differs:\n  - a\n  + b",
+          "40x12 step 1, wait y: still false",
+        },
+      }
+      local ft = sheet._failed_text(fake, multi)
+      eq(
+        ft:match("^[^\n]*"),
+        "test sheet f failed: 80x24 step 2, screen x: differs:; 40x12 step 1, wait y: still false",
+        "both failures on the first line"
+      )
+      has(ft, "\n  - a\n  + b", "the diff follows below")
+
       -- ignore_errmsg: a mapping that runs `silent! cmd` on purpose still sets v:errmsg
       local quiet = vim.deepcopy(slow)
       quiet.sizes = { { rows = 24, cols = 80 } }
