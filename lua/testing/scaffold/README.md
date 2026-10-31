@@ -16,7 +16,7 @@ Also reachable as `:Testing init [<root>] [--force] [--plugin=<name>]` and
 
 | File | Purpose |
 | --- | --- |
-| `.testing.lua` | plugin name and dependencies for testing.nvim |
+| `.testing.lua` | plugin name and dependencies for testing.nvim; strict guards (`fs`, `state`, `scheduled_error`, `prompt`, `deprecation` on `"error"`, `process_net` on `"warn"`) and an empty `guard_allow` |
 | `TESTS/minimal_init.lua` | runtimepath for isolated runs; exits 1 and names all four places when a dependency is missing |
 | `TESTS/<plugin>/load_spec.lua` | a first spec that can fail: the module of the plugin must load |
 | `scripts/test.sh` | the runner; exits 1 with the four searched places instead of running silent or green without nvim, testing.nvim or a dependency |

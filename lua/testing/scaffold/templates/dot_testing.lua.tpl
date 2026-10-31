@@ -21,6 +21,6 @@ return {
     deprecation = "error",
     process_net = "warn",
   },
-  -- Legitimate writers and spawns, one line each with a sentence why (docs/GUARDS.md of testing.nvim).
+  -- Legitimate writers, spawns and network hosts, one line each with a sentence why (docs/GUARDS.md of testing.nvim).
   guard_allow = { fs = {}, spawn = {}, network = {} },
 }

@@ -330,10 +330,12 @@ return function(H)
     process_net = "warn",
     clock = false,
   }, ".testing.lua starts strict, the process/network guard only reports (warn)")
+  -- the loader fills in an empty guard_allow by default: look at the file itself
+  local raw = assert(loadfile(root .. "/.testing.lua"))()
   eq(
-    loaded.config.guard_allow,
+    raw.guard_allow,
     { fs = {}, spawn = {}, network = {} },
-    ".testing.lua has an empty allowlist"
+    ".testing.lua writes an empty allowlist"
   )
   if not is_windows then
     local stat = vim.uv.fs_stat(root .. "/scripts/test.sh")
