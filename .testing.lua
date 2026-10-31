@@ -43,6 +43,9 @@ return {
     deprecation = "error",
     process_net = "error",
   },
+  -- `testing ci remote`: the job "lib.nvim suite via testing.nvim (<os>)" runs lib.nvim's suite on this runner, it is
+  -- no verdict on testing.nvim's own system legs and must not share their cells (docs/CI.md).
+  ci_remote = { non_gating = { "nightly", "lib.nvim suite" } },
   -- `testing conformance .` on this repository: the two entry scripts of the child editor end the editor when they
   -- are required (that is what an entry script of a child is), which K1 reports as a module that cannot be required.
   conformance = {

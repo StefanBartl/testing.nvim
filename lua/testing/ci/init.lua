@@ -39,6 +39,7 @@ M.USAGE = table.concat({
   "       testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--root=<dir>]",
   "       testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list> [--force] [--jobs=<n>] ...",
   "       testing ci list [--json] [--root=<dir>]",
+  "       testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>]  (GitHub Actions status)",
   "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",
@@ -1006,6 +1007,10 @@ M.internal = {
 function M.main(argv, sv)
   if argv[1] == "verify" then
     return require("testing.ci.verify").main(vim.list_slice(argv, 2), sv)
+  end
+  -- before the multi-repository run: `remote --repos-root` is not `testing ci --repos-root`
+  if argv[1] == "remote" then
+    return require("testing.ci.remote").main(vim.list_slice(argv, 2), sv)
   end
   if require("testing.ci.repos").wanted(argv) then
     return require("testing.ci.repos").main(argv, sv)

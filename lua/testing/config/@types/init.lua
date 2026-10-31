@@ -166,6 +166,7 @@
 ---@field minit string|false
 ---@field deps string[] Directory names, resolved by `testing.deps`.
 ---@field setup table<string, any> Options for the plugin's `setup()`.
+---@field ci_remote Testing.ProjectConfig.CiRemote `testing ci remote`.
 ---@field conformance Testing.ProjectConfig.Conformance
 ---@field surface Testing.ProjectConfig.Surface
 ---@field cache Testing.ProjectConfig.Cache
@@ -178,6 +179,11 @@
 ---@field budget Testing.ProjectConfig.Budget
 ---@field backends Testing.ProjectConfig.Backends
 ---@field ci? table The pipeline of `testing ci` (validated there: `testing.ci.schema`, docs/CI.md); nil: derived.
+
+---@class Testing.ProjectConfig.CiRemote
+---@field workflow string The GitHub Actions workflow whose latest run is reported (default "CI").
+---@field branch string The branch whose fetched head (`origin/<branch>`) is asked about (default "main").
+---@field non_gating string[] Job names containing one of these (case-insensitive) are listed but never decide.
 
 ---@class Testing.ProjectConfig.Loaded
 --- Result of `testing.config.project.load`.

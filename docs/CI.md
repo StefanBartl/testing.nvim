@@ -353,6 +353,77 @@ verdict names the repositories that are not green, and their findings fill the q
 repository's name in front (a repository without findings gets a text-only entry with its state and exit code). The
 list opens only on red.
 
+## The GitHub Actions status: `testing ci remote`
+
+```
+testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>] [--state-dir=<dir>]
+```
+
+The latest GitHub Actions run of the CI workflow per repository, one cell per system. It runs nothing locally and
+never fetches: it asks GitHub about the commit the last `git fetch` brought.
+
+Per repository:
+
+1. `owner/repo` from `git remote get-url origin` (`https://github.com/o/r(.git)`, `git@github.com:o/r.git`,
+   `ssh://git@github.com/o/r`); any other host is `no_github`.
+2. The commit: the head of `origin/<branch>` (`ci_remote.branch`, default `main`). Not "the newest run of the branch":
+   a fast-forward push of a commit that already ran elsewhere does not always get a second run, and the newest run of
+   `main` is then an older commit's verdict.
+3. `GET /repos/<o>/<r>/actions/runs?head_sha=<sha>&per_page=20`, only the runs whose workflow is named
+   `ci_remote.workflow` (default `CI`, compared without case: `ci` is the same; `--workflow` overrides it for every
+   repository), the newest by `created_at`. A
+   path-filtered sibling workflow (`pages`, `release-engine`) can be created after the CI run for the same push and must
+   not become the verdict.
+4. `GET .../runs/<id>/jobs`: each job goes to the cell `ubuntu`, `windows` or `macos` by its name, else, on a
+   self-hosted runner, by its labels (`Linux` counts as ubuntu), or to `other` (a hosted stylua, luacheck or publish
+   job: its `ubuntu-latest` image says nothing about the ubuntu leg). A job whose name contains a
+   `ci_remote.non_gating` text (default `nightly`) is listed under `non_gating` and never decides.
+
+States, worst first; a cell has the worst state of its jobs, the repository (`overall`) the worst of its cells:
+
+| State | When |
+| --- | --- |
+| `failure` | a job failed or timed out (or the run concluded `failure` although no job did) |
+| `rejected` | a completed run with **zero jobs**: GitHub found the workflow file invalid and started nothing. Counting red jobs would read it as a pass |
+| `cancelled` | a job was cancelled (often `cancel-in-progress`: a newer run took over) |
+| `unknown` | no token, no network, an API error, an answer that is not one: never green |
+| `waiting_runner` | a job queued on a `self-hosted` runner for longer than 2 minutes: the runner is off |
+| `queued`, `running` | the run is not done |
+| `success` | every job of the cell succeeded (skipped ones do not count against it) |
+| `skipped` | every job skipped, or a head commit with `[skip ci]` (and the like) without a run |
+| `no_run` | no run of the workflow for the commit |
+| `no_github` | the origin is not on GitHub |
+
+The table (one row per repository: repo, with the directory in front when it is named otherwise, ubuntu, windows,
+macos, note; `ok`, `FAIL`, `no-runner`, `-` for a cell
+without a job, `!` for a rejected run, `?` for unknown) ends with `fully green: <n> / <total>`. `--json` prints the
+document `testing-ci-remote/1` instead: `schema`, `generated_at`, `token_source` (`env:TESTING_GITHUB_TOKEN` or `gh`,
+never the token) or `token_error`, `workflow` (the `--workflow`), and `repos`, sorted by name, each with `repo`, `owner`,
+`dir`, `branch`, `workflow`, `sha`, `overall`, `run` (`id`, `url`, `status`, `conclusion`, `created_at`, `updated_at`,
+`event`, `attempt`), `os` (per cell `state`, `url` and `job`: the job that decided it), `non_gating`, `note`, `error`
+and `config_error`. Keys are sorted and the same answers give the same bytes.
+
+**Which repositories.** The roots named on the command line (default: the current directory), and with
+`--repos-root=<dir>` (repeatable) every directory directly below `<dir>` that has a `.github/workflows` directory and a
+GitHub origin; a name containing `vault` is left out (notes, tasks, rules: no code). lib.nvim counts, it has workflows
+(no `.testing.lua` needed). A repository's `.testing.lua` is loaded for its `ci_remote` section when it has one
+(workspace trust applies: an untrusted one keeps the defaults and says so in `config_error`).
+
+**The token.** `$TESTING_GITHUB_TOKEN`, a fine-grained token that can only read (repository permissions *Actions:
+read* and *Metadata: read*), else `gh auth token`. Never `GITHUB_TOKEN`: it is not read, and it is taken out of the
+environment of `gh` (which would print it back). The token goes to curl through its configuration on stdin, never on
+a command line, and appears in no output, no document, no cache file and no error. Without a token every repository
+that needs GitHub is `unknown` and the exit code is `3`.
+
+**Cache.** Per repository `<state>/testing/ci-remote/<owner>_<repo>.json` (`--state-dir`, default `stdpath('state')`)
+holds the ETags and the last answers (only the fields used). The runs are asked with `If-None-Match`: a `304` reuses
+the stored answer and does not count against the rate limit. The jobs of a completed run whose `updated_at` did not
+change are not asked again at all; an open run's jobs are asked again, conditionally. Offline, a repository is
+`unknown`, never its stored state.
+
+Exit codes: `0` nothing red, `1` a repository is `failure`, `rejected` or `cancelled`, `2` usage, `3` a repository
+could not be fetched ([EXIT-CODES.md](EXIT-CODES.md)).
+
 ## Events of a run
 
 `testing ci --events=<file>` writes what the run is doing while it goes, one JSON object per line (NDJSON, flushed after

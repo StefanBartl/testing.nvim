@@ -53,6 +53,12 @@ that could not start, or a report (`ci.json`, `--json`, `--junit`) that could no
 when its Result-IR says so (exit `0` without a result is `3`). The sentinel `TESTING_CI_OK` follows only a complete green
 run, never a `--step` selection.
 
+`testing ci remote` ([CI.md](CI.md#the-github-actions-status-testing-ci-remote)) reads GitHub, it runs nothing: `0` every
+repository was fetched and none is red (`no_run`, `no_github`, `skipped`, `queued`, `running` and `waiting_runner` are not
+red), `1` a repository is `failure`, `rejected` or `cancelled` (red wins over everything else), `2` a usage error (an
+unknown flag, a root that is not a directory, no repository found below `--repos-root`), `3` a repository could not be
+fetched (`unknown`: no token, no network, an API error) and none is red. An `unknown` is never reported as green.
+
 `testing lint` ([CI.md](CI.md#testing-lint-the-linters-on-the-changed-files)) uses them over its checks, the worst one
 decides: `0` every check green (or nothing to check), `1` findings, `2` usage (an unknown check, a file outside the
 root, two scopes), `3` a tool that is missing (that check is skipped, the others run; a red check never hides it) or

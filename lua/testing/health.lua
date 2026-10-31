@@ -54,6 +54,8 @@ local REQUIRED_LIB = {
   { "lib.nvim.progress", "the progress of :Testing ci" },
   { "lib.nvim.ui.kit", "the matrix view of :Testing surface --matrix" },
   { "lib.nvim.window.make_scratch", "the hover float" },
+  { "lib.nvim.fs.read_bounded", "reading the ETag cache of testing ci remote" },
+  { "lib.nvim.net.github", "GitHub requests and the token of testing ci remote" },
 }
 
 ---Kernel modules the CLI and the in-process driver need; a failure here is a defect of the plugin

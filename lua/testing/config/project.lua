@@ -496,6 +496,29 @@ local SCHEMA = {
     end,
     expect = "a table (the pipeline of `testing ci`, docs/CI.md)",
   },
+  ci_remote = {
+    workflow = {
+      check = function(v)
+        return type(v) == "string" and v ~= "" and #v <= 200 and not v:find("%c")
+      end,
+      expect = 'the name of a GitHub Actions workflow, e.g. "CI"',
+    },
+    branch = {
+      check = function(v)
+        return type(v) == "string"
+          and #v <= 200
+          and v:match("^[%w_.][%w_./%-]*$") ~= nil
+          and not v:find("..", 1, true)
+      end,
+      expect = 'a branch name (letters, digits, _ . / -; not starting with "-"), e.g. "main"',
+    },
+    non_gating = {
+      check = list_of(function(v)
+        return type(v) == "string" and v ~= "" and #v <= 200 and not v:find("%c")
+      end, 0),
+      expect = 'a list of texts; a job whose name contains one is listed but never decides, e.g. { "nightly" }',
+    },
+  },
   conformance = {
     load_budget_ms = {
       check = function(v)
