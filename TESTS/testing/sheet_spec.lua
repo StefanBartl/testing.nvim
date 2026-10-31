@@ -1006,6 +1006,41 @@ return function(H)
         root .. "/side/tasks.nvim/scripts/tasks.lua",
         "the engine beside the vault is found"
       )
+
+      -- review of 81f77c9: fences as CommonMark reads them, the same rule as tasks.nvim
+      local blk = tasks.BEGIN .. "\n" .. tasks.STATES .. " a=red -->\n" .. tasks.END
+      for _, pre in ipairs({
+        "```text\n~~~~~~~~\n```\n",
+        "````\n```\n````\n",
+        "```\ncode\n```lua\n```\n",
+        "```code``` sample\n",
+      }) do
+        local _, _, _, st4 = tasks.extract(pre .. blk)
+        eq(st4, "ok", "the block after " .. vim.inspect(pre) .. " is found")
+      end
+      local _, _, _, quoted4 = tasks.extract("```\n" .. blk .. "\n```")
+      eq(quoted4, "none", "a block inside a fence is text")
+
+      -- a sheet that does not load still reaches its task, as red
+      write(
+        "p4b/TESTS/sheets/good.sheet.lua",
+        'return { id = "good", title = "Good", task = "a/one", steps = { { keys = "x" } } }'
+      )
+      write(
+        "p4b/TESTS/sheets/bad.sheet.lua",
+        'return {\n  id = "bad",\n  task = "a/one",\n  steps = {{\n'
+      )
+      current = body
+      local cases4b =
+        { ["sheet:good"] = { name = "sheet:good", status = "pass", file = "TESTS/s_spec.lua" } }
+      assert(
+        tasks.sync(
+          report.collect({ root .. "/p4b" }, { cases = cases4b }),
+          { call = engine(accept) }
+        )
+      )
+      has(current, "bad=red", "the broken sheet is red in its task")
+      has(current, "good=green", "beside the sheet that loads")
     end
 
     -- ===================================================================

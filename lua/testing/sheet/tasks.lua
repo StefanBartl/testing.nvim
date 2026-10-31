@@ -120,17 +120,25 @@ local function trim(s)
   return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
----The lines of a body and, per line, whether it is inside (or opens/closes) a fenced code block.
+---The lines of a body and, per line, whether it is inside (or opens/closes) a fenced code block. Fences as
+---CommonMark reads them, the same rule tasks.nvim's `tasks_nvim.sheets` applies: up to 3 spaces, 3+ backticks
+---(no backtick in the info string) or 3+ tildes; closed by the same character, at least as long, nothing after it.
 ---@param body string
 ---@return string[] lines, boolean[] fenced
 local function lines_of(body)
-  local lines, fenced, inside = {}, {}, false
+  local lines, fenced, fence = {}, {}, nil
   for line in (body .. "\n"):gmatch("(.-)\n") do
-    local fence = line:match("^%s*```") or line:match("^%s*~~~")
     lines[#lines + 1] = line
-    fenced[#lines] = inside or fence ~= nil
     if fence then
-      inside = not inside
+      fenced[#lines] = true
+      local close = line:match("^ ? ? ?(" .. fence:sub(1, 1):rep(3) .. "+)%s*$")
+      if close and #close >= #fence then
+        fence = nil
+      end
+    else
+      local ticks, info = line:match("^ ? ? ?(```+)(.*)$")
+      fence = (ticks and not info:find("`", 1, true)) and ticks or line:match("^ ? ? ?(~~~+)")
+      fenced[#lines] = fence ~= nil
     end
   end
   return lines, fenced
@@ -379,6 +387,27 @@ local function read_bodies(call, ids)
   return items, true
 end
 
+---The task a sheet names that does not load (a syntax error, a wrong field): read from its text, so that the task
+---shows it `red` instead of dropping it from the block (and showing the rest green). Only a `task = "<area/slug>"`
+---on a line of its own counts; nothing of the file is run.
+---@param e Testing.SheetReport.Entry
+---@return string|nil
+local function task_of_unloadable(e)
+  local f = e.root and e.rel and io.open(e.root .. "/" .. e.rel, "rb")
+  if not f then
+    return nil
+  end
+  local text = f:read(262144) or ""
+  f:close()
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    local id = line:match("^%s*task%s*=%s*[\"']([%w_.%-]+/[%w_.%-]+)[\"']%s*,?%s*$")
+    if id then
+      return id
+    end
+  end
+  return nil
+end
+
 ---Write the state of the sheets into their tasks.
 ---@param entries Testing.SheetReport.Entry[]
 ---@param opts { call: Testing.SheetTasks.Call, dry_run?: boolean }
@@ -386,7 +415,7 @@ end
 function M.sync(entries, opts)
   local by_task, ids = {}, {}
   for _, e in ipairs(entries) do
-    local id = e.sheet and e.sheet.task
+    local id = e.sheet and e.sheet.task or (not e.sheet and task_of_unloadable(e))
     if id then
       if not by_task[id] then
         by_task[id] = {}
