@@ -127,6 +127,11 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
 - **The last result** ([docs/STATE.md](docs/STATE.md)): `testing.state` keeps the last result per case
   (`last.json`, merged over partial runs, with the staleness of each spec file) for an explorer, a hover or a
   statusline; a data module, no UI.
+- **For an app or a web page** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md#the-contract-testing-export1)):
+  the versioned contract `testing-export/1` (JSON Schema in `schemas/testing-export/1/`, golden files):
+  `testing call fleet|repo` prints the fleet (last local result, last green run, `ci.json`, GitHub Actions per
+  system) or one repository with its red cases, redacted; the export form holds no absolute path. Runs nothing (with `--remote` the CI
+  adapter keeps its ETag cache in the state directory).
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
   redacted, validated after writing). Every reporter carries a three-valued **verdict**

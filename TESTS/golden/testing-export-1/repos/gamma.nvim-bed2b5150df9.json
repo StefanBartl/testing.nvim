@@ -1,0 +1,50 @@
+{
+  "capabilities": [
+    "fleet",
+    "manifest",
+    "repo"
+  ],
+  "cases": [],
+  "cases_omitted": 0,
+  "cases_red": 0,
+  "digest": "sha256:ac85e2bb55a530a3",
+  "engine": {
+    "git": "fixture",
+    "nvim": "0.0.0",
+    "version": "0.1.0-dev"
+  },
+  "form": "export",
+  "generated_at": "2026-10-31T12:00:00Z",
+  "kind": "repo",
+  "notes": [],
+  "plugin": "testing.nvim",
+  "remote": {
+    "asked": true,
+    "error": null
+  },
+  "repo": {
+    "ci_local": null,
+    "ci_remote": {
+      "branch": "main",
+      "note": "no origin remote",
+      "os": {
+        "macos": null,
+        "ubuntu": null,
+        "windows": null
+      },
+      "repo": null,
+      "run": null,
+      "sha": null,
+      "state": "no_github",
+      "workflow": "CI"
+    },
+    "counts": null,
+    "head": null,
+    "key": "gamma.nvim-bed2b5150df9",
+    "last_green": null,
+    "local": null,
+    "name": "gamma.nvim"
+  },
+  "rev": "rev:811d73",
+  "schema": "testing-export/1"
+}

@@ -320,3 +320,114 @@ warning says how many were left out. The step summary table is **appended** to
 
 The module-level reference for authors of reporters is
 [`lua/testing/report/README.md`](../lua/testing/report/README.md).
+
+## The contract `testing-export/1`
+
+The documents an app, a web page or a panel reads: the fleet, one repository, the manifest of an export folder. They
+are the only interface for such a client: it reads no `last.json`, no `runs.jsonl` and no IR. testing.nvim writes them,
+never the app. The JSON Schema is
+[`schemas/testing-export/1/testing-export.schema.json`](../schemas/testing-export/1/testing-export.schema.json)
+(draft 2020-12); the golden files of a synthetic fleet are in
+[`TESTS/golden/testing-export-1/`](../TESTS/golden/testing-export-1/) (an export folder byte for byte; regenerate them on
+purpose with `nvim -n -i NONE --headless -u NONE -l TESTS/golden/regenerate_export.lua` and commit them with the code
+change, a changed golden file is a changed contract).
+
+```sh
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua call fleet --repos-root=E:/repos [--export] [--remote]
+nvim -n -i NONE --headless -u NONE -l scripts/testing.lua call repo <dir> [--export] [--remote]
+```
+
+`testing call` prints one line of canonical JSON on stdout ([CLI.md](CLI.md#subcommands)). The Lua API is
+`testing.export`: `fleet(opts)`, `repo(dir, opts)`, `export(opts)` (the files of an export folder and the manifest,
+written by nothing yet: `testing export --out` will write them, the manifest last; `opts.previous(path)` gives the
+folder's current file texts so that an unchanged document keeps its bytes), `encode`, `read`, `validate`, `leaks`,
+`repo_key`.
+
+### Head
+
+Every document starts with the same fields:
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | `"testing-export/1"`. |
+| `plugin` | `"testing.nvim"`. |
+| `kind` | `fleet`, `repo` or `manifest`. |
+| `form` | `local` (for a process on this machine: carries `root`) or `export` (a folder, a web page, a panel: no absolute path anywhere). A manifest is always `export`. |
+| `generated_at` | UTC, `YYYY-MM-DDTHH:MM:SSZ`. For `ci_remote` this is also the time of the GitHub answer. In an export folder written again (`export` with `previous`), a document whose digest did not change keeps the `generated_at` and `engine` of its file: the time its content was first written. |
+| `engine` | `{ version, git, nvim }` of testing.nvim. |
+| `rev` | What the sources looked like (`last.json`, `last_green.json`, `ci.json` with the paths of this machine replaced by their placeholders, the CI run). |
+| `digest` | `sha256:<16 hex>` of the content **without** `generated_at` and `engine`: two documents of an unchanged state have the same digest, whenever and wherever they were made. The manifest's `rev` and `digest` follow the path and digest of each of its files, not their bytes (which hold `generated_at`). |
+| `capabilities` | What this engine writes (`fleet`, `manifest`, `repo`); a client shows only what is listed. |
+| `root` | Only in the local form: the repos root (fleet, when exactly one `--repos-root` was named) or the repository (repo). |
+
+The bytes are canonical (`lib.nvim.json.canonical`): keys sorted by byte value, no whitespace (stdout, the form that is
+hashed), or indented by two spaces with a final line feed (the files of an export folder). A document is at most
+8 MiB; a bigger one is an error, never a cut document.
+
+### `fleet`
+
+`repos[]`, one row per repository, sorted by directory name; `excluded` (how many were left out: vaults and
+`--exclude`; their names are not in the document); `remote = { asked, error }` (whether the CI adapter was asked and
+why it failed, redacted). The repositories are found as `testing ci overview` finds them: below each `--repos-root`
+every directory with workflows, a `ci` section or a `.testing.lua`, no vault (a name containing "vault"), `lib.nvim`
+taken in, `--include`/`--exclude` on top; or the directories named.
+
+A row:
+
+| Field | Meaning |
+| --- | --- |
+| `key` | `<basename>-<12 hex of sha256(basename, a line feed, root commit)>`: the same in every clone of the repository, below any folder, on any machine (no path goes into it); without git the root commit is empty. Not the name of the state directory (that one hashes the absolute path). |
+| `name` | The directory name. |
+| `root` | Only in the local form: the absolute directory. |
+| `head` | `{ sha, branch, dirty }` of the checkout now (git); `null` when it is no checkout. |
+| `local` | The last local result (`last.json`, merged over partial runs): `run_id`, `ts`, `verdict` (`red` when a case is red; `green-partial` when the last run was partial or a case was skipped; else `green`), `summary` (all eight statuses), `cases`, `files`, `partial`, `stale` (spec files changed, gone or without a result since), `commit` (the commit of the last green record when it is this run, else `null`). `null`: no result recorded. |
+| `last_green` | `{ run_id, ts, sha }` of the last completely green run (`last_green.json`), or `null`. |
+| `ci_local` | The last local pipeline run (`ci.json`): `verdict`, `profile`, `partial`, `commit`, `tree`, `dirty`, `first_red`, `time`; or `null`. |
+| `ci_remote` | The CI adapter's record (`testing ci remote`, only with `--remote`): `state` (its states), `repo` (`owner/name`), `sha`, `branch`, `workflow`, `os.{ubuntu,windows,macos}` (`{ state, url, job }`, `null` without a job for that system), `run` (`id`, `url`, `status`, `conclusion`, `created_at`, `updated_at`, `event`, `attempt`), `note`. `null`: not asked (no `--remote`). Asked, but the adapter gave no record for the repository (it failed, see `remote.error`): `state = "unknown"`, `os` all `null`, `run: null`, a `note` that says so. Links only to `https://github.com/`; the token is in no document. |
+| `counts` | `{ fail, flaky }` of the last result (`flaky`: cases marked flaky in it), `null` without a result. |
+
+### `repo`
+
+The row of one repository as `repo`, and its red cases (`fail`, `error`, `timeout`, `crash`, `xpass`) by file and line
+as `cases[]`: `id`, `file`, `line`, `status`, `name`, `describe`, `duration_ms`, `flaky`, `message`, `expected`,
+`actual` (line breaks kept), `fails[{ line, msg }]`, `fails_total`. At most 500 cases; `cases_red` counts all,
+`cases_omitted` those left out. `notes` says why a source of the state could not be used.
+
+### `manifest`
+
+The table of contents of an export folder, `testing-export.json`:
+`files[{ path, sha256, bytes }]`, sorted by path. A reader reads the manifest first and checks every file against its
+sum, so it never sees half an export. The folder:
+
+```
+<dir>/
+  testing-export.json        kind manifest
+  fleet.json                 kind fleet (export form)
+  repos/<key>.json           kind repo, one per repository of the fleet
+```
+
+### Redaction and paths
+
+`last.json` keeps messages as the code under test wrote them, with absolute paths. Every free text of a document
+(messages, expected, actual, notes, names, the CI adapter's notes) is redacted as the IR redacts a message
+(`testing.run.inproc.redact_text`: the repository is `<REPO>`, the home directory `<HOME>`, the temporary directory
+`<TMP>`, the state directory `<STATE>`, user and host name, `NAME=value` pairs of the environment), the bare value of
+every environment variable whose name says it is a secret (`TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `API_KEY`, ...; at
+least 8 bytes) becomes `<ENV>`, then every absolute path left becomes `<PATH>` (a drive path, a UNC path with either
+slash, a POSIX path, also right after a `>` that closes no placeholder, a `file:` URI); a failure text is cut to 4 KiB, a note to 300 bytes. That holds in both forms. The absolute `root`
+exists only in the local form. Before an export-form document is handed out, a detector looks at every string and key
+for the same shapes (a drive path, a UNC path with either slash, an absolute POSIX path, a `file:` URI), the home
+directory and the roots of the repositories (as whole paths: `/root` is not in `rootless_spec.lua`), a secret of the
+environment and the user name (not in the name, the key and the file of a repository, names the user chose); a finding refuses the document (`testing call` exits `3`), it is never written with the leak.
+
+### Rules for a reader
+
+- Refuse a higher `schema` (`testing-export/2` is a break); read a lower one.
+- Ignore unknown fields: additions come within version 1 and are announced in `capabilities`.
+- A missing or `null` value is unknown, never 0 (`local: null` is "no result", not "0 cases").
+- Refuse a document bigger than 8 MiB and an unknown `kind`.
+
+`testing.export.read(text)` implements these rules; `testing.export.validate(doc)` checks a document against the
+JSON Schema (the schema describes exactly what this version writes, so a field nobody listed fails there, not in a
+reader). The suite validates every golden file and every form against it with a Lua validator of the keywords the
+schema uses (`testing.export.schema`); an unknown keyword is an error of the schema, not a pass.

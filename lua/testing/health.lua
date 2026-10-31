@@ -56,6 +56,8 @@ local REQUIRED_LIB = {
   { "lib.nvim.window.make_scratch", "the hover float" },
   { "lib.nvim.fs.read_bounded", "reading the ETag cache of testing ci remote" },
   { "lib.nvim.net.github", "GitHub requests and the token of testing ci remote" },
+  { "lib.nvim.git", "the head of a repository in testing call fleet|repo" },
+  { "lib.nvim.contract.doc", "head, digest and size limit of the testing-export/1 documents" },
 }
 
 ---Kernel modules the CLI and the in-process driver need; a failure here is a defect of the plugin

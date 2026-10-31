@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/WKDSteve/testing.nvim/schemas/testing-export/1/testing-export.schema.json",
+  "title": "testing-export/1",
+  "description": "The documents testing.nvim writes for an app or a web page: the fleet, one repository, the manifest of an export folder. The engine writes them, never the app (docs/OUTPUT-FORMATS.md). This schema describes exactly what this version writes (a field nobody listed is refused here); a READER ignores unknown fields, refuses a higher schema and treats a missing or null value as unknown, never as 0.",
+  "oneOf": [
+    { "$ref": "#/$defs/fleet" },
+    { "$ref": "#/$defs/repo_doc" },
+    { "$ref": "#/$defs/manifest" }
+  ],
+  "$defs": {
+    "schema": { "const": "testing-export/1" },
+    "plugin": { "const": "testing.nvim" },
+    "form": {
+      "description": "local: for a process on this machine (the hub), it carries the absolute `root`; export: for a folder, a web page or a panel, no absolute path anywhere.",
+      "enum": ["local", "export"]
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "time_or_null": {
+      "anyOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }]
+    },
+    "engine": {
+      "type": "object",
+      "required": ["version", "git", "nvim"],
+      "properties": {
+        "version": { "type": "string" },
+        "git": { "type": "string" },
+        "nvim": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "rev": { "type": "string", "pattern": "^rev:[0-9a-f]{6}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{16}$" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z_]+$" }
+    },
+    "root": {
+      "description": "Absolute path of this machine: only in the local form.",
+      "type": "string",
+      "minLength": 1
+    },
+    "count": { "type": "integer", "minimum": 0 },
+    "text_or_null": { "type": ["string", "null"] },
+    "key": {
+      "description": "<basename>-<12 hex of sha256(basename, newline, root commit)>: the same for every clone of the repository wherever it lives; no path of this machine goes into it.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+-[0-9a-f]{12}$"
+    },
+    "status": {
+      "enum": ["pass", "fail", "error", "skip", "xfail", "xpass", "timeout", "crash"]
+    },
+    "summary": {
+      "type": "object",
+      "required": ["pass", "fail", "error", "skip", "xfail", "xpass", "timeout", "crash"],
+      "properties": {
+        "pass": { "$ref": "#/$defs/count" },
+        "fail": { "$ref": "#/$defs/count" },
+        "error": { "$ref": "#/$defs/count" },
+        "skip": { "$ref": "#/$defs/count" },
+        "xfail": { "$ref": "#/$defs/count" },
+        "xpass": { "$ref": "#/$defs/count" },
+        "timeout": { "$ref": "#/$defs/count" },
+        "crash": { "$ref": "#/$defs/count" }
+      },
+      "additionalProperties": false
+    },
+    "head": {
+      "description": "The checkout now. null: not a git checkout, or git could not be asked.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["sha", "branch", "dirty"],
+          "properties": {
+            "sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" },
+            "branch": { "$ref": "#/$defs/text_or_null" },
+            "dirty": { "type": ["boolean", "null"] }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "local": {
+      "description": "The last local result (last.json, merged over partial runs). null: no result recorded.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["run_id", "ts", "verdict", "summary", "cases", "files", "partial", "stale", "commit"],
+          "properties": {
+            "run_id": { "$ref": "#/$defs/text_or_null" },
+            "ts": { "$ref": "#/$defs/time_or_null" },
+            "verdict": { "enum": ["green", "green-partial", "red"] },
+            "summary": { "$ref": "#/$defs/summary" },
+            "cases": { "$ref": "#/$defs/count" },
+            "files": { "$ref": "#/$defs/count" },
+            "partial": { "type": "boolean" },
+            "stale": {
+              "description": "Spec files whose result is outdated (changed, gone or without a result since).",
+              "$ref": "#/$defs/count"
+            },
+            "commit": {
+              "description": "The commit of the run when the last green record is this run; null: unknown.",
+              "$ref": "#/$defs/text_or_null"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "last_green": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["run_id", "ts", "sha"],
+          "properties": {
+            "run_id": { "type": "string" },
+            "ts": { "$ref": "#/$defs/time" },
+            "sha": { "$ref": "#/$defs/text_or_null" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ci_local": {
+      "description": "The last local pipeline run (ci.json of `testing ci`). null: none recorded.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["verdict", "profile", "partial", "commit", "tree", "dirty", "first_red", "time"],
+          "properties": {
+            "verdict": { "enum": ["green", "green-partial", "red", "error", "infra"] },
+            "profile": { "$ref": "#/$defs/text_or_null" },
+            "partial": { "type": ["boolean", "null"] },
+            "commit": { "$ref": "#/$defs/text_or_null" },
+            "tree": { "$ref": "#/$defs/text_or_null" },
+            "dirty": { "type": ["boolean", "null"] },
+            "first_red": { "$ref": "#/$defs/text_or_null" },
+            "time": { "$ref": "#/$defs/time_or_null" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "github_url": {
+      "type": ["string", "null"],
+      "pattern": "^https://github\\.com/"
+    },
+    "remote_state": {
+      "enum": [
+        "failure",
+        "rejected",
+        "cancelled",
+        "unknown",
+        "waiting_runner",
+        "queued",
+        "running",
+        "success",
+        "skipped",
+        "no_run",
+        "no_github"
+      ]
+    },
+    "cell": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["state", "url", "job"],
+          "properties": {
+            "state": { "$ref": "#/$defs/remote_state" },
+            "url": { "$ref": "#/$defs/github_url" },
+            "job": { "$ref": "#/$defs/text_or_null" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ci_remote": {
+      "description": "The latest GitHub Actions run of the CI workflow for the head of origin (testing ci remote), as of the document's generated_at. null: not asked; asked without a record of the adapter: state unknown with a note.",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["state", "repo", "sha", "branch", "workflow", "os", "run", "note"],
+          "properties": {
+            "state": { "$ref": "#/$defs/remote_state" },
+            "repo": { "$ref": "#/$defs/text_or_null" },
+            "sha": { "$ref": "#/$defs/text_or_null" },
+            "branch": { "$ref": "#/$defs/text_or_null" },
+            "workflow": { "$ref": "#/$defs/text_or_null" },
+            "os": {
+              "type": "object",
+              "required": ["ubuntu", "windows", "macos"],
+              "properties": {
+                "ubuntu": { "$ref": "#/$defs/cell" },
+                "windows": { "$ref": "#/$defs/cell" },
+                "macos": { "$ref": "#/$defs/cell" }
+              },
+              "additionalProperties": false
+            },
+            "run": {
+              "anyOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["id", "url", "status", "conclusion", "created_at", "updated_at", "event", "attempt"],
+                  "properties": {
+                    "id": { "type": ["integer", "null"] },
+                    "url": { "$ref": "#/$defs/github_url" },
+                    "status": { "$ref": "#/$defs/text_or_null" },
+                    "conclusion": { "$ref": "#/$defs/text_or_null" },
+                    "created_at": { "$ref": "#/$defs/text_or_null" },
+                    "updated_at": { "$ref": "#/$defs/text_or_null" },
+                    "event": { "$ref": "#/$defs/text_or_null" },
+                    "attempt": { "type": ["integer", "null"] }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "note": { "$ref": "#/$defs/text_or_null" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "counts": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["fail", "flaky"],
+          "properties": {
+            "fail": { "$ref": "#/$defs/count" },
+            "flaky": { "$ref": "#/$defs/count" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "row": {
+      "type": "object",
+      "required": ["key", "name", "head", "local", "last_green", "ci_local", "ci_remote", "counts"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "name": { "type": "string", "minLength": 1 },
+        "root": { "$ref": "#/$defs/root" },
+        "head": { "$ref": "#/$defs/head" },
+        "local": { "$ref": "#/$defs/local" },
+        "last_green": { "$ref": "#/$defs/last_green" },
+        "ci_local": { "$ref": "#/$defs/ci_local" },
+        "ci_remote": { "$ref": "#/$defs/ci_remote" },
+        "counts": { "$ref": "#/$defs/counts" }
+      },
+      "additionalProperties": false
+    },
+    "remote_info": {
+      "type": "object",
+      "required": ["asked", "error"],
+      "properties": {
+        "asked": { "type": "boolean" },
+        "error": { "$ref": "#/$defs/text_or_null" }
+      },
+      "additionalProperties": false
+    },
+    "no_root": {
+      "description": "The export form has no absolute path: no root in the head and none in a row.",
+      "type": "object",
+      "properties": { "root": false }
+    },
+    "fleet": {
+      "type": "object",
+      "required": ["schema", "plugin", "kind", "form", "generated_at", "engine", "rev", "digest", "capabilities", "repos", "excluded", "remote"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/schema" },
+        "plugin": { "$ref": "#/$defs/plugin" },
+        "kind": { "const": "fleet" },
+        "form": { "$ref": "#/$defs/form" },
+        "generated_at": { "$ref": "#/$defs/time" },
+        "engine": { "$ref": "#/$defs/engine" },
+        "rev": { "$ref": "#/$defs/rev" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "root": { "$ref": "#/$defs/root" },
+        "repos": { "type": "array", "items": { "$ref": "#/$defs/row" } },
+        "excluded": {
+          "description": "How many repositories were left out (vaults, excludes); their names are not in the document.",
+          "$ref": "#/$defs/count"
+        },
+        "remote": { "$ref": "#/$defs/remote_info" }
+      },
+      "additionalProperties": false,
+      "if": { "type": "object", "properties": { "form": { "const": "export" } } },
+      "then": {
+        "allOf": [
+          { "$ref": "#/$defs/no_root" },
+          { "type": "object", "properties": { "repos": { "type": "array", "items": { "$ref": "#/$defs/no_root" } } } }
+        ]
+      }
+    },
+    "fail": {
+      "type": "object",
+      "required": ["line", "msg"],
+      "properties": {
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "msg": { "$ref": "#/$defs/text_or_null" }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": ["id", "file", "line", "status", "name", "describe", "duration_ms", "flaky", "message", "expected", "actual", "fails", "fails_total"],
+      "properties": {
+        "id": { "type": "string" },
+        "file": { "type": "string" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "status": { "$ref": "#/$defs/status" },
+        "name": { "$ref": "#/$defs/text_or_null" },
+        "describe": { "type": "array", "items": { "type": "string" } },
+        "duration_ms": { "type": "number", "minimum": 0 },
+        "flaky": { "type": "boolean" },
+        "message": { "$ref": "#/$defs/text_or_null" },
+        "expected": { "$ref": "#/$defs/text_or_null" },
+        "actual": { "$ref": "#/$defs/text_or_null" },
+        "fails": { "type": "array", "items": { "$ref": "#/$defs/fail" } },
+        "fails_total": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "repo_doc": {
+      "type": "object",
+      "required": ["schema", "plugin", "kind", "form", "generated_at", "engine", "rev", "digest", "capabilities", "repo", "cases", "cases_red", "cases_omitted", "notes", "remote"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/schema" },
+        "plugin": { "$ref": "#/$defs/plugin" },
+        "kind": { "const": "repo" },
+        "form": { "$ref": "#/$defs/form" },
+        "generated_at": { "$ref": "#/$defs/time" },
+        "engine": { "$ref": "#/$defs/engine" },
+        "rev": { "$ref": "#/$defs/rev" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "root": { "$ref": "#/$defs/root" },
+        "repo": { "$ref": "#/$defs/row" },
+        "cases": {
+          "description": "The red cases of the last result (fail, error, timeout, crash, xpass), by file and line, redacted.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/case" }
+        },
+        "cases_red": { "$ref": "#/$defs/count" },
+        "cases_omitted": {
+          "description": "Red cases not listed because of the size limit.",
+          "$ref": "#/$defs/count"
+        },
+        "notes": {
+          "description": "Why a source of the state could not be used (redacted).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "remote": { "$ref": "#/$defs/remote_info" }
+      },
+      "additionalProperties": false,
+      "if": { "type": "object", "properties": { "form": { "const": "export" } } },
+      "then": {
+        "allOf": [
+          { "$ref": "#/$defs/no_root" },
+          { "type": "object", "properties": { "repo": { "$ref": "#/$defs/no_root" } } }
+        ]
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {
+          "description": "Relative to the export folder, forward slashes.",
+          "type": "string",
+          "pattern": "^(fleet|repos/[A-Za-z0-9_.-]+)\\.json$"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "$ref": "#/$defs/count" }
+      },
+      "additionalProperties": false
+    },
+    "manifest": {
+      "type": "object",
+      "required": ["schema", "plugin", "kind", "form", "generated_at", "engine", "rev", "digest", "capabilities", "files"],
+      "properties": {
+        "schema": { "$ref": "#/$defs/schema" },
+        "plugin": { "$ref": "#/$defs/plugin" },
+        "kind": { "const": "manifest" },
+        "form": { "const": "export" },
+        "generated_at": { "$ref": "#/$defs/time" },
+        "engine": { "$ref": "#/$defs/engine" },
+        "rev": { "$ref": "#/$defs/rev" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/file" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

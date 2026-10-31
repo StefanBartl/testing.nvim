@@ -1,0 +1,142 @@
+{
+  "capabilities": [
+    "fleet",
+    "manifest",
+    "repo"
+  ],
+  "cases": [
+    {
+      "actual": "line one\nline 2",
+      "describe": [
+        "parser"
+      ],
+      "duration_ms": 4,
+      "expected": "line one\nline two",
+      "fails": [
+        {
+          "line": 14,
+          "msg": "expected 'b' got 'c' in \u003cREPO>/lua/beta/parser.lua"
+        }
+      ],
+      "fails_total": null,
+      "file": "TESTS/x_spec.lua",
+      "flaky": false,
+      "id": "TESTS/x_spec.lua::parser::reads a file",
+      "line": 12,
+      "message": "\u003cREPO>/lua/beta/parser.lua:40: cannot open \u003cHOME>/secret-notes/beta.txt",
+      "name": "reads a file",
+      "status": "fail"
+    },
+    {
+      "actual": null,
+      "describe": [
+        "parser"
+      ],
+      "duration_ms": 5000,
+      "expected": null,
+      "fails": [],
+      "fails_total": null,
+      "file": "TESTS/x_spec.lua",
+      "flaky": false,
+      "id": "TESTS/x_spec.lua::parser::times out",
+      "line": 30,
+      "message": "the case ran longer than 5000 ms",
+      "name": "times out",
+      "status": "timeout"
+    }
+  ],
+  "cases_omitted": 0,
+  "cases_red": 2,
+  "digest": "sha256:00e2f3a08185dce7",
+  "engine": {
+    "git": "fixture",
+    "nvim": "0.0.0",
+    "version": "0.1.0-dev"
+  },
+  "form": "export",
+  "generated_at": "2026-10-31T12:00:00Z",
+  "kind": "repo",
+  "notes": [],
+  "plugin": "testing.nvim",
+  "remote": {
+    "asked": true,
+    "error": null
+  },
+  "repo": {
+    "ci_local": {
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "dirty": true,
+      "first_red": "suite",
+      "partial": true,
+      "profile": "fast",
+      "time": "2026-10-31T11:40:00Z",
+      "tree": "dddddddddddddddddddddddddddddddddddddddd",
+      "verdict": "red"
+    },
+    "ci_remote": {
+      "branch": "main",
+      "note": null,
+      "os": {
+        "macos": null,
+        "ubuntu": {
+          "job": "test (ubuntu-latest)",
+          "state": "success",
+          "url": "https://github.com/fixture-owner/x/actions/runs/1/job/221"
+        },
+        "windows": {
+          "job": "test (windows-latest)",
+          "state": "failure",
+          "url": "https://github.com/fixture-owner/x/actions/runs/1/job/222"
+        }
+      },
+      "repo": "fixture-owner/beta.nvim",
+      "run": {
+        "attempt": 1,
+        "conclusion": "failure",
+        "created_at": "2026-10-31T11:00:00Z",
+        "event": "push",
+        "id": 22,
+        "status": "completed",
+        "updated_at": "2026-10-31T11:10:00Z",
+        "url": "https://github.com/fixture-owner/x/actions/runs/22"
+      },
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "state": "failure",
+      "workflow": "CI"
+    },
+    "counts": {
+      "fail": 2,
+      "flaky": 1
+    },
+    "head": {
+      "branch": "feature/x",
+      "dirty": true,
+      "sha": "2222222222222222222222222222222222222222"
+    },
+    "key": "beta.nvim-ac6d3a4ece7f",
+    "last_green": null,
+    "local": {
+      "cases": 4,
+      "commit": null,
+      "files": 2,
+      "partial": false,
+      "run_id": "2026-10-31T11:30:00Z-bbbb",
+      "stale": 1,
+      "summary": {
+        "crash": 0,
+        "error": 0,
+        "fail": 1,
+        "pass": 1,
+        "skip": 1,
+        "timeout": 1,
+        "xfail": 0,
+        "xpass": 0
+      },
+      "ts": "2026-10-31T11:30:00Z",
+      "verdict": "red"
+    },
+    "name": "beta.nvim"
+  },
+  "rev": "rev:27d1fc",
+  "schema": "testing-export/1"
+}

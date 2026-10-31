@@ -1,0 +1,110 @@
+{
+  "capabilities": [
+    "fleet",
+    "manifest",
+    "repo"
+  ],
+  "cases": [],
+  "cases_omitted": 0,
+  "cases_red": 0,
+  "digest": "sha256:f44d527d5eb00e2f",
+  "engine": {
+    "git": "fixture",
+    "nvim": "0.0.0",
+    "version": "0.1.0-dev"
+  },
+  "form": "export",
+  "generated_at": "2026-10-31T12:00:00Z",
+  "kind": "repo",
+  "notes": [],
+  "plugin": "testing.nvim",
+  "remote": {
+    "asked": true,
+    "error": null
+  },
+  "repo": {
+    "ci_local": {
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dirty": false,
+      "first_red": null,
+      "partial": false,
+      "profile": "full",
+      "time": "2026-10-31T10:00:00Z",
+      "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verdict": "green"
+    },
+    "ci_remote": {
+      "branch": "main",
+      "note": null,
+      "os": {
+        "macos": {
+          "job": "test (macos-latest)",
+          "state": "success",
+          "url": "https://github.com/fixture-owner/x/actions/runs/1/job/113"
+        },
+        "ubuntu": {
+          "job": "test (ubuntu-latest)",
+          "state": "success",
+          "url": "https://github.com/fixture-owner/x/actions/runs/1/job/111"
+        },
+        "windows": {
+          "job": "test (windows-latest)",
+          "state": "success",
+          "url": "https://github.com/fixture-owner/x/actions/runs/1/job/112"
+        }
+      },
+      "repo": "fixture-owner/alpha.nvim",
+      "run": {
+        "attempt": 1,
+        "conclusion": "success",
+        "created_at": "2026-10-31T11:00:00Z",
+        "event": "push",
+        "id": 11,
+        "status": "completed",
+        "updated_at": "2026-10-31T11:10:00Z",
+        "url": "https://github.com/fixture-owner/x/actions/runs/11"
+      },
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "state": "success",
+      "workflow": "CI"
+    },
+    "counts": {
+      "fail": 0,
+      "flaky": 0
+    },
+    "head": {
+      "branch": "main",
+      "dirty": false,
+      "sha": "1111111111111111111111111111111111111111"
+    },
+    "key": "alpha.nvim-356bf237c7fc",
+    "last_green": {
+      "run_id": "2026-10-31T11:00:00Z-aaaa",
+      "sha": "a1b2c3d",
+      "ts": "2026-10-31T11:00:00Z"
+    },
+    "local": {
+      "cases": 3,
+      "commit": "a1b2c3d",
+      "files": 2,
+      "partial": false,
+      "run_id": "2026-10-31T11:00:00Z-aaaa",
+      "stale": 0,
+      "summary": {
+        "crash": 0,
+        "error": 0,
+        "fail": 0,
+        "pass": 3,
+        "skip": 0,
+        "timeout": 0,
+        "xfail": 0,
+        "xpass": 0
+      },
+      "ts": "2026-10-31T11:00:00Z",
+      "verdict": "green"
+    },
+    "name": "alpha.nvim"
+  },
+  "rev": "rev:1249ab",
+  "schema": "testing-export/1"
+}

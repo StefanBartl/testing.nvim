@@ -596,6 +596,11 @@ local function execute(argv, sv)
   if argv[1] == "ci" then
     return require("testing.ci").main(vim.list_slice(argv, 2), sv)
   end
+  -- `testing call fleet|repo`: a document of the contract testing-export/1 on stdout, reads only
+  -- (docs/OUTPUT-FORMATS.md)
+  if argv[1] == "call" then
+    return require("testing.export.call").main(vim.list_slice(argv, 2), sv)
+  end
   -- `testing lint`: the lint checks of the pipeline on the changed files, named files or everything (docs/CI.md)
   if argv[1] == "lint" then
     return require("testing.lint").main(vim.list_slice(argv, 2), sv)

@@ -337,21 +337,61 @@ function M.resolve(args, cfg)
   return out, { excluded = excluded, missing = missing }
 end
 
+---The placeholders a redacted text may hold (`<REPO>/x` is no absolute path, `<nil>/x` is).
+---@type table<string, true>
+M.PLACEHOLDERS = {}
+for _, ph in ipairs({
+  "PATH",
+  "REPO",
+  "HOME",
+  "TMP",
+  "STATE",
+  "USER",
+  "HOST",
+  "USER-PATH",
+  "ENV",
+  "EMAIL",
+  "REDACTED",
+  "VAULT",
+}) do
+  M.PLACEHOLDERS[ph] = true
+end
+
 ---A free text fit for the page and the document: redacted as the IR redacts a message (user, host, environment,
 ---home paths, the roots of `dir`), every absolute path that is left `<PATH>`, no control characters, bounded.
 ---@param s any
 ---@param dir string
 ---@param state_dir? string The state directory of the page (`--state-dir`): `<STATE>` as well.
+---@param opts? { max?: integer, keep_newlines?: boolean } The budget in bytes (default 300; `testing-export/1`
+---gives a failure text more) and whether line breaks stay (an expected/actual value of several lines).
 ---@return string|nil
-function M.clean(s, dir, state_dir)
+function M.clean(s, dir, state_dir, opts)
   if type(s) ~= "string" or s == "" then
     return nil
   end
+  local max = opts and opts.max or 300
   s = require("testing.run.inproc").redact_text(s, dir, { state = state_dir })
-  s = s:gsub("%c", " ")
+  if opts and opts.keep_newlines then
+    s = s:gsub("\r\n", "\n"):gsub("[%z\1-\9\11-\31\127]", " ")
+  else
+    s = s:gsub("%c", " ")
+  end
+  -- a file URI (`file:///srv/x`, `file:///C:/x`), whatever path it names
+  s = s:gsub("%f[%w][Ff][Ii][Ll][Ee]:/+[^%s\"'<>`]*", "<PATH>")
   -- a drive path (`E:/x`, `C:\x`) at the start of a word (not the `s:/` of `https://`), a UNC path
   s = s:gsub("%f[%w]%a:[\\/][^%s\"'<>`]*", "<PATH>")
   s = s:gsub("\\\\[^%s\"'<>`]+", "<PATH>")
+  -- a UNC path with forward slashes (`//server/share`) where a path can begin (not the `//` of `https://`)
+  s = (" " .. s):gsub("([^%w._~%-/\\<>:])//[%w._%-]+[^%s\"'<>`]*", "%1<PATH>"):sub(2)
+  -- an absolute path right after a `>` that closes no placeholder (`<nil>/etc/x`; `<REPO>/x` stays)
+  local src = s
+  s = s:gsub("()>(/[%w._%-]+[^%s\"'<>`]*)", function(pos)
+    local tag = src:sub(1, pos - 1):match("<([%w_%-]+)$")
+    if tag and M.PLACEHOLDERS[tag] then
+      return nil
+    end
+    return "><PATH>"
+  end)
   -- an absolute POSIX path after any character that is no part of a path, of a URL (`https://`) or of a placeholder
   -- (`<REPO>/x`) or of a closing tag (`</b>`): `` `/opt/x` ``, `[/srv/a]`, `error:/x`, `/x`
   s = (" " .. s):gsub("([^%w._~%-/\\<>])/[%w._%-]+[^%s\"'<>`]*", "%1<PATH>"):sub(2)
@@ -362,9 +402,9 @@ function M.clean(s, dir, state_dir)
       s, n = s:gsub("(<" .. ph .. ">[^%s\"'<>`]*) [^%s\"'<>`/\\]+[\\/][^%s\"'<>`]*", "%1")
     until n == 0
   end
-  if #s > 300 then
+  if #s > max then
     -- at a character boundary: a cut UTF-8 sequence would make the page invalid
-    local cut = 297
+    local cut = max - 3
     while cut > 0 and (s:byte(cut + 1) or 0) >= 0x80 and s:byte(cut + 1) < 0xC0 do
       cut = cut - 1
     end

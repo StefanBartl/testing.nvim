@@ -1,0 +1,41 @@
+{
+  "capabilities": [
+    "fleet",
+    "manifest",
+    "repo"
+  ],
+  "digest": "sha256:d8e2e5e805dda900",
+  "engine": {
+    "git": "fixture",
+    "nvim": "0.0.0",
+    "version": "0.1.0-dev"
+  },
+  "files": [
+    {
+      "bytes": 5394,
+      "path": "fleet.json",
+      "sha256": "5b9a7d049041ee73a6739abafa1da86b7b314159182f9eaca9c2fb69ceab64ed"
+    },
+    {
+      "bytes": 2687,
+      "path": "repos/alpha.nvim-356bf237c7fc.json",
+      "sha256": "81d14f13ca63ca6ecba8a87ed47dcb8a94252339b6ce66f9310bc889c48a6a32"
+    },
+    {
+      "bytes": 3442,
+      "path": "repos/beta.nvim-ac6d3a4ece7f.json",
+      "sha256": "c29773d69f8d9234bb8594837617ddc558e5216f760d810746923e9f34814b2e"
+    },
+    {
+      "bytes": 955,
+      "path": "repos/gamma.nvim-bed2b5150df9.json",
+      "sha256": "268a59e5781ce5fa6b07b6d26307ecd5a247a44181c8acecf399fae681fd3381"
+    }
+  ],
+  "form": "export",
+  "generated_at": "2026-10-31T12:00:00Z",
+  "kind": "manifest",
+  "plugin": "testing.nvim",
+  "rev": "rev:ebbedf",
+  "schema": "testing-export/1"
+}

@@ -90,3 +90,12 @@ The migration tooling has its own codes, because its question is different:
 | `1` | `--check` only: the plan is not empty, the repository is not migrated yet. |
 | `2` | Bad usage, or `apply` refused (dirty working tree, not a git repository, a file changed since the plan, a symlink target). Nothing is written when anything is refused. |
 | `3` | The root cannot be analysed. |
+
+`testing call fleet|repo` ([OUTPUT-FORMATS.md](OUTPUT-FORMATS.md#the-contract-testing-export1)) prints a document,
+it is no verdict: red repositories are still exit `0`.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The document was printed (also with red repositories, and when the CI adapter failed: `remote.error` says so). |
+| `2` | Bad usage: an unknown method or option, a directory that is not there, no repository found. |
+| `3` | The document could not be built: it would leak a path of this machine (export form), it is larger than 8 MiB, an internal error. Nothing is printed on stdout. |
