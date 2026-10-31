@@ -1,4 +1,4 @@
-# The conformance suite (K1 .. K15)
+# The conformance suite (K1 .. K16)
 
 The rules of the gates (`NEW_PROJECT`, `RELEASE`, `REVIEW`) that a program can decide are checks that run on
 **every** plugin with a `.testing.lua`, without a line of spec code. The rules that need a reader stay
@@ -47,7 +47,7 @@ same repository gives the same bytes unless `--timings` was asked for):
 {
   schema_version = 1, tool = "testing.conformance",
   root = "<REPO>", name = "sessions.nvim", plugin = "sessions", mode = "report" | "gate",
-  checks = { {                       -- K1 .. K15 in order
+  checks = { {                       -- K1 .. K16 in order
       id = "K4", title = "...", kind = "runtime" | "static", rules = { "REL-21", "NEW-22" },
       status = "pass" | "fail" | "warn" | "n/a" | "error",
       reason = "...",                -- n/a and error: why
@@ -106,6 +106,7 @@ plugin needs must be listed in `deps`.
 | K13 | fragile keys, command-name prefix collisions | UI-22 | runtime | warn / info, report-only | `audit.key_risks()` (fragile = warn, common = info) and `audit.prefix_ambiguities()`, reduced to the pairs that involve a command of this plugin: a family of the plugin's own commands (`:Diff`, `:DiffClear`) is `info`, a pair with a command of another plugin is `warn`. |
 | K14 | `docs/BINDINGS.md` / `docs/commands.md` match the registry | NEW-35, REL-06 | runtime | error / warn | A page that lib.nvim generated is re-rendered in the child and compared (`docs.check`, read-only): a difference is a `warn`. A hand-written document is checked in one direction: every registered command (`:Name`, not as the start of a longer name), keymap (lhs, `<leader>`, `<C-x>`, `<Bslash>` normalized) and autocmd group/event must appear in the text. A key of one character counts only when it is set off as code (a backtick span, a table cell, a fenced line), a longer one as a word of the prose too: the letters `gl` inside `global` document nothing. Commands and keymaps are an `error`, autocmds a `warn`. A command or group whose name the plugin's own sources never spell was registered by a dependency (`:KitPreview` of ui.nvim) and is not compared (a note names them). `n/a` without `docs/BINDINGS.md` (K15's). |
 | K15 | static rules of the gates | see below | static | by rule | The rules below. One verdict per rule in `rule_status`. |
+| K16 | every test sheet names a task of the vault | – (decision `ALL/entscheidung-regel-live-check-task-hat-testblatt-oder-begrue`) | vault | error / warn | Every `TESTS/sheets/*.sheet.lua` is read through the repository access and loaded as data (`testing.sheet.load_text`, nothing runs). A sheet that does not load is an `error`, one without `task` a `warn`, a task that is neither open nor in its area's Backlog an `error`. The tasks are asked from tasks.nvim's engine (`tasks-export/1`: `call task`, then every page of `call finished` of the area), never read from the vault's files. The vault is `$TASKS_VAULT`, else `tasks-vault` beside the repository; without a vault or without tasks.nvim the check is `n/a` with the reason (a CI runner has none), never a failure. `n/a` without sheets. |
 
 `n/a` is common and honest: K3, K4, K12 and K13 look at keymaps, and most plugins of this fleet bind none by
 default. A plugin that wants them checked lists its keymaps in `setup` of `.testing.lua`:
@@ -214,7 +215,7 @@ testing.nvim itself is the pilot (`.testing.lua`, `.github/workflows/ci.yml`).
 * lists the rules that have no `check` in rules.nvim as **manual** (`source = "rules.nvim"`) next to the suite's own;
 * reports **drift**: a rule both sides decide with a different verdict means that testing.nvim's predicate or
   the rule in rules.nvim has gone stale (`bridge.drift`);
-* never changes the verdict of K1 .. K15 or the exit code.
+* never changes the verdict of K1 .. K16 or the exit code.
 
 Without rules.nvim (not on the runtimepath, no sibling checkout) or without a configured ruleset the bridge answers
 `{ available = false, status = "n/a", reason = ... }` and nothing else. The predicates of a ruleset are Lua that

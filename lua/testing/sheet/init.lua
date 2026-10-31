@@ -294,6 +294,23 @@ function M.load(path)
   if #text > M.MAX_BYTES then
     return nil, ("%s is larger than %d bytes"):format(path, M.MAX_BYTES)
   end
+  local s, err = M.load_text(text, path)
+  if not s then
+    return nil, err
+  end
+  s.path = path
+  return s, nil
+end
+
+---Read the text of a sheet as data (empty environment) and validate it; `name` stands for the file in messages.
+---@param text string
+---@param name string
+---@return Testing.Sheet|nil sheet, string|nil err
+function M.load_text(text, name)
+  if #text > M.MAX_BYTES then
+    return nil, ("%s is larger than %d bytes"):format(name, M.MAX_BYTES)
+  end
+  local path = name
   local chunk, perr = load(text, "@" .. path, "t", {})
   if not chunk then
     return nil, tostring(perr)
@@ -316,7 +333,6 @@ function M.load(path)
   if not s then
     return nil, ("%s: %s"):format(path, err)
   end
-  s.path = path
   return s, nil
 end
 

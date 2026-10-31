@@ -137,7 +137,7 @@ lint ~
         Generate the test setup of a plugin repository. An existing file is
         never overwritten without `--force`.
 :Testing conformance [{root}] [--gate] [--only={ids}] [--skip={ids}] [--bridge]
-        Run the conformance checks K1..K15 on the project (a report; a failed
+        Run the conformance checks K1..K16 on the project (a report; a failed
         gate is a warning, not an error).
 :Testing surface [{root}] [--from={ir.json}] [--threshold={n}] [--markdown]
         [--matrix] [--csv] [--no-tags]
@@ -235,7 +235,7 @@ repository's own specs this way.
 Subcommands: `run` (default), `list` (= `run --list`), `doctor` (resolved
 configuration and dependency report), `migrate` (plan or write the move of a
 repository to testing.nvim, see |testing-migrating|), `budget` (measure the hot
-paths of a run against a baseline), `conformance` (the checks K1..K15) and
+paths of a run against a baseline), `conformance` (the checks K1..K16) and
 `surface` (the plugin's keymaps, commands, ... and what the specs exercised);
 those two have their own arguments and exit codes (docs/CONFORMANCE.md,
 docs/SURFACE.md). `explain` says why a spec file is selected, taken from the

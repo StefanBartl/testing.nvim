@@ -151,7 +151,7 @@ if [ "${1:-}" = "surface" ]; then
   nvim -n -i NONE --headless -u NONE -l "$DRIVER" surface . "$@"
   exit $?
 fi
-# `scripts/test.sh conformance`: the conformance suite K1..K15 in the same environment (docs/CONFORMANCE.md of testing.nvim)
+# `scripts/test.sh conformance`: the conformance suite K1..K16 in the same environment (docs/CONFORMANCE.md of testing.nvim)
 if [ "${1:-}" = "conformance" ]; then
   shift
   nvim -n -i NONE --headless -u NONE -l "$DRIVER" conformance . "$@"

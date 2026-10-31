@@ -1,5 +1,5 @@
 ---@module 'testing.conformance.catalog'
----@brief The checks K1 .. K15 in order, and the rules of the gates that stay manual.
+---@brief The checks K1 .. K16 in order, and the rules of the gates that stay manual.
 ---@description
 --- Guard rail L7 ("gates are specification"): a rule of the gates that can be decided becomes a check,
 --- a rule that needs judgement stays manual and is LISTED in the report as `manual`, so that "all green"
@@ -26,6 +26,7 @@ M.ORDER = {
   "k13_key_risks",
   "k14_docs",
   "k15_static",
+  "k16_sheets",
 }
 
 ---The checks, in order (loaded on first use).

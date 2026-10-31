@@ -280,7 +280,7 @@ return function(H)
     has(text, "cache, affected selection, conformance, surface", "the report has the new section")
     has(text, "result cache:", "it reports the result cache")
     has(text, "is writable", "and that its directory can be written")
-    has(text, "`testing conformance` is available (15 checks", "it reports the conformance suite")
+    has(text, "`testing conformance` is available (16 checks", "it reports the conformance suite")
     has(text, "`testing surface` and the tracking layer", "and the surface")
     has(
       text,

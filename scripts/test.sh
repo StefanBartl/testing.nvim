@@ -24,7 +24,7 @@
 #                                      "failed last time" stage is empty here (changes still count); with
 #                                      history, run `nvim -n -i NONE --headless -u NONE -l scripts/testing.lua
 #                                      fast .` directly
-#   scripts/test.sh conformance        the conformance suite K1..K15 (docs/CONFORMANCE.md) in the same isolated
+#   scripts/test.sh conformance        the conformance suite K1..K16 (docs/CONFORMANCE.md) in the same isolated
 #                                      environment; extra options go to `testing conformance .`; exit 1 when the
 #                                      repo is gated (`conformance.gate = true`, or `--gate`) and a check failed
 #   scripts/test.sh ci [options]       the whole pipeline of `.testing.lua` (`ci` section: stylua, luacheck, the

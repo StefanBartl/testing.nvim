@@ -1,5 +1,5 @@
 ---@module 'testing.conformance'
----@brief The conformance suite K1 .. K15: the rules of the gates that can run, as verdicts about a repository.
+---@brief The conformance suite K1 .. K16: the rules of the gates that can run, as verdicts about a repository.
 ---@description
 --- Guard rail L7 ("gates are specification"): a rule of `NEW_PROJECT`, `RELEASE` or `REVIEW` that can be
 --- decided becomes a check, one that needs a reader stays `manual` and is listed in the report. Every plugin
@@ -113,7 +113,7 @@ end
 M.USAGE = table.concat({
   "usage: testing conformance [<root>] [options]",
   "",
-  "Runs the conformance checks K1 .. K15 on a repository (default: the current directory).",
+  "Runs the conformance checks K1 .. K16 on a repository (default: the current directory).",
   "",
   "  --only K3,K7        run only these checks (repeatable)",
   "  --skip K10          do not run these checks (repeatable)",

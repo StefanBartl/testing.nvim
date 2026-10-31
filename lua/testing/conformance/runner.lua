@@ -88,6 +88,7 @@ function M.context(root, loaded, opts)
     settings = loaded.settings,
     fs = fs,
     notes = notes,
+    tasks = opts.tasks,
   }
 
   -- memoized sources of a top-level directory: `{ rel, text, lines }`
@@ -439,6 +440,7 @@ end
 ---@field settings? table Overrides of the suite settings (specs).
 ---@field config? table Overrides of the project configuration (specs).
 ---@field bridge? boolean|table Run the rules.nvim bridge (`true` or its options).
+---@field tasks? Testing.Conformance.TasksOpts How K16 reaches the tasks vault.
 
 ---Run the suite on `root`.
 ---@param root string Repository root.

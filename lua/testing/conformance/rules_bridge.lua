@@ -9,7 +9,7 @@
 ---     manual rules of `testing.conformance.catalog`;
 ---   * reports DRIFT: a rule both sides decide, with a different verdict (testing.nvim's predicate or the
 ---     rule in rules.nvim has gone stale);
----   * never changes the verdict of K1 .. K15 and never the exit code.
+---   * never changes the verdict of K1 .. K16 and never the exit code.
 ---
 --- Soft: without rules.nvim (not installed, no ruleset configured) the bridge answers
 --- `{ available = false, status = "n/a", reason = ... }`, a clear "n/a" and nothing else. The predicates of a

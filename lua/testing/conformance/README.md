@@ -1,6 +1,6 @@
 # `testing.conformance`
 
-The conformance suite K1 .. K15: the rules of the gates that a program can decide, run on a repository with a
+The conformance suite K1 .. K16: the rules of the gates that a program can decide, run on a repository with a
 `.testing.lua`, reported as data (JSON), Markdown, terminal lines and a Result-IR. Full description, the
 table of checks and the configuration: [docs/CONFORMANCE.md](../../../docs/CONFORMANCE.md).
 

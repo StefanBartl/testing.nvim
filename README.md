@@ -111,7 +111,7 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   passes is **flaky**, the run stays red (`--allow-flaky` is the explicit exception: exit 0, but the verdict is
   `green-partial` and there is no sentinel) and a flaky file is never cached. `--order slowest-first` starts the longest files first with `--jobs`.
 - **Conformance and surface** ([docs/CONFORMANCE.md](docs/CONFORMANCE.md),
-  [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K15 of the gates on a
+  [docs/SURFACE.md](docs/SURFACE.md)): `testing conformance` runs the checks K1 to K16 of the gates on a
   plugin (report only until a repository opts into `conformance.gate`), `testing surface` lists a plugin's
   keymaps, commands and autocmds and, from a run with `surface = { track = true }`, how many of them the
   specs exercised; `:Testing surface --matrix` shows entries x spec files in a view with filters, jumps to the
@@ -321,7 +321,7 @@ configuration it runs every `*_spec.lua` below `TESTS/`:
 ... -l scripts/testing.lua stamp .              # after a complete green run: write the green stamp
 ... -l scripts/testing.lua verify .             # no spec runs: is the tree still the stamped one?
 ... -l scripts/testing.lua . --cached --cache-audit all # re-run every cache hit: the measured stale-pass rate
-... -l scripts/testing.lua conformance .        # the conformance checks K1 to K15
+... -l scripts/testing.lua conformance .        # the conformance checks K1 to K16
 ... -l scripts/testing.lua ci                   # the repository's pipeline from .testing.lua (docs/CI.md)
 ... -l scripts/testing.lua surface . --from out.json   # what the specs exercised (see docs/SURFACE.md)
 ```
@@ -391,7 +391,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
 - [docs/CACHE.md](docs/CACHE.md): the result cache and the affected selection: keys, limits, format, the green stamp.
 - [docs/CI-CACHE.md](docs/CI-CACHE.md): the result cache and the stamp in CI with `actions/cache`.
 - [docs/HOOKS.md](docs/HOOKS.md): pre-push, pre-commit and Claude Code `Stop` hook recipes.
-- [docs/CONFORMANCE.md](docs/CONFORMANCE.md): the checks K1 to K15 and how a repository adopts them.
+- [docs/CONFORMANCE.md](docs/CONFORMANCE.md): the checks K1 to K16 and how a repository adopts them.
 - [docs/SURFACE.md](docs/SURFACE.md): the surface of a plugin and the binding coverage.
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md): `--profile`, `testing budget`, the worker pool, measured numbers.
 - [docs/CONFIG.md](docs/CONFIG.md): `.testing.lua` keys with types, dependency resolution, `setup()` options.

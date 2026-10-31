@@ -4,7 +4,7 @@
 -- #####################################################################
 -- check.lua (the contract of one check module)
 
----@alias Testing.Conformance.Kind "static"|"runtime"
+---@alias Testing.Conformance.Kind "static"|"runtime"|"vault"
 ---@alias Testing.Conformance.Level "error"|"warn"|"info"
 ---@alias Testing.Conformance.Status "pass"|"fail"|"warn"|"manual"|"n/a"|"error"
 
@@ -19,7 +19,7 @@
 ---@field waiver_reason? string
 
 ---@class Testing.Conformance.Check
----@field id string `K1` .. `K15`.
+---@field id string `K1` .. `K16`.
 ---@field title string
 ---@field rules string[] Rule ids the check enforces (`NEW-47`, `REL-21`, `REVIEW §6`, `LUA-96`).
 ---@field kind Testing.Conformance.Kind
@@ -91,6 +91,12 @@
 ---@field probe fun(name: string): table|nil, string|nil Runtime data of one child session (`main`, `keymaps_off`, `require`), `nil, why` when the child could not run.
 ---@field notes string[] Facts collected while running (they end up in `report.problems`, prefixed `note:`).
 ---@field missing_noted? boolean The missing dependencies of `.testing.lua` were noted.
+---@field tasks? Testing.Conformance.TasksOpts How K16 reaches the tasks vault (`RunOpts.tasks`).
+
+---@class Testing.Conformance.TasksOpts
+---@field vault? string The vault (default: `$TASKS_VAULT`, else `tasks-vault` beside the repository).
+---@field call? Testing.SheetTasks.Call Replaces tasks.nvim's engine (specs).
+---@field getenv? fun(name: string): string|nil Replaces the environment (specs).
 
 -- #####################################################################
 -- report

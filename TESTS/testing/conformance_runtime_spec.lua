@@ -56,7 +56,9 @@ return function(H)
     local before = snapshot(good)
     local report = conformance.run(good)
     for _, check in ipairs(conformance.checks()) do
-      ok(status(report, check.id) == "pass", "good fixture: " .. S.messages(report, check.id))
+      -- K16 looks at test sheets, which the fixture has none of (its own cases: conformance_sheets_spec)
+      local want = check.id == "K16" and "n/a" or "pass"
+      ok(status(report, check.id) == want, "good fixture: " .. S.messages(report, check.id))
     end
     ok(report.verdict == "pass", "the verdict is pass")
     eq(snapshot(good), before, "the run changed nothing in the checked repository (SEC-47)")

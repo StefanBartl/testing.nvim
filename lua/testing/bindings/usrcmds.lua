@@ -9,7 +9,7 @@
 ---   :Testing list [<root>] ...   list what would run (the flags of `run` without --cached and --reporter)
 ---   :Testing init [<root>] [--force] [--plugin=<name>] [--hooks]   generate the test setup of a plugin repo (--hooks: the git and agent hook recipes instead, never over an existing file)
 ---   :Testing migrate [dry-run|apply] [<root>] [--fleet-root=<dir>]   plan (or write) the move of a repo to testing.nvim
----   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K15 checks
+---   :Testing conformance [<root>] [--gate] [--only=K1,K3] [--skip=K10] [--bridge] [--markdown]   the K1..K16 checks
 ---   :Testing surface [<root>] [--from=<ir.json>] [--threshold=<n>] [--markdown] [--matrix] [--csv] [--no-tags]   keymaps/commands/... and how much the specs exercised (`--matrix` alone: the interactive view, testing.surface.view)
 ---   :Testing budget [<root>] [--update] [--allow-new] [--factor=<x>]   measure the performance budgets
 ---   :Testing ci [<profile>] [--step=a,b] [--keep-going] [--reuse]   the pipeline of the ci section: live view, quickfix on red (docs/CI.md)
@@ -738,7 +738,7 @@ function M.routes()
     },
     {
       path = { "conformance" },
-      desc = "Run the conformance checks K1..K15 on the project (report only unless --gate)",
+      desc = "Run the conformance checks K1..K16 on the project (report only unless --gate)",
       args = { { name = "root", type = "DIR", optional = true } },
       flags = {
         {

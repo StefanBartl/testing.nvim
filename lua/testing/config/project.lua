@@ -546,7 +546,7 @@ local SCHEMA = {
     },
     skip = {
       check = list_of(is_check_id, 0),
-      expect = 'a list of check ids ("K1" .. "K15")',
+      expect = 'a list of check ids ("K1" .. "K16")',
     },
     waivers = {
       check = list_of(is_waiver, 0),

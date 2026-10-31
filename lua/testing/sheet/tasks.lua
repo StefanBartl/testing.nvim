@@ -28,7 +28,7 @@ M.STATES = "<!-- testing:sheets:states"
 M.TIMEOUT_MS = 60000
 M.MAX_IDS = 1000
 
----@alias Testing.SheetTasks.Call fun(method: string, params: table): table|nil, string|nil
+---@alias Testing.SheetTasks.Call fun(method: string, params: table): table|nil, string|nil, string|nil The third value is the engine's error `code` (`not_found`, ...).
 
 ---@class Testing.SheetTasks.Result
 ---@field id string
@@ -96,7 +96,8 @@ function M.caller(cli, vault, opts)
     end
     if doc.kind == "tasks.error" then
       return nil,
-        ("tasks.nvim call %s: %s: %s"):format(method, tostring(doc.code), tostring(doc.message))
+        ("tasks.nvim call %s: %s: %s"):format(method, tostring(doc.code), tostring(doc.message)),
+        type(doc.code) == "string" and doc.code or nil
     end
     return doc
   end
