@@ -969,6 +969,164 @@ return function(H)
         "the engine beside the vault is found"
       )
     end
+
+    -- ===================================================================
+    -- 5. `testing sheets new --from-task`: a draft sheet from a task (testing.sheet.new)
+    do
+      local new = require("testing.sheet.new")
+      local body5 = table.concat({
+        "Summary line.",
+        "",
+        "## Kontext",
+        "- [ ] not acceptance",
+        "## Akzeptanz",
+        "- [ ] The float shows the hotkeys  ",
+        "- [x] Ticked counts too",
+        "```lua",
+        "- [ ] in a fence: code",
+        "## Akzeptanz",
+        "```",
+        "* [ ] Stars count",
+        "## Notizen",
+        "- [ ] a note",
+      }, "\r\n")
+      eq(
+        new.acceptance(body5),
+        { "The float shows the hotkeys", "Ticked counts too", "Stars count" },
+        "the boxes of the acceptance section, trimmed, not those in a fence or other sections"
+      )
+      eq(new.acceptance("## Acceptance\n- [ ] english"), { "english" }, "the English heading")
+      eq(new.acceptance("no sections"), {}, "a body without acceptance")
+      eq(new.id_of("ui-option-float"), "ui-option-float", "a slug is an id")
+      eq(new.id_of("-a b/c"), "a-b-c", "what the id does not allow becomes '-'")
+
+      local repo = root .. "/repo5"
+      vim.fn.mkdir(repo, "p")
+      local asked = {}
+      local function engine5(doc)
+        return function(method, params)
+          asked[#asked + 1] = { method, params }
+          if doc == nil then
+            return nil, "engine down"
+          end
+          return doc
+        end
+      end
+      local title = 'Title with "quotes", ]] and\na newline'
+      local doc5 = { task = { title = title, slug = "live-check-x" }, body = body5 }
+      local outs5, errs5 = {}, {}
+      local sv5 = {
+        out = function(s)
+          outs5[#outs5 + 1] = s
+        end,
+        err = function(s)
+          errs5[#errs5 + 1] = s
+        end,
+      }
+      eq(
+        report.main(
+          { "new", "--from-task", "area/live-check-x", "--repo", repo },
+          sv5,
+          { call = engine5(doc5) }
+        ),
+        0,
+        "through `testing sheets new`"
+      )
+      eq(asked[1], { "task", { id = "area/live-check-x" } }, "the task is read through the engine")
+      local path5 = repo .. "/TESTS/sheets/live-check-x.sheet.lua"
+      local s5, lerr5 = sheet.load(path5)
+      ok(s5 ~= nil, "the draft loads as it is: " .. tostring(lerr5))
+      if s5 then
+        eq(
+          { s5.id, s5.title, s5.task },
+          { "live-check-x", title, "area/live-check-x" },
+          "id, title (quoted as written) and task"
+        )
+        eq(
+          s5.judge,
+          { "The float shows the hotkeys", "Ticked counts too", "Stars count" },
+          "one judge entry per acceptance box"
+        )
+        has(s5.notes, "DRAFT", "marked as a draft")
+        eq(
+          vim.tbl_map(function(st)
+            return st.screen or st.settle or (st.lua and "lua")
+          end, s5.steps),
+          { "lua", "lua", 2000, "start" },
+          "the skeleton: no intro screen, setup, settle, one screen"
+        )
+      end
+      has(
+        table.concat(outs5, "\n"),
+        "TESTS/sheets/live-check-x.sheet.lua (DRAFT, 3 judge",
+        "it says what it wrote"
+      )
+      local f5 = assert(io.open(path5, "rb"))
+      local text5 = f5:read("*a")
+      f5:close()
+      has(text5, "-- DRAFT:", "the header says draft too")
+
+      -- an existing sheet is never overwritten
+      write("repo5/TESTS/sheets/live-check-x.sheet.lua", "-- mine")
+      eq(
+        new.main(
+          { "--from-task", "area/live-check-x", "--repo", repo },
+          sv5,
+          { call = engine5(doc5) }
+        ),
+        2,
+        "an existing sheet is refused"
+      )
+      local f6 = assert(io.open(path5, "rb"))
+      eq(f6:read("*a"), "-- mine", "and left as it was")
+      f6:close()
+      has(table.concat(errs5, "\n"), "never overwritten", "with the reason")
+      eq(
+        new.main(
+          { "--from-task", "area/live-check-x", "--repo", repo, "--name", "other.sheet.lua" },
+          sv5,
+          { call = engine5({ task = { title = "T", slug = "live-check-x" }, body = "" }) }
+        ),
+        0,
+        "--name writes another file"
+      )
+      local s6 = sheet.load(repo .. "/TESTS/sheets/other.sheet.lua")
+      eq(
+        s6 and s6.judge,
+        { "The live check of the task passes: T" },
+        "no acceptance boxes: one judge entry from the title"
+      )
+
+      -- usage and engine errors
+      eq(new.main({ "--repo", repo }, sv5, { call = engine5(doc5) }), 2, "--from-task is required")
+      eq(
+        new.main({ "--from-task", "noslash" }, sv5, { call = engine5(doc5) }),
+        2,
+        "an id is area/slug"
+      )
+      eq(new.main({ "--from-task" }, sv5, { call = engine5(doc5) }), 2, "an option without value")
+      eq(new.main({ "--bogus", "x" }, sv5, { call = engine5(doc5) }), 2, "an unknown option")
+      eq(
+        new.main(
+          { "--from-task", "a/b", "--repo", repo, "--name", "../x" },
+          sv5,
+          { call = engine5(doc5) }
+        ),
+        2,
+        "--name cannot leave TESTS/sheets"
+      )
+      eq(
+        new.main({ "--from-task", "a/b", "--repo", repo }, sv5, { call = engine5(nil) }),
+        3,
+        "the engine fails: exit 3"
+      )
+      ok(vim.uv.fs_stat(repo .. "/TESTS/sheets/b.sheet.lua") == nil, "and nothing is written")
+      eq(
+        new.main({ "--from-task", "a/b", "--repo", repo, "--vault", root .. "/no-vault" }, sv5),
+        3,
+        "a vault that is not there: exit 3"
+      )
+    end
   end, debug.traceback)
 
   S.cleanup()

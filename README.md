@@ -398,7 +398,7 @@ Every key and its type: [docs/CONFIG.md](docs/CONFIG.md).
   settings and the other isolation keys.
 - [docs/GUARDS.md](docs/GUARDS.md): the guards (safety nets, not a sandbox) and the effects ledger.
 - [docs/CHILD.md](docs/CHILD.md): the RPC child driver `testing.rpc` and the warm pool.
-- [docs/SHEETS.md](docs/SHEETS.md): test sheets (live checks as data) and `testing sheets report`.
+- [docs/SHEETS.md](docs/SHEETS.md): test sheets (live checks as data), `testing sheets report` and `testing sheets new --from-task`.
 - [docs/EXIT-CODES.md](docs/EXIT-CODES.md): what `0`, `1`, `2` and `3` promise.
 - [docs/DIALECTS.md](docs/DIALECTS.md): which spec styles run, and exactly what each shim supports.
 - [docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md): reporters and the Result-IR.

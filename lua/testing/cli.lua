@@ -587,7 +587,8 @@ local function execute(argv, sv)
   if argv[1] == "conformance" or argv[1] == "surface" then
     return run_own(argv[1], vim.list_slice(argv, 2), sv)
   end
-  -- `testing sheets report`: the list of live checks from the test sheets (docs/SHEETS.md)
+  -- `testing sheets report|new`: the list of live checks from the test sheets, a draft sheet from a task
+  -- (docs/SHEETS.md)
   if argv[1] == "sheets" then
     return require("testing.sheet.report").main(vim.list_slice(argv, 2), sv)
   end

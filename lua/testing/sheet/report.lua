@@ -326,8 +326,11 @@ M.USAGE =
 ---@param deps? { call?: Testing.SheetTasks.Call } A stand-in for the engine (specs).
 ---@return integer
 function M.main(argv, sv, deps)
+  if argv[1] == "new" then
+    return require("testing.sheet.new").main(vim.list_slice(argv, 2), sv, deps)
+  end
   if argv[1] ~= "report" then
-    sv.err(M.USAGE)
+    sv.err(M.USAGE .. "\n" .. require("testing.sheet.new").USAGE)
     return 2
   end
   local roots, out_file, cases = {}, nil, nil

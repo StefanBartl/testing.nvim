@@ -50,6 +50,28 @@ The file is read as **data**: `load` with an empty environment, so a sheet canno
 read (a sheet that touches `os` does not load). What runs is the Lua of its steps, inside the child editor.
 `load` checks the shape and names the field of a mistake (`steps[3] has two actions (keys and lua)`).
 
+## A sheet from a task (`testing sheets new`)
+
+```
+testing sheets new --from-task <area/slug> [--repo <dir>] [--vault <dir>] [--tasks-cli <tasks.lua>] [--name <file>]
+```
+
+reads the live-check task through tasks.nvim (`call task`) and writes a **draft** `TESTS/sheets/<slug>.sheet.lua`
+into the repository (default the current directory):
+
+* `id` is the task's slug, `title` its title, `task` the id given; strings are quoted as Lua strings, so any title
+  loads.
+* `steps` is a skeleton that runs as it is: the intro screen off (it names the Neovim version), a setup step to
+  fill in, `settle`, one `screen`. It checks nothing yet: write what a person would do.
+* `judge` has one entry per checkbox under `## Akzeptanz` / `## Acceptance` (ticked or not, at most 30; boxes in a
+  fenced code block or another section do not count). A task without boxes gets one entry from its title.
+* `notes` and the header comment say `DRAFT`: drop them once the steps are real and the snapshot is reviewed.
+
+An existing sheet is **never overwritten** (exit 2; `--name` writes another file). The written file is loaded
+right away; a draft that does not load is removed again. The vault is `--vault`, else `$TASKS_VAULT`, else
+`<repo>/../tasks-vault`; the engine is found as for `--tasks` below. Exit codes: 0 written, 2 bad usage or the
+sheet exists, 3 the task could not be read or the file not written.
+
 ## Running sheets
 
 Each sheet is one case of an ordinary spec, named `sheet:<id>`; the report finds its last result by that
