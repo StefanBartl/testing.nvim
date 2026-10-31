@@ -39,7 +39,7 @@ M.USAGE = table.concat({
   "       testing ci verify [--profile=<name>] [--json] [--allow-dirty] [--max-age=<7d>] [--root=<dir>]",
   "       testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list> [--force] [--jobs=<n>] ...",
   "       testing ci list [--json] [--root=<dir>]",
-  "       testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>]  (GitHub Actions status)",
+  "       testing ci remote [<root>...] [--repos-root=<dir>] [--json] [--workflow=<name>] [--state-dir=<dir>]",
   "       testing ci hook install|remove [--run=<profile>] [--verify=<profile>] [--root=<dir>]",
   "                  [--junit=<file>] [--state-dir=<dir>] [--root=<dir>] [-- <suite options>]",
   "  --profile=<name>  the profile to run (default: ci.default)",

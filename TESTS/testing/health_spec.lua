@@ -105,6 +105,7 @@ return function(H)
     package.loaded[mod], package.preload[mod] = saved_loaded, saved_preload
     has(old_text, mod .. " missing", "an old lib.nvim: the report names the missing module")
     has(old_text, "6304829", "an old lib.nvim: the report names the lib.nvim commit that is needed")
+    has(old_text, "ccd30b5", "an old lib.nvim: ... and the one net.github (ci remote) needs")
     has(old_text, "ERROR", "an old lib.nvim is an error, not a warning")
 
     -- 3. A safe_call that loses non-string errors: an error, with the commit ---------------------

@@ -243,7 +243,10 @@ cache, run or left out, and what its cache key is made of (see "Explain and
 audit" below). `stamp` runs the suite and, after a complete green run, writes
 the green stamp; `verify` answers from the cache keys, without running a spec,
 whether the tree is still the stamped one (see "Stamp and verify" below).
-`init` is available as |:Testing| init only.
+`init` is available as |:Testing| init only. `ci` runs the pipeline of
+.testing.lua locally; `ci remote` runs nothing and reports the latest GitHub
+Actions run of the CI workflow per repository and system (docs/CI.md, "The
+GitHub Actions status").
 
 Workspace trust ~                                             *testing-trust*
 The runner executes a project's `.testing.lua`, minimal init and specs, so it

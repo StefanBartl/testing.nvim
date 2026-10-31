@@ -324,6 +324,8 @@ return function(H)
     local res
     if not g then
       res = { code = 128, stdout = "", stderr = "not a git repository" }
+    elseif args[1] == "remote" and g.fail then
+      res = g.fail
     elseif args[1] == "remote" then
       res = g.url and { code = 0, stdout = g.url .. "\n" }
         or { code = 2, stdout = "", stderr = "no such remote" }
@@ -334,6 +336,10 @@ return function(H)
         "git: the head of origin/<branch> is asked for"
       )
       res = { code = 0, stdout = g.sha .. "\n" .. g.msg }
+      -- `log.showSignature=true` in the user's config: gpg's lines come first unless switched off
+      if g.signed and not vim.tbl_contains(args, "--no-show-signature") then
+        res.stdout = "gpg: Signature made Sat Oct 31 2026\ngpg: Good signature\n" .. res.stdout
+      end
     end
     return {
       wait = function()
@@ -348,7 +354,7 @@ return function(H)
     local real = remote.deps
     remote.deps = {
       git = git,
-      transport = transport,
+      transport = opts.transport or transport,
       now = function()
         return NOW
       end,
@@ -585,6 +591,171 @@ return function(H)
   eq(h.code, remote.EXIT_INFRA, "404: exit 3")
   has(vim.json.decode(h.out).repos[1].error, "404", "404: the status is in the error")
 
+  -- an error text that quotes the token (a proxy echoing the request): cut out all the same
+  transport_fail = "proxy said: Authorization: Bearer " .. TOKEN .. " refused"
+  local echo = run({ "--json", dirs.delta })
+  transport_fail = nil
+  lacks(echo.out, TOKEN, "redaction: the token is not in the document")
+  has(vim.json.decode(echo.out).repos[1].error, "Bearer ***", "redaction: ... it reads ***")
+
+  -- lib.nvim.net.github throwing (an older one, curl missing): unknown and exit 3, no crash
+  do
+    local github = require("lib.nvim.net.github")
+    local real_request = github.request
+    github.request = function()
+      error("ENOENT: no such file or directory (cmd): 'curl'", 0)
+    end
+    local pass, thrown = pcall(run, { "--json", dirs.delta, dirs.eps })
+    github.request = real_request
+    ok(pass, "throwing request: the command does not crash: " .. tostring(thrown))
+    eq(thrown.code, remote.EXIT_INFRA, "throwing request: exit 3")
+    for _, r in ipairs(vim.json.decode(thrown.out).repos) do
+      eq(r.overall, "unknown", "throwing request: unknown (" .. r.repo .. ")")
+      has(r.error, "ENOENT", "throwing request: ... with the error (" .. r.repo .. ")")
+    end
+  end
+
+  -- git failing (dubious ownership, not a repository: exit 128) is no "no origin": unknown, exit 3
+  local dubious = repo("dubious", "https://github.com/WKDSteve/dubious", sha("5"))
+  GIT[dubious].fail = {
+    code = 128,
+    stdout = "",
+    stderr = "fatal: detected dubious ownership in repository\n",
+  }
+  local dub = run({ "--json", dubious })
+  eq(dub.code, remote.EXIT_INFRA, "git failed: exit 3, not 0")
+  local dr = vim.json.decode(dub.out).repos[1]
+  eq(dr.overall, "unknown", "git failed: unknown, not no_github")
+  has(dr.error, "dubious ownership", "git failed: git's message is kept")
+  has(dr.error, "exit 128", "git failed: ... with its exit code")
+  local noorigin = repo("noorigin", nil, sha("6"))
+  eq(
+    vim.json.decode(run({ "--json", noorigin }).out).repos[1].overall,
+    "no_github",
+    "git: no origin remote (exit 2) is still no_github"
+  )
+
+  -- log.showSignature in the user's config: the hash is still found
+  local signed = repo("signed", "https://github.com/WKDSteve/eps", sha("e"))
+  GIT[signed].signed = true
+  local sg = vim.json.decode(run({ "--json", signed }).out).repos[1]
+  eq({ sg.sha, sg.overall }, { sha("e"), "no_run" }, "signed: the commit is read past gpg's lines")
+
+  -- a run with zero jobs: rejected only when it failed; cancelled in the queue is cancelled
+  do
+    local function zero(conclusion)
+      local r = {}
+      remote.classify(r, {
+        id = 1,
+        status = "completed",
+        conclusion = conclusion,
+      }, {}, {}, NOW)
+      return r
+    end
+    eq(zero("failure").overall, "rejected", "0 jobs: failure is a rejected workflow")
+    eq(zero("startup_failure").overall, "rejected", "0 jobs: startup_failure too")
+    eq(zero(nil).overall, "rejected", "0 jobs: no conclusion too")
+    local cq = zero("cancelled")
+    eq(cq.overall, "cancelled", "0 jobs: cancelled while queued is cancelled, not rejected")
+    lacks(cq.note, "REJECTED", "0 jobs: ... and not called rejected")
+    local ar = zero("action_required")
+    eq(ar.overall, "unknown", "0 jobs: action_required is no verdict")
+    has(ar.note, "action_required", "0 jobs: ... said so")
+    eq(zero("skipped").overall, "skipped", "0 jobs: skipped stays skipped")
+
+    -- only non-gating jobs: no verdict, and a note that says why
+    local ng = {}
+    remote.classify(ng, { id = 2, status = "completed", conclusion = "success" }, {
+      { id = 1, name = "nightly (ubuntu-latest)", status = "completed", conclusion = "success" },
+    }, { "nightly" }, NOW)
+    eq(ng.overall, "unknown", "non-gating only: unknown")
+    has(ng.note, "only non-gating jobs", "non-gating only: ... with the reason")
+  end
+
+  -- jobs answered 200 without an ETag: the stored ETag of the old list is not kept with the new one
+  do
+    local theta = repo("theta", "https://github.com/WKDSteve/theta", sha("7"))
+    API[R .. "theta/actions/runs"] = {
+      etag = '"runs-theta"',
+      body = { workflow_runs = { run_(90, "CI", "in_progress", nil, "2026-10-31T11:55:00Z") } },
+    }
+    local jobs_theta = {
+      etag = '"jobs-theta-1"',
+      body = { jobs = { job_(901, "test (ubuntu-latest)", "in_progress", nil) } },
+    }
+    API[R .. "theta/actions/runs/90/jobs"] = jobs_theta
+    run({ "--json", theta })
+    jobs_theta.etag = nil
+    jobs_theta.body.jobs[1].status = "completed"
+    jobs_theta.body.jobs[1].conclusion = "failure"
+    run({ "--json", theta })
+    local again = run({ "--json", theta })
+    local jobs_q = vim.tbl_filter(function(r)
+      return r.path == R .. "theta/actions/runs/90/jobs"
+    end, requests)
+    eq(jobs_q[1].etag, nil, "jobs etag: no If-None-Match with the old ETag for the new list")
+    eq(vim.json.decode(again.out).repos[1].overall, "failure", "jobs etag: ... the new list counts")
+  end
+
+  -- two checkouts of one repository at different commits keep their own cache
+  do
+    local one = repo("twin-one", "https://github.com/WKDSteve/twin", sha("8"))
+    local two = repo("twin-two", "https://github.com/WKDSteve/twin", sha("9"))
+    API[R .. "twin/actions/runs"] = { etag = '"runs-twin"', body = '{"workflow_runs":[]}' }
+    run({ "--json", one, two })
+    run({ "--json", one, two })
+    local etags = {}
+    for _, r in ipairs(requests) do
+      if r.path == R .. "twin/actions/runs" then
+        etags[r.query.head_sha] = r.etag or "none"
+      end
+    end
+    eq(
+      etags,
+      { [sha("8")] = '"runs-twin"', [sha("9")] = '"runs-twin"' },
+      "twins: each checkout asks conditionally"
+    )
+  end
+
+  -- past the deadline: a late answer changes nothing, starts nothing, writes nothing
+  do
+    local late_a = repo("late-a", "https://github.com/WKDSteve/late-a", sha("a"))
+    local late_b = repo("late-b", "https://github.com/WKDSteve/late-b", sha("b"))
+    API[R .. "late-a/actions/runs"] = { etag = '"runs-late"', body = '{"workflow_runs":[]}' }
+    API[R .. "late-b/actions/runs"] = { etag = '"runs-late"', body = '{"workflow_runs":[]}' }
+    local real_deadline, real_parallel = remote.DEADLINE_MS, remote.PARALLEL
+    remote.DEADLINE_MS, remote.PARALLEL = 50, 1
+    local slow_state = tmp .. "/slow-state"
+    -- the answers are held until the command has returned, then given: late by construction, not by timing
+    local held, seen_paths = {}, {}
+    local function slow(url, copts, done)
+      seen_paths[#seen_paths + 1] = url
+      held[#held + 1] = function()
+        transport(url, copts, done)
+      end
+    end
+    local pass, late = pcall(run, { "--json", "--state-dir", slow_state, late_a, late_b }, {
+      transport = slow,
+    })
+    remote.DEADLINE_MS, remote.PARALLEL = real_deadline, real_parallel
+    ok(pass, "deadline: runs: " .. tostring(late))
+    eq(late.code, remote.EXIT_INFRA, "deadline: exit 3")
+    -- the fake stays in place while the late answers arrive: a request they start must not reach the network
+    local real_deps = remote.deps
+    remote.deps = vim.tbl_extend("force", real_deps, { transport = slow })
+    for _, give in ipairs(held) do
+      give()
+    end
+    vim.wait(100)
+    remote.deps = real_deps
+    eq(#seen_paths, 1, "deadline: no request is started after it: " .. vim.inspect(seen_paths))
+    eq(
+      #vim.fn.glob(slow_state .. "/testing/ci-remote/*.json", true, true),
+      0,
+      "deadline: a late answer writes no cache"
+    )
+  end
+
   -- ------------------------------------------------------------------ configuration and --workflow
 
   local cfgd = repo("cfgd", "https://github.com/WKDSteve/cfgd", sha("4"))
@@ -651,6 +822,13 @@ return function(H)
     { "eps" },
     "--repos-root: GitHub repositories with workflows, no vault, no other host (and not `testing ci --repos-root`)"
   )
+  -- one git cannot read stays in the table as unknown, never silently out of "fully green: n / n"
+  fleet("broken", "https://github.com/WKDSteve/broken", true)
+  GIT[root .. "/broken"].fail = { code = 128, stdout = "", stderr = "fatal: not a git repository" }
+  local fb = run({ "--repos-root", root })
+  eq(fb.code, remote.EXIT_INFRA, "--repos-root: a repository git cannot read is exit 3")
+  has(fb.out, "broken", "--repos-root: ... and has its row")
+  has(fb.out, "fully green: 0 / 2", "--repos-root: ... and counts")
 
   -- ------------------------------------------------------------------ usage
 

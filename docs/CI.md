@@ -365,7 +365,9 @@ never fetches: it asks GitHub about the commit the last `git fetch` brought.
 Per repository:
 
 1. `owner/repo` from `git remote get-url origin` (`https://github.com/o/r(.git)`, `git@github.com:o/r.git`,
-   `ssh://git@github.com/o/r`); any other host is `no_github`.
+   `ssh://git@github.com/o/r`); any other host, or no `origin` remote, is `no_github`. A git that cannot read the
+   directory (not a repository, "dubious ownership", no git, a timeout) is `unknown` with git's message, also below
+   `--repos-root`: such a repository is never left out of the count.
 2. The commit: the head of `origin/<branch>` (`ci_remote.branch`, default `main`). Not "the newest run of the branch":
    a fast-forward push of a commit that already ran elsewhere does not always get a second run, and the newest run of
    `main` is then an older commit's verdict.
@@ -384,9 +386,9 @@ States, worst first; a cell has the worst state of its jobs, the repository (`ov
 | State | When |
 | --- | --- |
 | `failure` | a job failed or timed out (or the run concluded `failure` although no job did) |
-| `rejected` | a completed run with **zero jobs**: GitHub found the workflow file invalid and started nothing. Counting red jobs would read it as a pass |
-| `cancelled` | a job was cancelled (often `cancel-in-progress`: a newer run took over) |
-| `unknown` | no token, no network, an API error, an answer that is not one: never green |
+| `rejected` | a run that failed (`failure`, `startup_failure`, no conclusion) with **zero jobs**: GitHub found the workflow file invalid and started nothing. Counting red jobs would read it as a pass |
+| `cancelled` | a job was cancelled, or the run was cancelled before any job started (often `cancel-in-progress`: a newer run took over) |
+| `unknown` | no token, no network, an API error (a redirect too: a renamed repository), git could not read the directory, an answer that is not one, a run without a job that is neither failed, cancelled nor skipped (`action_required`), a run with only non-gating jobs: never green |
 | `waiting_runner` | a job queued on a `self-hosted` runner for longer than 2 minutes: the runner is off |
 | `queued`, `running` | the run is not done |
 | `success` | every job of the cell succeeded (skipped ones do not count against it) |
@@ -415,8 +417,8 @@ environment of `gh` (which would print it back). The token goes to curl through 
 a command line, and appears in no output, no document, no cache file and no error. Without a token every repository
 that needs GitHub is `unknown` and the exit code is `3`.
 
-**Cache.** Per repository `<state>/testing/ci-remote/<owner>_<repo>.json` (`--state-dir`, default `stdpath('state')`)
-holds the ETags and the last answers (only the fields used). The runs are asked with `If-None-Match`: a `304` reuses
+**Cache.** Per checkout `<state>/testing/ci-remote/<owner>_<repo>_<dir hash>.json` (`--state-dir`, default
+`stdpath('state')`; two checkouts of one repository keep their own) holds the ETags and the last answers (only the fields used). The runs are asked with `If-None-Match`: a `304` reuses
 the stored answer and does not count against the rate limit. The jobs of a completed run whose `updated_at` did not
 change are not asked again at all; an open run's jobs are asked again, conditionally. Offline, a repository is
 `unknown`, never its stored state.

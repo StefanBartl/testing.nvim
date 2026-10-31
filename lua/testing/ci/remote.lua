@@ -14,22 +14,23 @@
 --- ubuntu, windows, macos (by the job's name, else its labels) and other (lint, publish, ...); a job whose name
 --- contains a `ci_remote.non_gating` text (default "nightly") is listed but never decides.
 ---
---- States, worst first (the overall state of a repository is the worst of its cells): failure, rejected (a completed
---- run with zero jobs: GitHub refused the workflow file), cancelled, unknown (no token, network or API error, an
---- unexpected answer: never green), waiting_runner (a queued job on a self-hosted runner for longer than
---- `WAITING_RUNNER_S`), queued, running, success, skipped (every job skipped, or a head commit with `[skip ci]` and no
---- run), no_run (no run of the workflow for the commit), no_github.
+--- States, worst first (the overall state of a repository is the worst of its cells): failure, rejected (a run that
+--- failed with zero jobs: GitHub refused the workflow file), cancelled, unknown (no token, git, network or API error,
+--- an unexpected answer, only non-gating jobs: never green), waiting_runner (a queued job on a self-hosted runner for
+--- longer than `WAITING_RUNNER_S`), queued, running, success, skipped (every job skipped, or a head commit with
+--- `[skip ci]` and no run), no_run (no run of the workflow for the commit), no_github.
 ---
 --- The token: `$TESTING_GITHUB_TOKEN` (a fine-grained read-only token: Actions and Metadata read), else `gh auth
 --- token`; never `GITHUB_TOKEN` (`lib.nvim.net.github.token`). It goes to curl through its config on stdin and appears
 --- in no output, no document, no cache file and no error text.
 ---
---- Requests are conditional: per repository the ETag and the last answer live in
---- `<state>/testing/ci-remote/<owner>_<repo>.json`; a `304` reuses the stored answer (it does not count against the
---- rate limit), and the jobs of a completed run whose `updated_at` did not change are not asked for again.
+--- Requests are conditional: per checkout the ETag and the last answer live in
+--- `<state>/testing/ci-remote/<owner>_<repo>_<dir hash>.json`; a `304` reuses the stored answer (it does not count
+--- against the rate limit), and the jobs of a completed run whose `updated_at` did not change are not asked for again.
 ---
 --- Exit codes: 0 every repository was fetched and none is red, 1 a repository is failure, rejected or cancelled, 2 a
---- usage error, 3 a repository could not be fetched (unknown) and none is red: no token, no network.
+--- usage error, 3 a repository could not be fetched (unknown) and none is red: no token, no network; also when
+--- lib.nvim has no `net.github`.
 
 local M = {}
 
@@ -432,11 +433,23 @@ function M.classify(rec, run, jobs, non_gating, now)
     if run.status == "completed" then
       if run.conclusion == "skipped" then
         rec.overall = "skipped"
-      else
+      elseif run.conclusion == "cancelled" then
+        -- cancelled while still queued (`cancel-in-progress`: a newer run took over before a job started)
+        rec.overall = "cancelled"
+        notes[#notes + 1] = "cancelled before any job (0 jobs)"
+      elseif
+        run.conclusion == nil
+        or run.conclusion == "failure"
+        or run.conclusion == "startup_failure"
+      then
         -- GitHub created the run, found the workflow file invalid and failed it without starting anything: every
         -- per-job query is empty, which reads like "nothing red" when only red jobs are counted
         rec.overall = "rejected"
         notes[#notes + 1] = "WORKFLOW REJECTED (0 jobs)"
+      else
+        -- action_required (an approval is pending), or anything else without a job: no verdict, never green
+        rec.overall = "unknown"
+        notes[#notes + 1] = ("run concluded %s without a job"):format(run.conclusion)
       end
     else
       rec.overall = run.status == "in_progress" and "running" or "queued"
@@ -494,6 +507,10 @@ function M.classify(rec, run, jobs, non_gating, now)
     overall = "failure"
     notes[#notes + 1] = "run concluded " .. run.conclusion
   end
+  if not overall then
+    -- every job is non-gating: nothing decides, which is no verdict (never green), said so
+    notes[#notes + 1] = "only non-gating jobs"
+  end
   rec.overall = overall or "unknown"
   rec.os = require("lib.nvim.json.canonical").object(cells)
   if #others_red > 0 then
@@ -519,11 +536,18 @@ function M.classify(rec, run, jobs, non_gating, now)
   end
 end
 
+---Per checkout, not per repository: two checkouts of one repository (a renamed folder) are asked about in parallel,
+---often for different commits, and one shared file would trade their ETags back and forth.
 ---@param state_dir string
 ---@param rec table
 ---@return string
 local function cache_path(state_dir, rec)
-  return ("%s/testing/ci-remote/%s_%s.json"):format(state_dir, rec.owner, rec.repo)
+  return ("%s/testing/ci-remote/%s_%s_%s.json"):format(
+    state_dir,
+    rec.owner,
+    rec.repo,
+    vim.fn.sha256(rec.dir):sub(1, 8)
+  )
 end
 
 ---The stored answers of a repository (untrusted: bounded, decoded under pcall, every entry trimmed again).
@@ -574,7 +598,7 @@ end
 
 ---Ask GitHub about one repository; `done()` once `rec` is filled.
 ---@param rec table
----@param ctx { token: string, state_dir: string, now: integer, non_gating: table<table, string[]> }
+---@param ctx { token: string, state_dir: string, now: integer, non_gating: table<table, string[]>, closed?: boolean }
 ---@param done fun()
 local function fetch(rec, ctx, done)
   local github = require("lib.nvim.net.github")
@@ -583,7 +607,8 @@ local function fetch(rec, ctx, done)
   local fresh = { sha = rec.sha }
   local finished = false
   local function finish(err)
-    if finished then
+    -- past the deadline the record is reported already: a late answer changes nothing, writes nothing
+    if finished or ctx.closed then
       return
     end
     finished = true
@@ -604,10 +629,15 @@ local function fetch(rec, ctx, done)
   local base = ("/repos/%s/%s/actions/runs"):format(rec.owner, rec.repo)
   -- the stored ETag belongs to the runs of the stored commit only
   local runs_cache = cache.sha == rec.sha and cache.runs or nil
-  github.request(
+  -- an older lib.nvim lets a throwing curl (none on PATH) through: that is this repository's error, not a crash
+  local sent, send_err = pcall(
+    github.request,
     base,
     opts(runs_cache and runs_cache.etag, { head_sha = rec.sha, per_page = "20" }),
     function(res, err)
+      if ctx.closed then
+        return
+      end
       local ok, perr = pcall(function()
         if not res then
           return finish(err)
@@ -650,6 +680,9 @@ local function fetch(rec, ctx, done)
           ("%s/%d/jobs"):format(base, run.id),
           opts(jc and jc.etag, { per_page = "100" }),
           function(res2, err2)
+            if ctx.closed then
+              return
+            end
             local ok2, perr2 = pcall(function()
               if not res2 then
                 return finish(err2)
@@ -667,7 +700,9 @@ local function fetch(rec, ctx, done)
                 run_id = run.id,
                 run_status = run.status,
                 run_updated_at = run.updated_at,
-                etag = res2.etag or (jc and jc.etag),
+                -- the stored ETag only for the stored list: a 200 without an ETag must not pair the old one with
+                -- the new list (a later 304 on it would bring the old list back)
+                etag = res2.not_modified and (res2.etag or jc.etag) or res2.etag,
                 list = jobs,
               }
               M.classify(rec, run, vim.deepcopy(jobs), ctx.non_gating[rec], ctx.now)
@@ -684,6 +719,9 @@ local function fetch(rec, ctx, done)
       end
     end
   )
+  if not sent then
+    finish("GitHub request failed: " .. tostring(send_err))
+  end
 end
 
 ---The configuration of a repository's `ci_remote` (its `.testing.lua`; the defaults without one or when it cannot be
@@ -774,7 +812,11 @@ function M.collect(repos, opts)
         cfg = cfg,
         problem = problem,
         url = M.deps.git(r.dir, { "remote", "get-url", "origin" }),
-        head = M.deps.git(r.dir, { "log", "-1", "--format=%H%n%B", "origin/" .. branch, "--" }),
+        -- --no-show-signature: with `log.showSignature` set, gpg's lines would come before the hash
+        head = M.deps.git(
+          r.dir,
+          { "log", "-1", "--no-show-signature", "--format=%H%n%B", "origin/" .. branch, "--" }
+        ),
       }
     end
     for _, s in ipairs(slice) do
@@ -784,8 +826,10 @@ function M.collect(repos, opts)
       if url_res.code == 0 then
         owner, repo = M.parse_origin(url_res.stdout or "")
       end
-      -- below a --repos-root only GitHub repositories count; a named one is always reported
-      if owner or not s.r.from_root then
+      -- git itself failed (not a repository, "dubious ownership", no git, a timeout) is not "no origin" (exit 2)
+      local git_failed = url_res.code ~= 0 and url_res.code ~= 2
+      -- below a --repos-root only GitHub repositories count; a named one, and one git could not read, always is
+      if owner or git_failed or not s.r.from_root then
         local rec = {
           repo = repo or vim.fs.basename(s.r.dir),
           owner = owner,
@@ -794,7 +838,14 @@ function M.collect(repos, opts)
           workflow = opts.workflow or s.cfg.workflow,
           config_error = s.problem and text(s.problem, 300),
         }
-        if not owner then
+        if git_failed then
+          rec.overall = "unknown"
+          rec.error = ("git remote get-url origin failed (exit %s): %s"):format(
+            tostring(url_res.code),
+            text(vim.trim(url_res.stderr or ""), 240) or ""
+          )
+          rec.note = rec.error
+        elseif not owner then
           rec.overall = "no_github"
           rec.note = url_res.code == 0 and "origin is not on GitHub" or "no origin remote"
         else
@@ -842,7 +893,7 @@ function M.collect(repos, opts)
       local ctx = { token = token, state_dir = opts.state_dir, now = now, non_gating = non_gating }
       local next_i, open = 1, 0
       local function launch()
-        while open < M.PARALLEL and next_i <= #pending do
+        while not ctx.closed and open < M.PARALLEL and next_i <= #pending do
           local rec = pending[next_i]
           next_i = next_i + 1
           open = open + 1
@@ -856,6 +907,8 @@ function M.collect(repos, opts)
       vim.wait(M.DEADLINE_MS, function()
         return open == 0 and next_i > #pending
       end, 10)
+      -- the answers still under way are dropped: no record changes and no new request after this point
+      ctx.closed = true
       for _, rec in ipairs(pending) do
         if rec.overall == nil then
           rec.overall = "unknown"

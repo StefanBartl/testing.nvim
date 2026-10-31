@@ -84,8 +84,8 @@ end
 ---Instruction budget of the sandboxed `.testing.lua` evaluation.
 local EVAL_BUDGET = 200000
 
-local LIB_HINT =
-  "testing.nvim needs lib.nvim >= 6304829 (fs.write.atomic) and >= 89cb912 (safe_call keeps non-string errors)"
+local LIB_HINT = "testing.nvim needs lib.nvim >= 6304829 (fs.write.atomic) and >= 89cb912 (safe_call keeps non-string errors)"
+  .. " and >= ccd30b5 (net.github, for testing ci remote)"
 
 ---The surface of `vim.health` the checks report through: `error` and `warn` take an advice list, `ok` and `info` do
 ---not (LLS-29), so a hint passed to them is never shown.
