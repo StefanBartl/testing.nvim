@@ -22,7 +22,7 @@
 ---   K7  every soft dependency has a health check          K15  static gate rules (NEW-36/45/48/49, REL-16, ...)
 ---   K8  no vim.deprecate message and no scheduled error on load and setup
 ---
---- A check is `{ id, title, rules, kind = "static"|"runtime", level, run(ctx) }` and returns findings; the
+--- A check is `{ id, title, rules, kind = "static"|"runtime"|"vault", level, run(ctx) }` and returns findings; the
 --- runtime ones run in a child editor (`testing.rpc`) with the plugin loaded from the repository and the
 --- guards on. The report is first and the gate comes later (the author's decision): the default
 --- (`--report-only`) always exits 0, except for an infrastructure error (exit 3); `--gate` exits 1 when a

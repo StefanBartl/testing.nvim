@@ -6,15 +6,19 @@
 --- task was renamed or never existed keeps running and reporting, but nothing ever reads its state again:
 --- `testing sheets report --tasks` lists it as missing, this check makes it a finding of the gate.
 ---
----   * a sheet that cannot be read or does not load            -> `error`
----   * a sheet without `task`                                  -> `warn`
----   * a task that is neither open nor in its area's Backlog   -> `error`
+---   * a sheet that cannot be read or does not load                    -> `error`
+---   * a sheet without `task`                                          -> `warn`
+---   * a task that is neither open nor in its area's Backlog (or no id) -> `error`
 ---
---- The tasks are looked up through tasks.nvim's engine (`tasks-export/1`: `call task`, then `call finished` of the
---- area), never in the vault's files. The vault is `$TASKS_VAULT`, else `tasks-vault` beside the repository
---- (`testing.sheet.new.find_vault`); without one, or without the engine, the lookup is skipped and the check is
---- `n/a` with the reason (a CI runner has no vault), never a failure. The sheets are read through `ctx.fs` and
---- loaded as data (`testing.sheet.load_text`), nothing of them runs.
+--- The tasks are looked up through tasks.nvim's engine (`tasks-export/1`), never in the vault's files: ONE
+--- `call order` for the ids of all open tasks, then every page of `call finished` of each area that still has a
+--- task not found (an area the engine does not know, or an id it rejects, has none). The first answer that is not
+--- a document stops the lookup: the check is `error`, and no task reads as missing. The vault is `$TASKS_VAULT`,
+--- else `tasks-vault` beside the repository (`testing.sheet.new.find_vault`); without one, or without the engine,
+--- the lookup is skipped and the check is `n/a` (a CI runner has no vault), never a failure. No reason names a
+--- path of this machine. The sheets are the ones `testing.sheet.files` runs (up to 4 levels below
+--- `TESTS/sheets`; a symbolic link is not followed here), read through `ctx.fs` and loaded as data
+--- (`testing.sheet.load_text`, under its instruction limit).
 
 local util = require("testing.conformance.util")
 
@@ -27,41 +31,67 @@ local M = {
 }
 
 M.DIR = "TESTS/sheets"
+-- the depth `testing.sheet.files` looks into
+M.MAX_DEPTH = 4
 
----The caller of the engine, or why there is none.
+---The caller of the engine and the paths its messages must not show, or why there is none (no path in it).
 ---@param ctx Testing.Conformance.Ctx
----@return Testing.SheetTasks.Call|nil call, string|nil why
+---@return Testing.SheetTasks.Call|nil call, string[]|string hide_or_why
 local function connect(ctx)
   local t = ctx.tasks or {}
   if t.call then
-    return t.call
+    return t.call, {}
   end
-  local vault, verr =
+  local vault =
     require("testing.sheet.new").find_vault(ctx.root, t.vault, t.getenv or vim.uv.os_getenv)
   if not vault then
-    return nil, verr
+    return nil, "no vault (set TASKS_VAULT, or put tasks-vault beside the repository)"
   end
   local tasks = require("testing.sheet.tasks")
-  local cli, lerr = tasks.locate(vault, { getenv = t.getenv })
+  local cli = tasks.locate(vault, { getenv = t.getenv })
   if not cli then
-    return nil, "tasks.nvim not found: " .. tostring(lerr)
+    return nil,
+      "tasks.nvim not found (TASKS_NVIM_DIR, <vault>/.deps/tasks.nvim, <vault>/../tasks.nvim, lazy)"
   end
-  return tasks.caller(cli, vault)
+  return tasks.caller(cli, vault), { vault, vim.fs.dirname(vim.fs.dirname(cli)) }
 end
 
----The ids of the finished tasks of `area` (every page of `call finished`); an unknown area has none.
+---The first line of an engine message with the vault and the engine's checkout replaced.
+---@param msg any
+---@param hide string[]
+---@return string
+local function redact(msg, hide)
+  local s = tostring(msg):match("^[^\r\n]*") or ""
+  for i, p in ipairs(hide) do
+    local name = i == 1 and "<VAULT>" or "<TASKS_NVIM>"
+    for _, form in ipairs({ p, (p:gsub("/", "\\")) }) do
+      s = s:gsub(vim.pesc(form), (name:gsub("%%", "%%%%")))
+    end
+  end
+  return s
+end
+
+---Every page of a document's id list (`order`: `ids`; `finished`: `items[].id`).
 ---@param call Testing.SheetTasks.Call
----@param area string
----@return table<string, boolean>|nil ids, string|nil err
-local function finished(call, area)
+---@param method "order"|"finished"
+---@param params table
+---@return table<string, boolean>|nil ids, string|nil err, string|nil code
+local function ids_of(call, method, params)
   local ids, offset = {}, 0
   while true do
-    local doc, err, code = call("finished", { area = area, offset = offset })
+    local p = vim.deepcopy(params)
+    if method == "finished" then
+      p.offset = offset
+    end
+    local doc, err, code = call(method, p)
     if not doc then
-      if code == "not_found" then
-        return ids
+      return nil, err, code
+    end
+    if method == "order" then
+      for _, id in ipairs(type(doc.ids) == "table" and doc.ids or {}) do
+        ids[tostring(id)] = true
       end
-      return nil, err
+      return ids
     end
     local items = type(doc.items) == "table" and doc.items or {}
     for _, item in ipairs(items) do
@@ -69,10 +99,11 @@ local function finished(call, area)
         ids[item.id] = true
       end
     end
-    offset = offset + #items
-    if #items == 0 or offset >= (tonumber(doc.total) or 0) then
+    local next_offset = tonumber(doc.next_offset)
+    if not next_offset or next_offset <= offset or #items == 0 then
       return ids
     end
+    offset = next_offset
   end
 end
 
@@ -81,7 +112,8 @@ end
 function M.run(ctx)
   local rels = {}
   for _, rel in ipairs(ctx.fs:walk(M.DIR, { ext = "lua" })) do
-    if rel:match("%.sheet%.lua$") then
+    local _, depth = rel:sub(#M.DIR + 2):gsub("/", "")
+    if rel:match("%.sheet%.lua$") and depth < M.MAX_DEPTH then
       rels[#rels + 1] = rel
     end
   end
@@ -127,37 +159,45 @@ function M.run(ctx)
   if #order == 0 then
     return { findings = findings, notes = notes }
   end
-  local call, why = connect(ctx)
+  local call, hide = connect(ctx)
   if not call then
+    local why = "the tasks were not looked up: " .. tostring(hide)
     if #findings == 0 then
-      return { na = "the tasks were not looked up: " .. tostring(why) }
+      return { na = why }
     end
-    notes[#notes + 1] = "the tasks were not looked up: " .. tostring(why)
+    notes[#notes + 1] = why
     return { findings = findings, notes = notes }
   end
+  ---@cast hide string[]
+  local function failed(err)
+    return {
+      findings = findings,
+      notes = notes,
+      error = "the vault could not be asked: " .. redact(err, hide),
+    }
+  end
+  local open, oerr = ids_of(call, "order", {})
+  if not open then
+    return failed(oerr)
+  end
   table.sort(order)
-  local done_of, failures = {}, {}
+  local done_of = {}
   for _, id in ipairs(order) do
+    local found = open[id] == true
     local area = id:match("^([^/]+)/[^/]+$")
-    local found = false
-    if area then
-      local doc, err, code = call("task", { id = id })
-      if doc then
-        found = true
-      elseif code ~= "not_found" then
-        failures[#failures + 1] = tostring(err)
-        found = true -- not known either way: reported as an error below, not as a missing task
-      else
-        if done_of[area] == nil then
-          local ids, ferr = finished(call, area)
-          if not ids then
-            failures[#failures + 1] = tostring(ferr)
+    if not found and area then
+      if not done_of[area] then
+        local ids, ferr, code = ids_of(call, "finished", { area = area })
+        if not ids then
+          -- an area the engine does not know (or cannot take as one) has no finished task
+          if code ~= "not_found" and code ~= "invalid_argument" then
+            return failed(ferr)
           end
-          done_of[area] = ids or false
+          ids = {}
         end
-        -- a Backlog that could not be read is reported as an error below, not as a missing task
-        found = done_of[area] == false or done_of[area][id] == true
+        done_of[area] = ids
       end
+      found = done_of[area][id] == true
     end
     if not found then
       for _, rel in ipairs(wanted[id]) do
@@ -171,11 +211,7 @@ function M.run(ctx)
       end
     end
   end
-  local outcome = { findings = findings, notes = notes }
-  if #failures > 0 then
-    outcome.error = "the vault could not be asked: " .. table.concat(failures, "; ")
-  end
-  return outcome
+  return { findings = findings, notes = notes }
 end
 
 return M
