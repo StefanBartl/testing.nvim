@@ -23,8 +23,9 @@ local DEFAULTS = {
   surface_view = { keys = { jump = "<CR>", status = "s", kind = "t", export = "e" } },
   -- `testing ci` from the editor. `repos`: the repositories `:Testing ci repos` runs one after the other
   -- (docs/CI.md): `roots` are directories whose sub-directories with a `ci` section count ("$VAR" is expanded),
-  -- `include` / `exclude` narrow them by directory name.
-  ci = { repos = { roots = {}, include = {}, exclude = {} } },
+  -- `include` / `exclude` narrow them by directory name. `export_remote`: whether `--export=<dir>` of that run asks
+  -- the CI adapter (GitHub) for `ci_remote`: "always", "never" or "ask" (a question each time).
+  ci = { repos = { roots = {}, include = {}, exclude = {} }, export_remote = "always" },
   -- `:Testing lint` (docs/CI.md). `on_save = true`: a written file is linted in the background (only the checks
   -- that may run on save, never luals) and its diagnostics are updated.
   lint = { on_save = false },

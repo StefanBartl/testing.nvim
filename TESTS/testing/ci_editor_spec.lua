@@ -1070,6 +1070,161 @@ return function(H)
       { "--repos-root=/other" },
       "repos_args: --repos-root replaces the settings"
     )
+
+    -- ci.export_remote: a setting with three values (default always), passed with --export to the child
+    eq(config.get().ci.export_remote, "always", "config: export_remote defaults to always")
+    for _, value in ipairs({ "always", "never", "ask" }) do
+      eq(
+        select(2, config.validate({ ci = { export_remote = value } })),
+        {},
+        "config: export_remote " .. value
+      )
+    end
+    eq(
+      #select(2, config.validate({ ci = { export_remote = "sometimes" } })),
+      1,
+      "config: export_remote has three values"
+    )
+    local ecfg =
+      { repos = { roots = { "/r1" }, include = {}, exclude = {} }, export_remote = "never" }
+    eq(
+      editor.repos_args(ecfg, { export = "/out" }),
+      { "--repos-root=/r1", "--export=/out", "--export-remote=never" },
+      "repos_args: --export carries the setting"
+    )
+    eq(
+      editor.repos_args(ecfg, { export = "/out", ["export-remote"] = "always" }),
+      { "--repos-root=/r1", "--export=/out", "--export-remote=always" },
+      "repos_args: the flag wins over the setting"
+    )
+    eq(editor.repos_args(ecfg, {}), { "--repos-root=/r1" }, "repos_args: no --export, no flag")
+
+    -- `:Testing ci repos --export` with ask: the question in the editor, the child gets the answer
+    local usrcmds = require("testing.bindings.usrcmds")
+    local real_run, real_ask = editor.run_repos, usrcmds.ask
+    local started_args, questions = {}, 0
+    editor.run_repos = function(o)
+      started_args[#started_args + 1] = o.args
+      return true
+    end
+    local answer = 2
+    usrcmds.ask = function(_, choices, cb)
+      questions = questions + 1
+      eq(#choices, 2, "ci_repos ask: two answers")
+      cb(answer)
+    end
+    config.setup({ ci = { repos = { roots = { "/r1" } }, export_remote = "ask" } })
+    local passed_ask, err_ask = pcall(function()
+      usrcmds.ci_repos({ args = {}, flags = { export = "/out" } })
+      answer = 1
+      usrcmds.ci_repos({ args = {}, flags = { export = "/out" } })
+      usrcmds.ci_repos({ args = {}, flags = {} })
+      usrcmds.ci_repos({ args = {}, flags = { export = "/out", ["export-remote"] = "never" } })
+    end)
+    editor.run_repos, usrcmds.ask = real_run, real_ask
+    config.reset()
+    ok(passed_ask, "ci_repos ask raised: " .. tostring(err_ask))
+    eq(questions, 2, "ci_repos ask: asked only with --export and without a flag")
+    eq(started_args[1][#started_args[1]], "--export-remote=always", "ci_repos ask: yes is always")
+    eq(started_args[2][#started_args[2]], "--export-remote=never", "ci_repos ask: no is never")
+    eq(started_args[3], { "--repos-root=/r1" }, "ci_repos ask: no --export, no question")
+    eq(started_args[4][#started_args[4]], "--export-remote=never", "ci_repos ask: the flag wins")
+
+    -- a wrong ci.export_remote costs only that key: the repositories stay, the warning names the key and the values
+    local bad_valid, bad_problems =
+      config.validate({ ci = { repos = { roots = { "/r1" } }, export_remote = "sometimes" } })
+    eq(#bad_problems, 1, "config: wrong export_remote is one problem")
+    has(bad_problems[1], "ci.export_remote", "config: the warning names the key")
+    has(bad_problems[1], "always, never or ask", "config: the warning names the values")
+    eq(
+      bad_valid.ci,
+      { repos = { roots = { "/r1" } } },
+      "config: wrong export_remote keeps the rest of ci"
+    )
+    config.setup({ ci = { repos = { roots = { "/r1" } }, export_remote = "sometimes" } })
+    eq(config.get().ci.repos.roots, { "/r1" }, "config: wrong export_remote keeps repos.roots")
+    eq(config.get().ci.export_remote, "always", "config: wrong export_remote falls back to always")
+    config.reset()
+
+    -- a relative --export is the editor's cwd made absolute: the child runs in the project root of the buffer
+    local rel_cwd = vim.fs.normalize(vim.fn.tempname())
+    vim.fn.mkdir(rel_cwd, "p")
+    local saved_cwd = vim.fn.getcwd()
+    local rel_args, dismissed_runs, dismiss_notes = {}, 0, {}
+    local saved_notify = vim.notify
+    editor.run_repos = function(o)
+      rel_args[#rel_args + 1] = o.args
+      return true
+    end
+    config.setup({ ci = { repos = { roots = { "/r1" } }, export_remote = "ask" } })
+    local passed_rel, err_rel = pcall(function()
+      vim.cmd.cd(vim.fn.fnameescape(rel_cwd))
+      usrcmds.ci_repos({ args = {}, flags = { export = "rel-out", ["export-remote"] = "never" } })
+      -- Esc at the question: nothing starts, and it says so
+      usrcmds.ask = function(_, _, cb)
+        cb(1, true)
+      end
+      vim.notify = function(msg)
+        dismiss_notes[#dismiss_notes + 1] = tostring(msg)
+      end
+      usrcmds.ci_repos({ args = {}, flags = { export = "/out" } })
+      dismissed_runs = #rel_args - 1
+    end)
+    vim.notify = saved_notify
+    vim.cmd.cd(vim.fn.fnameescape(saved_cwd))
+    editor.run_repos, usrcmds.ask = real_run, real_ask
+    config.reset()
+    vim.fn.delete(rel_cwd, "rf")
+    ok(passed_rel, "ci_repos relative export raised: " .. tostring(err_rel))
+    eq(
+      rel_args[1] and rel_args[1][2],
+      "--export=" .. rel_cwd .. "/rel-out",
+      "ci_repos: a relative --export is absolute (the editor's cwd)"
+    )
+    eq(dismissed_runs, 0, "ci_repos ask dismissed: nothing started")
+    has(table.concat(dismiss_notes, "\n"), "cancelled", "ci_repos ask dismissed: says so")
+
+    -- M.ask tells a dismissal apart from the first answer (ui.kit and the vim.ui.select fallback)
+    local real_kit, real_select = package.loaded["ui.kit"], vim.ui.select
+    local got = {}
+    local passed_ask2, err_ask2 = pcall(function()
+      package.loaded["ui.kit"] = {
+        confirm = function(o)
+          o.on_answer(nil)
+        end,
+      }
+      usrcmds.ask("q", { "A", "B" }, function(i, d)
+        got[#got + 1] = { i, d }
+      end)
+      package.loaded["ui.kit"] = {
+        confirm = function(o)
+          o.on_answer("A")
+        end,
+      }
+      usrcmds.ask("q", { "A", "B" }, function(i, d)
+        got[#got + 1] = { i, d }
+      end)
+      package.loaded["ui.kit"] = {}
+      vim.ui.select = function(_, _, on_choice)
+        on_choice(nil, nil)
+      end
+      usrcmds.ask("q", { "A", "B" }, function(i, d)
+        got[#got + 1] = { i, d }
+      end)
+      vim.ui.select = function(items, _, on_choice)
+        on_choice(items[2], 2)
+      end
+      usrcmds.ask("q", { "A", "B" }, function(i, d)
+        got[#got + 1] = { i, d }
+      end)
+    end)
+    package.loaded["ui.kit"], vim.ui.select = real_kit, real_select
+    ok(passed_ask2, "ask raised: " .. tostring(err_ask2))
+    eq(
+      got,
+      { { 1, true }, { 1, false }, { 1, true }, { 2, false } },
+      "ask: dismissed is told apart"
+    )
   end
 
   vim.notify = function(msg, level)

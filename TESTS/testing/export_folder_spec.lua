@@ -669,6 +669,147 @@ return function(H)
     ok(okw, "ci --export refused at the end raised: " .. tostring(r3))
     eq(r3.code, 2, "ci --export refused at the end: exit 2")
     has(r3.err, "in the way", "... says why")
+
+    -- ── ci.export_remote / --export-remote: does the export of the run ask the CI adapter (the fixture's fakes) ──
+    local out7 = fx5.root .. "/../export-ci-remote"
+    local real_remote = export.deps.remote
+    local asked_dirs
+    ---The adapter of the fixture, recording which repositories it was asked for.
+    local function counting(entries, o)
+      asked_dirs = asked_dirs or {}
+      for _, entry in ipairs(entries) do
+        asked_dirs[#asked_dirs + 1] = vim.fs.basename(entry.dir)
+      end
+      return real_remote(entries, o)
+    end
+    export.deps.remote = counting
+    local saved_tty, saved_prompt = repos.tty, repos.prompt
+    local function fleet()
+      return vim.json.decode(fixture.read(out7 .. "/fleet.json"))
+    end
+    local function with_remote(args, setup)
+      asked_dirs = nil
+      if setup then
+        setup()
+      end
+      local okx, res = pcall(run, args)
+      repos.tty, repos.prompt = saved_tty, saved_prompt
+      ok(okx, "export-remote: the run raised: " .. tostring(res))
+      return res
+    end
+    local function row(doc, name)
+      for _, x in ipairs(doc.repos) do
+        if x.name == name then
+          return x
+        end
+      end
+    end
+
+    -- the default is always: only the released repositories are asked (gamma is private here)
+    local saved_areas = fixture.read(fx5.areas)
+    fixture.write(
+      fx5.areas,
+      fixture.areas({
+        ["alpha.nvim"] = "public",
+        ["beta.nvim"] = "internal",
+        ["gamma.nvim"] = "private",
+      })
+    )
+    r = with_remote({ "--repos=" .. list, "--force", "--export=" .. out7 })
+    fixture.write(fx5.areas, saved_areas)
+    eq(r.code, 0, "export-remote default: exit 0: " .. r.err)
+    eq(fleet().remote, { asked = true, error = vim.NIL }, "export-remote default: GitHub was asked")
+    local alpha_rec = row(fleet(), "alpha.nvim").ci_remote
+    eq(
+      type(alpha_rec) == "table" and alpha_rec.state or alpha_rec,
+      "success",
+      "export-remote default: alpha's record"
+    )
+    table.sort(asked_dirs or {})
+    eq(asked_dirs, { "alpha.nvim", "beta.nvim" }, "export-remote default: only the released ones")
+
+    -- always, and the adapter fails: a note in the documents, never an exit code
+    export.deps.remote = function()
+      error("injected: GitHub is down")
+    end
+    r =
+      with_remote({ "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=always" })
+    eq(r.code, 0, "export-remote always, adapter fails: still exit 0: " .. r.err)
+    has(fleet().remote.error, "the CI adapter failed", "export-remote always: remote.error says so")
+    ok(r.out:find(require("testing.ci").SENTINEL, 1, true) ~= nil, "... and the sentinel is there")
+    export.deps.remote = counting
+
+    -- never: not asked, ci_remote null
+    r = with_remote({ "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=never" })
+    eq(r.code, 0, "export-remote never: exit 0: " .. r.err)
+    eq(asked_dirs, nil, "export-remote never: the adapter is not called")
+    eq(fleet().remote, { asked = false, error = vim.NIL }, "export-remote never: not asked")
+    eq(row(fleet(), "alpha.nvim").ci_remote, vim.NIL, "export-remote never: ci_remote null")
+
+    -- ask on a terminal: the answer decides, the question comes before anything runs
+    local questions, runs_at_question = {}, nil
+    r = with_remote(
+      { "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=ask" },
+      function()
+        seen = {}
+        repos.tty = function()
+          return true
+        end
+        repos.prompt = function(q)
+          questions[#questions + 1] = q
+          runs_at_question = #seen
+          return true
+        end
+      end
+    )
+    eq(r.code, 0, "export-remote ask, yes: exit 0: " .. r.err)
+    eq(#questions, 1, "export-remote ask: one question")
+    eq(runs_at_question, 0, "export-remote ask: asked before anything ran")
+    eq(fleet().remote.asked, true, "export-remote ask, yes: GitHub was asked")
+    r = with_remote(
+      { "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=ask" },
+      function()
+        repos.tty = function()
+          return true
+        end
+        repos.prompt = function()
+          return false
+        end
+      end
+    )
+    eq(r.code, 0, "export-remote ask, no: exit 0: " .. r.err)
+    eq(asked_dirs, nil, "export-remote ask, no: the adapter is not called")
+    eq(fleet().remote.asked, false, "export-remote ask, no: not asked")
+
+    -- ask without a terminal: like never, with a note on stderr, no question
+    local prompted = false
+    r = with_remote(
+      { "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=ask" },
+      function()
+        repos.tty = function()
+          return false
+        end
+        repos.prompt = function()
+          prompted = true
+          return true
+        end
+      end
+    )
+    eq(r.code, 0, "export-remote ask without a terminal: exit 0: " .. r.err)
+    eq(prompted, false, "export-remote ask without a terminal: no question")
+    eq(asked_dirs, nil, "export-remote ask without a terminal: the adapter is not called")
+    eq(fleet().remote.asked, false, "export-remote ask without a terminal: not asked")
+    has(r.err, "no terminal on stdin", "export-remote ask without a terminal: the note on stderr")
+
+    -- the flag: a wrong value and one without --export are usage errors before anything runs
+    seen = {}
+    r = with_remote({ "--repos=" .. list, "--force", "--export=" .. out7, "--export-remote=maybe" })
+    eq(r.code, 2, "export-remote=maybe: exit 2")
+    has(r.err, "always, never or ask", "... names the values")
+    r = with_remote({ "--repos=" .. list, "--force", "--export-remote=never" })
+    eq(r.code, 2, "export-remote without --export: exit 2")
+    eq(#seen, 0, "... nothing ran")
+    export.deps.remote = real_remote
   end
 
   -- ── a repository that is no longer exported: its file never stays next to a manifest that does not own it ──

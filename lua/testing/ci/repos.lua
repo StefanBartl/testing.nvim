@@ -5,6 +5,7 @@
 --- testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list>   which repositories
 ---            [--repos-include=<names>] [--repos-exclude=<names>] [--refresh]
 ---            [--force] [--jobs=<n>] [--profile=<name>] [--keep-going] [--reuse] [--state-dir=<dir>]
+---            [--json=<file>] [--export=<dir> [--export-remote=always|never|ask]]
 --- ```
 ---
 --- Each repository is a child process of its own (`testing ci verify`, then `testing ci` when the state is not already
@@ -18,6 +19,12 @@
 --- Which repositories: an explicit list (`--repos`, `--repos-file`) or every directory directly below a root
 --- (`--repos-root`, repeatable; the `ci.repos.roots` setting of the editor) whose `.testing.lua` has a `ci` section.
 --- That detection is textual (the file is not executed here) and cached in the state directory; `--refresh` rebuilds it.
+---
+--- `--export=<dir>` asks the CI adapter (GitHub) for the released repositories by default (`--export-remote=always`); a
+--- failure of the adapter is a note in the documents (`remote.error`), never an exit code. `never` leaves `ci_remote`
+--- null; `ask` puts the question on the terminal before anything runs, and without a terminal on stdin it is `never`
+--- with a note on stderr. The editor (`:Testing ci repos --export=<dir>`) passes its setting `ci.export_remote`, an
+--- `ask` answered there.
 
 local M = {}
 
@@ -41,6 +48,7 @@ M.USAGE = table.concat({
   "  --state-dir=<dir>       the state directory of the children and of the cache",
   "  --json=<file>           write the document testing-ci-repos/1 (one row per repository with its testing-ci/1)",
   "  --export=<dir>          after the run, write the export folder of these repositories (testing export --out)",
+  "  --export-remote=<when>  always (default): the export asks GitHub (ci_remote); never; ask: a question on the terminal",
 }, "\n")
 
 ---@class Testing.Ci.Repos.Args
@@ -58,10 +66,12 @@ M.USAGE = table.concat({
 ---@field state_dir? string
 ---@field json? string
 ---@field export? string
+---@field export_remote? "always"|"never"|"ask"
 ---@field help boolean
 
 local VALUED = {
   export = true,
+  ["export-remote"] = true,
   repos = true,
   ["repos-root"] = true,
   ["repos-file"] = true,
@@ -152,6 +162,11 @@ function M.parse(argv)
         args.jobs = n
       elseif key == "state-dir" then
         args.state_dir = value
+      elseif key == "export-remote" then
+        if value ~= "always" and value ~= "never" and value ~= "ask" then
+          return nil, "--export-remote must be always, never or ask"
+        end
+        args.export_remote = value
       else
         args[key] = value
       end
@@ -159,6 +174,9 @@ function M.parse(argv)
       return nil, ("unknown argument %s"):format(a)
     end
     i = i + 1
+  end
+  if args.export_remote and not args.export then
+    return nil, "--export-remote needs --export=<dir>"
   end
   return args
 end
@@ -420,6 +438,49 @@ end
 ---@type function
 M.system = vim.system
 
+---Is stdin a terminal (`ask` may put its question)? Replaced by a spec.
+---@return boolean
+function M.tty()
+  return vim.uv.guess_handle(0) == "tty"
+end
+
+---The question of `--export-remote=ask` on the terminal: true for yes (Enter is yes), false for no or end of input.
+---Replaced by a spec.
+---@param question string
+---@return boolean
+function M.prompt(question)
+  io.stderr:write(question .. " [Y/n] ")
+  io.stderr:flush()
+  local line = io.stdin:read("*l")
+  if line == nil then
+    return false
+  end
+  line = vim.trim(line):lower()
+  return line == "" or line == "y" or line == "yes"
+end
+
+---Does the export of this run ask the CI adapter? Resolves `ask` (the terminal, else no with a note).
+---@param mode "always"|"never"|"ask"
+---@param err fun(s: string)
+---@return boolean
+function M.export_remote(mode, err)
+  if mode == "always" then
+    return true
+  end
+  if mode == "never" then
+    return false
+  end
+  if not M.tty() then
+    err(
+      "testing ci: --export-remote=ask: no terminal on stdin, GitHub is not asked (ci_remote stays null)"
+    )
+    return false
+  end
+  return M.prompt(
+    "testing ci: ask GitHub for the CI state of the exported repositories (ci_remote)?"
+  )
+end
+
 ---@param args Testing.Ci.Repos.Args
 ---@param extra string[]
 ---@return string[]
@@ -457,7 +518,7 @@ function M.main(argv, sv)
   end
   -- a folder the export would refuse is a usage error before anything runs, not after an hour of pipelines
   local folder = require("testing.export.folder")
-  local workstation
+  local workstation, ask_remote
   if args.export then
     local _, refused = folder.inspect(args.export)
     local role_problem
@@ -467,6 +528,8 @@ function M.main(argv, sv)
       sv.err("testing ci: --export: " .. tostring(refused))
       return M.EXIT_USAGE
     end
+    -- asked before anything runs: nobody waits an hour of pipelines for the question
+    ask_remote = M.export_remote(args.export_remote or "always", sv.err)
   end
 
   local width = 0
@@ -655,6 +718,8 @@ function M.main(argv, sv)
       roots = repos,
       state_dir = args.state_dir and norm(args.state_dir) or sv.state_dir,
       no_local = workstation == true,
+      -- only the released repositories are asked (`testing.export`); a failure is `remote.error`, never an exit code
+      remote = ask_remote == true,
       warn = function(msg)
         sv.err("testing ci: export: warning: " .. msg)
       end,

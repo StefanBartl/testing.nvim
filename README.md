@@ -133,7 +133,8 @@ Pre-alpha, milestone M1 ("a runner that never lies"). What exists and works:
   system) or one repository with its red cases, redacted; the export form holds no absolute path. Runs nothing (with `--remote` the CI
   adapter keeps its ETag cache in the state directory). `testing export --out <dir>` (or `testing ci --repos... --export=<dir>`
   at the end of a fleet run) writes the export folder for testing-web: manifest last and atomic, byte-stable, only the
-  `public` and `internal` repositories of this device's `areas.json` (fail-closed).
+  `public` and `internal` repositories of this device's `areas.json` (fail-closed). The fleet run's export asks GitHub
+  for `ci_remote` by default (`--export-remote=always|never|ask`; from the editor the setting `ci.export_remote`).
 - **Output** ([docs/OUTPUT-FORMATS.md](docs/OUTPUT-FORMATS.md)): terminal, GitHub annotations and
   step summary, JUnit XML, and the Result-IR as JSON (`schema_version = 1`, deterministic,
   redacted, validated after writing). Every reporter carries a three-valued **verdict**

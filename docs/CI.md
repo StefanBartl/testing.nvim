@@ -315,7 +315,7 @@ The terminal (`testing ci`) shows everything as before.
 testing ci --repos=<a,b> | --repos-root=<dir> | --repos-file=<list>
            [--repos-include=<names>] [--repos-exclude=<names>] [--refresh]
            [--force] [--jobs=<n>] [--profile=<name>] [--keep-going] [--reuse] [--state-dir=<dir>]
-           [--json=<file>] [--export=<dir>]
+           [--json=<file>] [--export=<dir> [--export-remote=always|never|ask]]
 ```
 
 The pipelines of several repositories, one after the other. Every repository is a child process of its own, so
@@ -339,6 +339,18 @@ none, a `fleet.json` or `repos/*.json` the manifest does not list) is exit `2` b
 `NVIM_MACHINE_ROLE`; an export that cannot be written makes the run `3` (no sentinel). On the workstation the export
 reads no local result (`local_read: false`), as `testing export` there.
 
+By default that export also asks the CI adapter (`testing ci remote`, GitHub) and writes its record as `ci_remote`
+(`--export-remote=always`). Only the repositories the export releases are asked; a failure of the adapter (no token, no
+network, an API error) is a note in the documents (`remote.error`, a repository's `ci_remote.note`), never a different
+exit code. `--export-remote=never` leaves `ci_remote` `null` (`remote.asked: false`). `--export-remote=ask` asks you on
+the terminal before anything runs (the question on stderr, then `[Y/n]`, Enter is yes, end of input is no); when stdin
+is no terminal (a pipe, a redirected file, the editor's child) it behaves like `never` and says so on stderr. `ask` is
+for interactive use only: a console nobody looks at is still a terminal (`Start-Process -WindowStyle Hidden`, a
+scheduled task that runs "only when the user is logged on"), and there the run waits for an answer forever. A
+scheduled or background run sets `--export-remote=always` or `never`. `--export-remote` without `--export` is a usage error
+(exit `2`). From the editor the value comes from the setting `ci.export_remote` (below); a terminal `testing ci` does not
+read your Neovim config, so there the flag decides and its default is `always`.
+
 Which repositories: an explicit list (`--repos`, a list file with one directory per line), or every directory directly
 below a root (`--repos-root`, repeatable) whose `.testing.lua` has a `ci` section. That detection is textual (the file is
 not executed by the multi-repository run), cached in the state directory and rebuilt by `--refresh`; `--repos-include`
@@ -349,12 +361,21 @@ From the editor, the repositories are a setting, not a hard-wired list:
 
 ```lua
 require("testing").setup({
-  ci = { repos = { roots = { "$REPOS_DIR" }, include = {}, exclude = { "scratch" } } },
+  ci = {
+    repos = { roots = { "$REPOS_DIR" }, include = {}, exclude = { "scratch" } },
+    -- does `:Testing ci repos --export=<dir>` ask GitHub for ci_remote? "always" (default), "never", "ask"
+    export_remote = "always",
+  },
 })
 ```
 
-`:Testing ci repos [--force] [--jobs=<n>] [--profile=<name>] [--refresh] [--keep-going] [--reuse] [--repos-root=<dir>]`
-runs them in one child and streams the output into the buffer `testing-ci://repos-<hash>`. At the top of that buffer a
+`:Testing ci repos [--force] [--jobs=<n>] [--profile=<name>] [--refresh] [--keep-going] [--reuse] [--repos-root=<dir>]
+[--export=<dir>] [--export-remote=always|never|ask]` runs them in one child. With `--export` the child gets
+`--export-remote` from the flag, else from `ci.export_remote`; `ask` is a question in the editor (`ui.kit` confirm, else
+`vim.ui.select`) before the run starts, and the child gets the answer (`always` or `never`); Esc at that question
+cancels, nothing starts. A relative `--export` is taken from the editor's current directory (the child runs in the
+project root of the buffer, so it gets the absolute path). A `ci.export_remote` that is not one of the three values is
+reported (`option 'ci.export_remote' ...`) and falls back to `always`; the rest of `ci` stays. The command streams the output into the buffer `testing-ci://repos-<hash>`. At the top of that buffer a
 table follows the run (one row per repository with its state, `(n not started yet)` below), with a progress indicator
 alongside; when the child ends, the table is rewritten from its document (verify, result, time per repository), the
 verdict names the repositories that are not green, and their findings fill the quickfix list, each entry with the

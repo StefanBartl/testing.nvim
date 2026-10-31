@@ -375,15 +375,47 @@ function M.ci_repos(ctx)
       .error("testing ci repos: set ci.repos.roots in setup() (or pass --repos-root=<dir>)")
     return
   end
-  local started, err = editor.run_repos({
-    args = editor.repos_args(cfg, ctx.flags),
-    cwd = M.resolve_root(nil, vim.api.nvim_buf_get_name(0)),
-  })
-  if not started then
-    require("testing.notify").get().error("testing ci repos: " .. tostring(err))
+  local mode = ctx.flags["export-remote"] or cfg.export_remote
+  if mode ~= nil and not require("testing.config").EXPORT_REMOTE[mode] then
+    require("testing.notify")
+      .get()
+      .error("testing ci repos: --export-remote must be always, never or ask")
     return
   end
-  require("testing.notify").get().info("testing ci repos: started")
+  local cwd = M.resolve_root(nil, vim.api.nvim_buf_get_name(0))
+  if ctx.flags.export then
+    -- the child runs in the project root of the buffer, not in the editor's cwd: a relative `--export` would land
+    -- (or be refused) somewhere else than the folder named here
+    ctx = {
+      args = ctx.args,
+      flags = vim.tbl_extend("force", {}, ctx.flags, { export = abs(ctx.flags.export) }),
+    }
+  end
+  local function launch(flags)
+    local started, err = editor.run_repos({ args = editor.repos_args(cfg, flags), cwd = cwd })
+    if not started then
+      require("testing.notify").get().error("testing ci repos: " .. tostring(err))
+      return
+    end
+    require("testing.notify").get().info("testing ci repos: started")
+  end
+  if not ctx.flags.export or mode ~= "ask" then
+    return launch(ctx.flags)
+  end
+  -- `ask` (setting ci.export_remote or the flag): the question here, before the run; the child gets the answer
+  M.ask(
+    "testing ci repos --export: ask GitHub for the CI state of the exported repositories (ci_remote)?",
+    { "Do not ask GitHub", "Ask GitHub" },
+    function(index, dismissed)
+      if dismissed then
+        require("testing.notify").get().info("testing ci repos: cancelled, nothing started")
+        return
+      end
+      launch(vim.tbl_extend("force", {}, ctx.flags, {
+        ["export-remote"] = index == 2 and "always" or "never",
+      }))
+    end
+  )
 end
 
 ---`:Testing ci status`: the last document of the project as lines in a viewer.
@@ -545,10 +577,11 @@ function M.report_init(root, result, flags)
 end
 
 ---A question with a few answers (the first is the harmless one): `ui.kit.confirm`, `vim.ui.select` as the fallback. `cb`
----gets the index of the answer (1 when dismissed). A seam: specs replace it.
+---gets the index of the answer (1 when dismissed) and `dismissed` (Esc, no answer), so a caller whose first answer
+---still does something can tell a cancel apart. A seam: specs replace it.
 ---@param question string
 ---@param choices string[]
----@param cb fun(index: integer)
+---@param cb fun(index: integer, dismissed: boolean)
 function M.ask(question, choices, cb)
   local ok, kit = pcall(require, "ui.kit")
   if ok and type(kit) == "table" and type(kit.confirm) == "function" then
@@ -558,10 +591,10 @@ function M.ask(question, choices, cb)
       on_answer = function(choice)
         for index, label in ipairs(choices) do
           if label == choice then
-            return cb(index)
+            return cb(index, false)
           end
         end
-        cb(1)
+        cb(1, true)
       end,
     })
     if shown then
@@ -569,7 +602,7 @@ function M.ask(question, choices, cb)
     end
   end
   vim.ui.select(choices, { prompt = question }, function(_, index)
-    cb(index or 1)
+    cb(index or 1, index == nil)
   end)
 end
 
@@ -982,6 +1015,16 @@ function M.routes()
           name = "repos-root",
           type = "DIR",
           desc = "Use this directory instead of ci.repos.roots",
+        },
+        {
+          name = "export",
+          type = "DIR",
+          desc = "After the run, write the export folder of these repositories",
+        },
+        {
+          name = "export-remote",
+          type = "STRING",
+          desc = "With --export: always, never or ask GitHub (default: ci.export_remote)",
         },
       },
       run = function(ctx)

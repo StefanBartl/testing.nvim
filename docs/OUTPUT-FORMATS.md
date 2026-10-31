@@ -391,7 +391,7 @@ A row:
 | `local` | The last local result (`last.json`, merged over partial runs): `run_id`, `ts`, `verdict` (`red` when a case is red; `green-partial` when the last run was partial or a case was skipped; else `green`), `summary` (all eight statuses), `cases`, `files`, `partial`, `stale` (spec files changed, gone or without a result since), `commit` (the commit of the last green record when it is this run, else `null`). `null`: no result recorded. |
 | `last_green` | `{ run_id, ts, sha }` of the last completely green run (`last_green.json`), or `null`. |
 | `ci_local` | The last local pipeline run (`ci.json`): `verdict`, `profile`, `partial`, `commit`, `tree`, `dirty`, `first_red`, `time`; or `null`. |
-| `ci_remote` | The CI adapter's record (`testing ci remote`, only with `--remote`): `state` (its states), `repo` (`owner/name`), `sha`, `branch`, `workflow`, `os.{ubuntu,windows,macos}` (`{ state, url, job }`, `null` without a job for that system), `run` (`id`, `url`, `status`, `conclusion`, `created_at`, `updated_at`, `event`, `attempt`), `note`. `null`: not asked (no `--remote`). Asked, but the adapter gave no record for the repository (it failed, see `remote.error`): `state = "unknown"`, `os` all `null`, `run: null`, a `note` that says so. Links only to `https://github.com/`; the token is in no document. |
+| `ci_remote` | The CI adapter's record (`testing ci remote`, only with `--remote`; `testing ci --repos... --export=<dir>` asks by default, `--export-remote=never` does not): `state` (its states), `repo` (`owner/name`), `sha`, `branch`, `workflow`, `os.{ubuntu,windows,macos}` (`{ state, url, job }`, `null` without a job for that system), `run` (`id`, `url`, `status`, `conclusion`, `created_at`, `updated_at`, `event`, `attempt`), `note`. `null`: not asked (no `--remote`, or `--export-remote=never` / `ask` answered no). Asked, but the adapter gave no record for the repository (it failed, see `remote.error`): `state = "unknown"`, `os` all `null`, `run: null`, a `note` that says so. Links only to `https://github.com/`; the token is in no document. |
 | `counts` | `{ fail, flaky }` of the last result (`flaky`: cases marked flaky in it), `null` without a result. |
 
 ### The repository key and its limits
@@ -440,6 +440,7 @@ sum, so it never sees half an export. The folder:
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua export --out <dir> [<repo>...] [--repos-root=<dir>]
      [--include=<names>] [--exclude=<names>] [--remote] [--state-dir=<dir>]
 nvim -n -i NONE --headless -u NONE -l scripts/testing.lua ci --repos-root=<dir> ... --export=<dir>
+     [--export-remote=always|never|ask]
 ```
 
 The folder testing-web reads (and a results repository such as `testing-results` commits): the layout above, every

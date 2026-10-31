@@ -668,7 +668,9 @@ end
 
 ---The arguments of `testing ci --repos ...` for the settings of the editor and the flags of the command.
 ---@param ci_cfg Testing.CiConfig
----@param flags { force?: boolean, jobs?: string, profile?: string, refresh?: boolean, ["keep-going"]?: boolean, reuse?: boolean, ["repos-root"]?: string }
+---`--export=<dir>` carries `--export-remote`: the flag of the command, else the setting `ci.export_remote` (an `ask` is
+---answered by the caller before; one left here is `never` in the child, which has no terminal).
+---@param flags { force?: boolean, jobs?: string, profile?: string, refresh?: boolean, ["keep-going"]?: boolean, reuse?: boolean, ["repos-root"]?: string, export?: string, ["export-remote"]?: string }
 ---@return string[]
 function M.repos_args(ci_cfg, flags)
   local args = {}
@@ -692,6 +694,11 @@ function M.repos_args(ci_cfg, flags)
   end
   if flags.profile then
     args[#args + 1] = "--profile=" .. flags.profile
+  end
+  if flags.export then
+    args[#args + 1] = "--export=" .. vim.fs.normalize(flags.export)
+    args[#args + 1] = "--export-remote="
+      .. (flags["export-remote"] or ci_cfg.export_remote or "always")
   end
   return args
 end

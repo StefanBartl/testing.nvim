@@ -23,6 +23,10 @@ local cfg = require("lib.lua.config").new(DEFAULTS, {
   },
 })
 
+---The values of `ci.export_remote`: does `--export=<dir>` of `testing ci --repos` ask the CI adapter (GitHub)?
+---@type table<string, true>
+M.EXPORT_REMOTE = { always = true, never = true, ask = true }
+
 ---The actions of the matrix view whose key `surface_view.keys` sets (`testing.surface.view`).
 ---@type table<string, true>
 local VIEW_ACTIONS = { jump = true, status = true, kind = true, export = true }
@@ -150,15 +154,26 @@ function M.validate(opts)
   end)
   for _, key in ipairs(names) do
     local check = CHECKS[key]
+    local value = opts[key]
+    if
+      key == "ci"
+      and type(value) == "table"
+      and value.export_remote ~= nil
+      and not M.EXPORT_REMOTE[value.export_remote]
+    then
+      -- a wrong value of this one key must not cost the rest of `ci` (the repositories): it alone falls back
+      problems[#problems + 1] = ("option 'ci.export_remote' must be always, never or ask, got %s; using the default"):format(
+        vim.inspect(value.export_remote)
+      )
+      value = vim.tbl_extend("force", {}, value)
+      value.export_remote = nil
+    end
     if not check then
       problems[#problems + 1] = ("unknown option '%s'"):format(tostring(key))
-    elseif check(opts[key]) then
-      valid[key] = opts[key]
+    elseif check(value) then
+      valid[key] = value
     else
-      problems[#problems + 1] = ("option '%s' has an invalid value (%s)"):format(
-        key,
-        type(opts[key])
-      )
+      problems[#problems + 1] = ("option '%s' has an invalid value (%s)"):format(key, type(value))
     end
   end
   return valid, problems
