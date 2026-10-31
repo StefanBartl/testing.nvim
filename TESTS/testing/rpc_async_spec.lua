@@ -62,7 +62,25 @@ return function(H)
     end)
     local blocked_ms = (vim.uv.hrtime() - t0) / 1e6
     ok(started == nil, "spawn_async returns before the editor is up")
-    ok(blocked_ms < 200, ("spawn_async does not wait for the boot (%.0f ms)"):format(blocked_ms))
+    -- No wall-clock bound (a shared CI runner can stall a non-blocking call for
+    -- hundreds of ms): order instead. A marker queued right after the return runs
+    -- on the first loop turn; the boot needs several round trips with a fresh
+    -- process, so the callback must not have run by then. A spawn_async that
+    -- boots synchronously and only defers the callback queues it before the
+    -- marker and fails here.
+    local done_before_first_turn
+    vim.schedule(function()
+      done_before_first_turn = started ~= nil or err ~= nil
+    end)
+    S.wait(5000, function()
+      return done_before_first_turn ~= nil
+    end)
+    ok(
+      done_before_first_turn == false,
+      ("spawn_async does not wait for the boot (callback before the first loop turn, %.0f ms)"):format(
+        blocked_ms
+      )
+    )
     ok(
       S.wait(20000, function()
         return started ~= nil or err ~= nil
