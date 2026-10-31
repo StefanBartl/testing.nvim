@@ -341,11 +341,13 @@ local function describe(step)
     if step[a] ~= nil then
       -- one short line: a multi-line `wait`/`lua` would push the reason off the first line
       local value = tostring(step[a]):gsub("%s+", " ")
-      if #value > 60 then
-        value = value:sub(1, 57) .. "..."
+      -- cut by character, not byte: half a multi-byte character is invalid UTF-8 (JUnit XML)
+      if vim.fn.strchars(value) > 60 then
+        value = vim.fn.strcharpart(value, 0, 57) .. "..."
       end
       local what = ("%s %s"):format(a, value)
-      return step.note and (step.note .. " (" .. what .. ")") or what
+      local note = step.note and step.note:gsub("%s+", " ")
+      return note and (note .. " (" .. what .. ")") or what
     end
   end
   return "?"
@@ -523,6 +525,7 @@ local function failed_text(s, res)
   return text
 end
 M._failed_text = failed_text -- for the spec
+M._describe = describe -- for the spec
 
 ---Run a sheet and raise on a failure (busted style specs): `it(sheet.spec_name(s), function() sheet.check(path) end)`.
 ---@param target string|Testing.Sheet A path or a loaded sheet.

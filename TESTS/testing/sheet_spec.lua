@@ -294,6 +294,18 @@ return function(H)
           "40x12 step 1, wait y: still false",
         },
       }
+      -- the cut is by character: half a multi-byte character would be invalid UTF-8 (JUnit XML)
+      local cut = sheet._describe({ wait = ("x"):rep(55) .. "漢字漢字漢字" })
+      eq(
+        cut,
+        "wait " .. ("x"):rep(55) .. "漢字...",
+        "cut after the 57th character, never inside one"
+      )
+      eq(
+        sheet._describe({ keys = "a", note = "two\nlines" }),
+        "two lines (keys a)",
+        "a multi-line note is one line too"
+      )
       local ft = sheet._failed_text(fake, multi)
       eq(
         ft:match("^[^\n]*"),
