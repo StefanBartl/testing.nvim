@@ -447,6 +447,29 @@ return function(H)
       has(md, "- `fail`: boom", "a red entry says why")
       has(md, "## Manual (0)\n\n(none)", "an empty section says so")
       has(md, "## Automated (1)", "the automated section")
+      -- two projects: entries and snapshot paths name their project
+      local two = report.render({
+        {
+          root = root .. "/projA",
+          rel = "TESTS/sheets/a.sheet.lua",
+          sheet = sh({ id = "a", title = "Alpha", judge = { "ok" } }),
+          case = pass,
+          snapshots = { "TESTS/__snapshots__/sheets/a.sheet/f.80x24.snap" },
+        },
+        {
+          root = root .. "/projB",
+          rel = "TESTS/sheets/b.sheet.lua",
+          sheet = sh({ id = "b", title = "B" }),
+          case = pass,
+          snapshots = {},
+        },
+      })
+      has(two, "`projA/TESTS/sheets/a.sheet.lua`", "the entry names its project")
+      has(
+        two,
+        "look at: `projA/TESTS/__snapshots__/sheets/a.sheet/f.80x24.snap`",
+        "and so do its snapshots"
+      )
 
       local outs, errs = {}, {}
       local sv = {

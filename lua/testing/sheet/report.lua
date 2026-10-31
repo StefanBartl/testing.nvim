@@ -288,10 +288,12 @@ function M.render(entries, opts)
     out[#out + 1] = "  - automated part green; judge:"
     sub_items(out, e.sheet.judge, 2)
     if #e.snapshots > 0 then
+      -- several projects: the snapshot paths name theirs, like the entry's own path does
+      local prefix = multi and (vim.fs.basename(e.root) .. "/") or ""
       out[#out + 1] = "  - look at: "
         .. table.concat(
           vim.tbl_map(function(p)
-            return "`" .. p .. "`"
+            return code(prefix .. p)
           end, e.snapshots),
           ", "
         )
