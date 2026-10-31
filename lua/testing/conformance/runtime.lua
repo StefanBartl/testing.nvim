@@ -406,14 +406,18 @@ function M.keymaps_off(ctx)
   end)
 end
 
----Most modules one call into the child requires (a call has a timeout).
-M.BATCH = 60
+---Most modules one call into the child requires (a call has a timeout, `timeout_ms`). A require costs about
+---2 ms, a fresh editor 150 to 250 ms on Windows: 200 keeps one call far below the timeout and lib.nvim (about
+---400 modules) at three editors (it was seven at 60).
+M.BATCH = 200
 
 ---The `require` session (K1): every module of the plugin alone.
 ---
 ---A module that ENDS the editor when it is required (`os.exit`, `:quit` at its top level: a module meant
----to run as an init script) kills the batch it is in. The batch is then split and run again in fresh
----editors until the killer is alone; it is reported as a module that cannot be required.
+---to run as an init script) kills the batch it is in. The child logs its progress to a file, so the
+---results before the killer are kept, the killer is reported as a module that cannot be required and the
+---rest of the batch goes on in a fresh editor: one more editor per killer. Without a readable log the
+---batch is split and run again until the killer is alone (about two editors per halving).
 ---@param ctx Testing.Conformance.Ctx
 ---@return table|nil data
 ---@return string|nil err
@@ -424,15 +428,75 @@ function M.require_all(ctx)
   end
   local results = {}
 
+  ---What a dead child logged: the results it finished and the module it was requiring.
+  ---@param path string
+  ---@param batch string[]
+  ---@return table[]|nil done The results of `batch[1 .. #done]`.
+  ---@return string|nil killer `batch[#done + 1]`.
+  local function read_progress(path, batch)
+    local f = io.open(path, "rb")
+    if not f then
+      return nil
+    end
+    local text = f:read("a") or ""
+    f:close()
+    local done, started = {}, nil
+    for line in text:gmatch("[^\n]+") do
+      local kind, rest = line:match("^(%a+)\t(.*)$")
+      if kind == "start" then
+        started = rest
+      elseif kind == "done" then
+        local ok, r = pcall(vim.json.decode, rest)
+        if not ok or type(r) ~= "table" or r.module ~= started then
+          return nil
+        end
+        done[#done + 1] = r
+        started = nil
+      end
+    end
+    -- the child requires in batch order: the done lines are the first modules, the killer the next one
+    if not started or batch[#done + 1] ~= started then
+      return nil
+    end
+    for i, r in ipairs(done) do
+      if r.module ~= batch[i] then
+        return nil
+      end
+    end
+    return done, started
+  end
+
   ---@param batch string[]
   ---@return string|nil err An infrastructure error (not a dead editor).
   local function run_batch(batch)
+    local progress = vim.fs.normalize(vim.fn.tempname()) .. "-k1-progress"
     local data, err = M.session(ctx, "require", function(_, P)
-      return { results = P("require_each", batch) }
+      return { results = P("require_each", batch, progress) }
     end)
+    local done, killer
+    if not data and err and err:find("child died", 1, true) then
+      done, killer = read_progress(progress, batch)
+    end
+    pcall(os.remove, progress)
     if data then
       for _, r in ipairs(data.results) do
         results[#results + 1] = r
+      end
+      return nil
+    end
+    if done and killer then
+      for _, r in ipairs(done) do
+        results[#results + 1] = r
+      end
+      results[#results + 1] = {
+        module = killer,
+        ok = false,
+        killed = true,
+        err = "the editor ended while it was required (" .. err .. ")",
+      }
+      local at = #done + 2
+      if at <= #batch then
+        return run_batch(vim.list_slice(batch, at, #batch))
       end
       return nil
     end

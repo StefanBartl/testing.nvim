@@ -580,11 +580,21 @@ end
 
 ---Require every module alone: the cache entries a module added are removed again, so the next one
 ---starts from the same cache (a module that only works because a sibling was loaded first fails).
+---
+---With `progress`, a line `start\t<module>` goes to that file before each require and `done\t<json result>`
+---after it: a module that ends the editor leaves its name as the last start without a done, and the results
+---before it survive (the caller goes on after it in a fresh editor instead of splitting the batch).
 ---@param modules string[]
+---@param progress? string
 ---@return table[] results
-function M.require_each(modules)
+function M.require_each(modules, progress)
   local out = {}
+  local log = progress and io.open(progress, "wb") or nil
   for _, m in ipairs(modules) do
+    if log then
+      log:write("start\t", m, "\n")
+      log:flush()
+    end
     local loaded_before = {}
     for k in pairs(package.loaded) do
       loaded_before[k] = true
@@ -638,6 +648,14 @@ function M.require_each(modules)
       end
     end
     out[#out + 1] = res
+    if log then
+      local okj, line = pcall(vim.json.encode, res)
+      log:write("done\t", okj and line or vim.json.encode({ module = m, ok = ok }), "\n")
+      log:flush()
+    end
+  end
+  if log then
+    log:close()
   end
   return out
 end
