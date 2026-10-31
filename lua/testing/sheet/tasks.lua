@@ -392,7 +392,7 @@ end
 ---on a line of its own counts; nothing of the file is run.
 ---@param e Testing.SheetReport.Entry
 ---@return string|nil
-local function task_of_unloadable(e)
+function M.task_of_unloadable(e)
   local f = e.root and e.rel and io.open(e.root .. "/" .. e.rel, "rb")
   if not f then
     return nil
@@ -415,7 +415,7 @@ end
 function M.sync(entries, opts)
   local by_task, ids = {}, {}
   for _, e in ipairs(entries) do
-    local id = e.sheet and e.sheet.task or (not e.sheet and task_of_unloadable(e))
+    local id = e.sheet and e.sheet.task or (not e.sheet and M.task_of_unloadable(e))
     if id then
       if not by_task[id] then
         by_task[id] = {}

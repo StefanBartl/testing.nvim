@@ -529,6 +529,12 @@ acceptance checkbox. Never overwrites a sheet (`--name` for another file and
 id). 0 written, 2 bad usage or the sheet exists, 3 no vault or engine, the task
 could not be read, the file not written or the draft does not load.
 
+`testing sheets run --task {area/slug} [--root <dir>] [--tasks <vault>]`:
+runs the sheets that name the task now and writes their state into its block
+(trusted roots only; a missing snapshot fails; refused on the workstation
+unless TESTING_ALLOW_WORKSTATION=1). 0 green, 1 red or not written, 2 bad
+usage, refused or no sheet, 3 the engine of tasks.nvim could not be reached.
+
 ==============================================================================
 11. Dialects                                                      *testing-dialects*
 

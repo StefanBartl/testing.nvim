@@ -179,6 +179,25 @@ testing sheets report <root>... --from <ir.json>... --tasks <vault> [--dry-run]
 Exit codes: 0 done, 1 a task could not be written (conflict, refused, a body too long to send back), 2 bad usage, 3
 the engine could not be reached or the file not written.
 
+## One task, now (`testing sheets run`)
+
+```
+testing sheets run --task <area/slug> [--root <dir>]... [--tasks <vault> [--tasks-cli <tasks.lua>] [--dry-run]]
+```
+
+runs the sheets that name the task (a sheet that does not load too) and, with `--tasks`, writes their state into
+the task's block as the report does: no suite, no second command. tasks.nvim's `:Tasks sheet run` calls it.
+
+* The roots are `--root` (repeatable), else the task's area as a repository: `$REPOS_DIR/<area>`, else
+  `<vault>/../<area>`.
+* Each root passes the workspace trust gate first (a sheet runs the project's minimal init).
+* A missing snapshot is a failure, as on CI: a run from a task never writes a reference image (run the spec once).
+* On the workstation (`NVIM_MACHINE_ROLE=workstation`) it refuses, unless `TESTING_ALLOW_WORKSTATION=1`.
+* A red sheet carries its first failure line into the block (`red: 80x24 step 3, keys ...`).
+
+Exit codes: 0 green (or waiting for a person) and written, 1 a sheet is red or the task could not be written, 2 bad
+usage, refused (trust, workstation) or no sheet names the task, 3 the engine of tasks.nvim could not be reached.
+
 ## Limits
 
 * Only the RPC engine exists; browser and desktop windows (Playwright, WebDriver) and terminal byte streams

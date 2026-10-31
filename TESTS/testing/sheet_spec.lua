@@ -1273,6 +1273,221 @@ return function(H)
         "a vault that is not there: exit 3"
       )
     end
+
+    -- ===================================================================
+    -- 6. `testing sheets run --task`: the sheets of one task now, the result into the task (testing.sheet.run)
+    do
+      local run = require("testing.sheet.run")
+      local tasks = require("testing.sheet.tasks")
+      write(
+        "p6/TESTS/sheets/a.sheet.lua",
+        'return { id = "a", title = "A", task = "x/live", steps = { { keys = "x" } }, judge = { "j" } }'
+      )
+      write(
+        "p6/TESTS/sheets/b.sheet.lua",
+        'return { id = "b", title = "B", task = "x/other", steps = { { keys = "x" } } }'
+      )
+      write(
+        "p6/TESTS/sheets/c.sheet.lua",
+        'return {\n  id = "c",\n  task = "x/broken",\n  steps = {{\n'
+      )
+      local p6 = root .. "/p6"
+      local outs6, errs6 = {}, {}
+      local sv6 = {
+        out = function(s)
+          outs6[#outs6 + 1] = s
+        end,
+        err = function(s)
+          errs6[#errs6 + 1] = s
+        end,
+      }
+      local ran, written = {}, nil
+      local function engine6(method, params)
+        if method == "bodies" then
+          return {
+            kind = "tasks.bodies",
+            items = vim.tbl_map(function(id)
+              return { id = id, etag = "sha256:1", body = "Summary.\n\n## Notizen\n" }
+            end, params.ids),
+          }
+        end
+        written = params.ops[1].body
+        return { kind = "tasks.result", results = { { n = 1, ok = true, outcome = "changed" } } }
+      end
+      local function deps6(result, extra)
+        return vim.tbl_extend("force", {
+          call = engine6,
+          getenv = function()
+            return nil
+          end,
+          trust_check = function()
+            return nil
+          end,
+          run = function(s, opts)
+            ran[#ran + 1] = { s.id, opts.root, opts.ci }
+            return result
+          end,
+        }, extra or {})
+      end
+      local green = { ok = true, status = "pass", failures = {}, snapshots = {} }
+      eq(
+        run.main({ "--task", "x/live", "--root", p6, "--tasks", root }, sv6, deps6(green)),
+        0,
+        "a green sheet: exit 0"
+      )
+      eq(
+        ran,
+        { { "a", p6, true } },
+        "only the sheet of the task runs, as on CI (no snapshot written)"
+      )
+      has(written, tasks.STATES .. " a=inbox -->", "its state goes into the task")
+      has(table.concat(outs6, "\n"), "sheet a: pass", "it says what ran")
+      has(table.concat(outs6, "\n"), "testing sheets: task x/live changed", "and what it wrote")
+
+      local red = {
+        ok = false,
+        status = "fail",
+        failures = {
+          "80x24 step 1, keys x: the keys left an error message\n  E492: Not an editor command",
+        },
+        snapshots = {},
+      }
+      eq(
+        run.first_failure(red),
+        "80x24 step 1, keys x: the keys left an error message",
+        "the first line"
+      )
+      outs6 = {}
+      eq(
+        run.main({ "--task", "x/live", "--root", p6, "--tasks", root }, sv6, deps6(red)),
+        1,
+        "a red sheet: exit 1"
+      )
+      has(written, tasks.STATES .. " a=red -->", "red in the task")
+      has(
+        written,
+        "red: 80x24 step 1, keys x: the keys left an error message",
+        "with its first failure line"
+      )
+      ok(not written:find("E492", 1, true), "and only that line")
+
+      written = nil
+      eq(
+        run.main({ "--task", "x/broken", "--root", p6, "--tasks", root }, sv6, deps6(green)),
+        1,
+        "a sheet that does not load: exit 1"
+      )
+      has(written, tasks.STATES .. " c=red -->", "it is red in its task")
+
+      written = nil
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6, "--tasks", root, "--dry-run" },
+          sv6,
+          deps6(green)
+        ),
+        0,
+        "--dry-run"
+      )
+      ok(written == nil, "writes nothing")
+      ran = {}
+      eq(
+        run.main({ "--task", "x/live", "--root", p6 }, sv6, deps6(green)),
+        0,
+        "without --tasks: run only"
+      )
+      eq(#ran, 1, "the sheet ran")
+
+      -- refusals and usage
+      errs6 = {}
+      local ws = deps6(green, {
+        getenv = function(name)
+          return name == "NVIM_MACHINE_ROLE" and "Workstation" or nil
+        end,
+      })
+      ran = {}
+      eq(run.main({ "--task", "x/live", "--root", p6 }, sv6, ws), 2, "refused on the workstation")
+      eq(#ran, 0, "nothing ran there")
+      has(table.concat(errs6, "\n"), "TESTING_ALLOW_WORKSTATION", "it says how to allow it")
+      local ws_ok = deps6(green, {
+        getenv = function(name)
+          return ({ NVIM_MACHINE_ROLE = "workstation", TESTING_ALLOW_WORKSTATION = "1" })[name]
+        end,
+      })
+      eq(
+        run.main({ "--task", "x/live", "--root", p6 }, sv6, ws_ok),
+        0,
+        "unless it is allowed there"
+      )
+      ran = {}
+      eq(
+        run.main(
+          { "--task", "x/live", "--root", p6 },
+          sv6,
+          deps6(green, {
+            trust_check = function(r)
+              return r .. " is not trusted"
+            end,
+          })
+        ),
+        2,
+        "an untrusted root is refused"
+      )
+      eq(#ran, 0, "before anything ran")
+      eq(
+        run.main({ "--task", "x/none", "--root", p6 }, sv6, deps6(green)),
+        2,
+        "no sheet names the task"
+      )
+      eq(run.main({ "--root", p6 }, sv6, deps6(green)), 2, "--task is required")
+      eq(
+        run.main({ "--task", "x/live", "--dry-run" }, sv6, deps6(green)),
+        2,
+        "--dry-run needs --tasks"
+      )
+      eq(
+        run.main({ "--task", "x/live", "--root", root .. "/nope" }, sv6, deps6(green)),
+        2,
+        "a root that is not there"
+      )
+
+      -- the area as a repository: $REPOS_DIR/<area>, else beside the vault
+      write(
+        "repos6/x/TESTS/sheets/a.sheet.lua",
+        'return { id = "a", title = "A", task = "x/live", manual = { "m" }, engine = "manual" }'
+      )
+      ran = {}
+      eq(
+        run.main(
+          { "--task", "x/live" },
+          sv6,
+          deps6(green, {
+            getenv = function(name)
+              return name == "REPOS_DIR" and (root .. "/repos6") or nil
+            end,
+          })
+        ),
+        0,
+        "the root from REPOS_DIR"
+      )
+      eq(ran[1] and ran[1][2], root .. "/repos6/x", "the area's repository")
+      ran = {}
+      eq(
+        run.main(
+          { "--task", "x/live", "--tasks", root .. "/repos6/vault", "--dry-run" },
+          sv6,
+          deps6(green)
+        ),
+        0,
+        "the root beside the vault"
+      )
+      eq(ran[1] and ran[1][2], root .. "/repos6/x", "found beside it")
+      eq(
+        report.main({ "run", "--task", "x/live", "--root", p6 }, sv6, deps6(green)),
+        0,
+        "through `testing sheets run`"
+      )
+    end
   end, debug.traceback)
 
   S.cleanup()
