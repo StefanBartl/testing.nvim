@@ -24,8 +24,12 @@ function M.run(ctx)
   if not data then
     return out --[[@as Testing.Conformance.Outcome]]
   end
-  local keys = common.user_keymaps(data.facts1)
-  local entries = common.registry_keymaps(data.facts1 or {})
+  local facts1, ferr = common.facts(data)
+  if not facts1 then
+    return ferr --[[@as Testing.Conformance.Outcome]]
+  end
+  local keys = common.user_keymaps(facts1)
+  local entries = common.registry_keymaps(facts1)
   local bound = 0
   for _, e in ipairs(entries) do
     if e.bound then
@@ -46,7 +50,7 @@ function M.run(ctx)
         "REL-21",
         "error",
         ("keymap %s has no desc (which-key and :map show nothing for it)"):format(
-          util.keymap_label(k, data.facts1.leader)
+          util.keymap_label(k, facts1.leader)
         )
       )
     end

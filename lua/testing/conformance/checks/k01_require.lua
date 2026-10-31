@@ -323,6 +323,29 @@ function M.run(ctx)
     local g = groups[key]
     findings[#findings + 1] = g.make(g.modules[1], others_text(g.modules))
   end
+  -- the `plugin/` files are sourced in the `main` session (as the editor does at startup): one that raises is a
+  -- plugin that does not load, whatever its modules do alone
+  local main = ctx.probe("main")
+  local sourced = type(main) == "table" and main.plugin_files or nil
+  if type(sourced) == "table" and sourced.err then
+    notes[#notes + 1] = "the plugin/ files could not be sourced: " .. tostring(sourced.err)
+  elseif type(sourced) == "table" then
+    for _, f in ipairs(sourced) do
+      if type(f) == "table" and f.ok == false then
+        local msg = util.uncut_paths(
+          util.relativize((tostring(f.err):match("^[^\n]*") or ""), ctx.root),
+          rels
+        )
+        findings[#findings + 1] = util.finding(
+          "K1",
+          "NEW-47",
+          "error",
+          ("sourcing %s fails: %s"):format(tostring(f.file), msg),
+          type(f.file) == "string" and f.file or nil
+        )
+      end
+    end
+  end
   local foreign_names = vim.tbl_keys(foreign)
   table.sort(foreign_names)
   if #foreign_names > 0 then

@@ -40,7 +40,7 @@ M.MAX_DEPTH = 12
 ---@type table<string, boolean>
 M.DEFAULT_SKIP = { [".git"] = true, [".claude"] = true, [".deps"] = true, ["node_modules"] = true }
 
-local uv = vim.uv or vim.loop
+local uv = vim.uv
 
 ---@param p string
 ---@return string
@@ -119,6 +119,41 @@ function Fs:_contained(abs)
   return require("lib.nvim.fs.is_subpath")(real, self._real, {})
 end
 
+---Is every component of `rel` spelled as its directory listing spells it? Windows and macOS find `README.MD`
+---for `readme.md`, a Linux runner does not (XP-06): a check must not pass on one platform's spelling. The
+---listings are memoized per directory; a name the memo does not know is looked up once more in a fresh listing
+---(the caller found the path with `lstat`, so it may be newer than the memo).
+---@param rel string
+---@return boolean
+function Fs:_exact_case(rel)
+  self._names = self._names or {}
+  local function listing(dir)
+    local names = {}
+    local ok, iter = pcall(vim.fs.dir, dir)
+    if ok then
+      for name in iter do
+        names[name] = true
+      end
+    end
+    self._names[dir] = names
+    return names
+  end
+  local dir = self.root
+  for seg in (rel:gsub("\\", "/")):gmatch("[^/]+") do
+    if seg ~= "." then
+      local names, fresh = self._names[dir], false
+      if not names then
+        names, fresh = listing(dir), true
+      end
+      if not names[seg] and (fresh or not listing(dir)[seg]) then
+        return false
+      end
+      dir = dir .. "/" .. seg
+    end
+  end
+  return true
+end
+
 ---Absolute path of `rel` below the root.
 ---@param rel string
 ---@return string|nil abs
@@ -140,7 +175,7 @@ function Fs:stat(rel)
     return nil
   end
   local lst = uv.fs_lstat(abs)
-  if not lst then
+  if not lst or not self:_exact_case(rel) then
     return nil
   end
   -- not only a link on the last component: `lstat` follows a link on an intermediate directory and reports a
@@ -239,7 +274,7 @@ function Fs:walk(rel, opts)
   opts = opts or {}
   local skip = opts.skip or M.DEFAULT_SKIP
   local limit = opts.limit or M.MAX_FILES
-  local ext = opts.ext and ("." .. opts.ext .. "$") or nil
+  local ext = opts.ext and ("%." .. vim.pesc(opts.ext) .. "$") or nil
   local out = {}
   if not self:is_dir(rel) then
     return out

@@ -26,7 +26,10 @@ function M.run(ctx)
   if not data then
     return out --[[@as Testing.Conformance.Outcome]]
   end
-  local audit = data.audit or {}
+  local audit, aerr = common.audit(data, { "actions", "routes", "gaps" })
+  if not audit then
+    return aerr --[[@as Testing.Conformance.Outcome]]
+  end
   if audit.lib == false then
     return { na = "lib.nvim.bindings.audit is not available in the child editor" }
   end

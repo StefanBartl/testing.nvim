@@ -5,7 +5,8 @@
 --- one SESSION; a session is one child editor (`testing.rpc`: its own XDG and temp directories, an
 --- allowlisted environment, guards installed) that the suite starts, drives with the functions of
 --- `testing.conformance.probe`, and kills again. The data is memoized per run, so K2, K4, K5, K6, K8 .. K14
---- share the `main` session and the whole suite starts at most three editors:
+--- share the `main` session; the suite starts one editor per session (`require` one per `BATCH` modules, and
+--- one more per module that ends or hangs the editor):
 ---
 ---   main          sources `plugin/`, requires the plugin, `setup()` twice, facts after each, the lib.nvim
 ---                 audits, `:checkhealth`, timing; the guard window (K8, K9) covers sourcing, require and
@@ -414,10 +415,12 @@ M.BATCH = 200
 ---The `require` session (K1): every module of the plugin alone.
 ---
 ---A module that ENDS the editor when it is required (`os.exit`, `:quit` at its top level: a module meant
----to run as an init script) kills the batch it is in. The child logs its progress to a file, so the
----results before the killer are kept, the killer is reported as a module that cannot be required and the
----rest of the batch goes on in a fresh editor: one more editor per killer. Without a readable log the
----batch is split and run again until the killer is alone (about two editors per halving).
+---to run as an init script) kills the batch it is in, a module that HANGS times the call out. The child
+---logs its progress to a file, so the results before it are kept, it is reported as a module that cannot
+---be required and the rest of the batch goes on in a fresh editor: one more editor per such module. A log
+---without a single started module is an infrastructure error (the editor died before the first require).
+---Without a usable log a dead batch is split and run again until the killer is alone (about two editors
+---per halving).
 ---@param ctx Testing.Conformance.Ctx
 ---@return table|nil data
 ---@return string|nil err
@@ -428,54 +431,65 @@ function M.require_all(ctx)
   end
   local results = {}
 
-  ---What a dead child logged: the results it finished and the module it was requiring.
+  ---What a child that did not answer logged (`require_each` with a progress file).
+  ---  * `"stuck"`    `done` holds the results of `batch[1 .. #done]`, `batch[#done + 1]` was being required
+  ---  * `"complete"` every module of the batch has a result (the editor went away after the last one)
+  ---  * `"empty"`    the log exists but no module was started: the editor died before the first require
+  ---  * `"missing"`  no log, or one that does not fit the batch (the caller falls back to splitting)
   ---@param path string
   ---@param batch string[]
-  ---@return table[]|nil done The results of `batch[1 .. #done]`.
-  ---@return string|nil killer `batch[#done + 1]`.
+  ---@return "stuck"|"complete"|"empty"|"missing" state
+  ---@return table[] done
   local function read_progress(path, batch)
     local f = io.open(path, "rb")
     if not f then
-      return nil
+      return "missing", {}
     end
     local text = f:read("a") or ""
     f:close()
-    local done, started = {}, nil
+    local done, started, any = {}, nil, false
     for line in text:gmatch("[^\n]+") do
       local kind, rest = line:match("^(%a+)\t(.*)$")
       if kind == "start" then
+        any = true
         started = rest
       elseif kind == "done" then
         local ok, r = pcall(vim.json.decode, rest)
         if not ok or type(r) ~= "table" or r.module ~= started then
-          return nil
+          return "missing", {} -- a torn or foreign line: do not trust the rest
         end
         done[#done + 1] = r
         started = nil
       end
     end
-    -- the child requires in batch order: the done lines are the first modules, the killer the next one
-    if not started or batch[#done + 1] ~= started then
-      return nil
+    if not any then
+      return "empty", {}
     end
+    -- the child requires in batch order: the done lines are the first modules, the stuck one the next
     for i, r in ipairs(done) do
       if r.module ~= batch[i] then
-        return nil
+        return "missing", {}
       end
     end
-    return done, started
+    if not started then
+      return #done == #batch and "complete" or "missing", done
+    end
+    if batch[#done + 1] ~= started then
+      return "missing", {}
+    end
+    return "stuck", done
   end
 
   ---@param batch string[]
-  ---@return string|nil err An infrastructure error (not a dead editor).
+  ---@return string|nil err An infrastructure error (not a module that ends or hangs the editor).
   local function run_batch(batch)
     local progress = vim.fs.normalize(vim.fn.tempname()) .. "-k1-progress"
     local data, err = M.session(ctx, "require", function(_, P)
       return { results = P("require_each", batch, progress) }
     end)
-    local done, killer
-    if not data and err and err:find("child died", 1, true) then
-      done, killer = read_progress(progress, batch)
+    local state, done = "missing", {}
+    if not data then
+      state, done = read_progress(progress, batch)
     end
     pcall(os.remove, progress)
     if data then
@@ -484,15 +498,25 @@ function M.require_all(ctx)
       end
       return nil
     end
-    if done and killer then
-      for _, r in ipairs(done) do
-        results[#results + 1] = r
-      end
+    err = err or "the child editor did not answer"
+    local died = err:find("child died", 1, true) ~= nil
+    if state == "complete" then
+      vim.list_extend(results, done)
+      return nil
+    end
+    if state == "empty" then
+      return "the child editor ended before it required a module: " .. err
+    end
+    if state == "stuck" then
+      vim.list_extend(results, done)
+      local module = batch[#done + 1]
       results[#results + 1] = {
-        module = killer,
+        module = module,
         ok = false,
-        killed = true,
-        err = "the editor ended while it was required (" .. err .. ")",
+        killed = died or nil,
+        hung = (not died) or nil,
+        err = died and ("the editor ended while it was required (" .. err .. ")")
+          or ("the require did not return (it hangs or is slower than timeout_ms): " .. err),
       }
       local at = #done + 2
       if at <= #batch then
@@ -500,7 +524,7 @@ function M.require_all(ctx)
       end
       return nil
     end
-    if err and err:find("child died", 1, true) then
+    if died then
       if #batch == 1 then
         results[#results + 1] = {
           module = batch[1],

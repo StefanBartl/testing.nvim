@@ -18,7 +18,7 @@
 
 local M = {}
 
-local uv = vim.uv or vim.loop
+local uv = vim.uv
 
 ---Modes `nvim_get_keymap` is asked for.
 local MODES = { "n", "v", "x", "s", "o", "i", "c", "t", "l" }
@@ -204,12 +204,14 @@ function M.begin()
   }
 end
 
----Source the `plugin/` files of the repository, in the order the editor would (sorted, literal listing).
+---Source the `plugin/` files of the repository, in the order the editor would: every `*.vim` (sorted, literal
+---listing, subdirectories included) before every `*.lua`, as the startup's `:runtime! plugin/**/*.vim
+---plugin/**/*.lua` does. A `plugin/x.lua` that relies on `plugin/y.vim` works here as it does there.
 ---@param root string
 ---@return { file: string, ok: boolean, err?: string }[]
 function M.source_plugin(root)
   local out = {}
-  local files = {}
+  local by_ext = { vim = {}, lua = {} }
   local function collect(dir, rel)
     local ok, iter = pcall(vim.fs.dir, dir)
     if not ok then
@@ -223,14 +225,17 @@ function M.source_plugin(root)
       return a.name < b.name
     end)
     for _, e in ipairs(entries) do
-      if e.kind == "file" and (e.name:match("%.lua$") or e.name:match("%.vim$")) then
-        files[#files + 1] = { abs = dir .. "/" .. e.name, rel = rel .. e.name }
+      local ext = e.kind == "file" and e.name:match("%.(%a+)$") or nil
+      if ext and by_ext[ext] then
+        local list = by_ext[ext]
+        list[#list + 1] = { abs = dir .. "/" .. e.name, rel = rel .. e.name }
       elseif e.kind == "directory" then
         collect(dir .. "/" .. e.name, rel .. e.name .. "/")
       end
     end
   end
   collect(root .. "/plugin", "plugin/")
+  local files = vim.list_extend(by_ext.vim, by_ext.lua)
   for _, f in ipairs(files) do
     local ok, err = pcall(vim.cmd.source, vim.fn.fnameescape(f.abs))
     out[#out + 1] = { file = f.rel, ok = ok, err = (not ok) and str(err):sub(1, 600) or nil }
@@ -528,6 +533,9 @@ function M.audit()
   return res
 end
 
+---Most lines of a `:checkhealth` report the probe hands back (a report is a few hundred lines).
+M.HEALTH_MAX_LINES = 20000
+
 ---`:checkhealth <plugin>`: the lines of the report.
 ---@param plugin string
 ---@return { ok: boolean, err?: string, lines: string[] }
@@ -540,7 +548,15 @@ function M.health(plugin)
   end)
   local lines = {}
   if ok then
-    local gok, got = pcall(vim.api.nvim_buf_get_lines, 0, 0, 500, false)
+    -- the whole report (an ERROR far down is still an error); the cap only bounds what goes over RPC
+    local cok, count = pcall(vim.api.nvim_buf_line_count, 0)
+    local gok, got = pcall(
+      vim.api.nvim_buf_get_lines,
+      0,
+      0,
+      cok and math.min(count, M.HEALTH_MAX_LINES) or -1,
+      false
+    )
     if gok then
       lines = got
     end

@@ -87,7 +87,7 @@ function M.relativize(text, root)
   -- the spelling the caller used and the resolved one (a Windows 8.3 short name, a symlinked prefix):
   -- the child editor reports paths in the second
   local spellings = { (root:gsub("\\", "/"):gsub("/+$", "")) }
-  local real = (vim.uv or vim.loop).fs_realpath(root)
+  local real = vim.uv.fs_realpath(root)
   if real then
     local resolved = real:gsub("\\", "/"):gsub("/+$", "")
     if resolved ~= spellings[1] then

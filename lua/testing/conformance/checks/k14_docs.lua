@@ -246,7 +246,10 @@ function M.run(ctx)
   local own = common.owned(ctx)
   local foreign = {}
 
-  local facts = data.facts1 or {}
+  local facts, ferr = common.facts(data)
+  if not facts then
+    return ferr --[[@as Testing.Conformance.Outcome]]
+  end
   local leader = type(facts.leader) == "string" and facts.leader or "\\"
   local missing_cmds, missing_keys, missing_autocmds = {}, {}, {}
   for _, c in ipairs(facts.commands or {}) do

@@ -52,6 +52,51 @@ function M.main(ctx)
   return data
 end
 
+---The facts of a `main` session (`facts1` after the first `setup()`, `facts2` after the second), or the `error`
+---outcome when the child editor could not report them: a `setup()` that hung or ended the editor must not read
+---as "the plugin registers nothing" (that would turn the checks into `n/a` or `pass`).
+---@param data table
+---@param key? "facts1"|"facts2"
+---@return table|nil facts
+---@return Testing.Conformance.Outcome|nil outcome
+function M.facts(data, key)
+  local f = data[key or "facts1"]
+  if type(f) ~= "table" then
+    return nil, { error = "the child editor reported no facts" }
+  end
+  if f.err then
+    return nil, { error = "the child editor reported no facts: " .. tostring(f.err) }
+  end
+  return f
+end
+
+---The lib.nvim audit of a `main` session, or the `error` outcome when the audit (or one of the `fields` the check
+---reads) raised: a raising audit must not read as "nothing to audit". Without lib.nvim in the child (`lib == false`)
+---the audit is returned as it is: that is the check's `n/a`.
+---@param data table
+---@param fields string[] the audit results the check reads (`actions`, `routes`, `gaps`, `key_risks`, `prefix`, `composer`)
+---@return table|nil audit
+---@return Testing.Conformance.Outcome|nil outcome
+function M.audit(data, fields)
+  local a = data.audit
+  if type(a) ~= "table" then
+    return nil, { error = "the child editor reported no lib.nvim audit" }
+  end
+  if a.lib == false then
+    return a
+  end
+  if a.err then
+    return nil, { error = "the lib.nvim audit raised: " .. tostring(a.err) }
+  end
+  for _, name in ipairs(fields) do
+    local err = a[name .. "_err"]
+    if err then
+      return nil, { error = ("the lib.nvim audit `%s` raised: %s"):format(name, tostring(err)) }
+    end
+  end
+  return a
+end
+
 ---Does the plugin's own source name `name`? A command, an autocommand group or a global that the source never
 ---spells was registered by a DEPENDENCY that the plugin loads (`ui.nvim`'s `:KitPreview`, `lib.nvim`'s
 ---`:LibLogger`): it is not the plugin's surface, whoever's `require` happened to trigger it.

@@ -48,12 +48,19 @@ function M.run(ctx)
   if not data then
     return out --[[@as Testing.Conformance.Outcome]]
   end
-  local audit = data.audit or {}
+  local audit, aerr = common.audit(data, { "actions", "key_risks", "prefix" })
+  if not audit then
+    return aerr --[[@as Testing.Conformance.Outcome]]
+  end
   if audit.lib == false then
     return { na = "lib.nvim.bindings.audit is not available in the child editor" }
   end
+  local facts1, ferr = common.facts(data)
+  if not facts1 then
+    return ferr --[[@as Testing.Conformance.Outcome]]
+  end
   local own = {}
-  for _, c in ipairs((data.facts1 and data.facts1.commands) or {}) do
+  for _, c in ipairs(facts1.commands or {}) do
     own[c.name] = true
   end
   local risks = type(audit.key_risks) == "table" and audit.key_risks or {}

@@ -39,8 +39,12 @@ function M.run(ctx)
   if not data then
     return out --[[@as Testing.Conformance.Outcome]]
   end
-  local default_keys = common.user_keymaps(data.facts1)
-  if #default_keys == 0 and #bound_entries(data.facts1 or {}) == 0 then
+  local facts1, ferr = common.facts(data)
+  if not facts1 then
+    return ferr --[[@as Testing.Conformance.Outcome]]
+  end
+  local default_keys = common.user_keymaps(facts1)
+  if #default_keys == 0 and #bound_entries(facts1) == 0 then
     return {
       na = "the plugin registers no keymap with the `setup` of .testing.lua (nothing to switch off; "
         .. "list the keymaps in `setup` to check them)",

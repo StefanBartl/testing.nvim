@@ -40,7 +40,8 @@ local function luarc(ctx)
   return decoded, lines, nil
 end
 
----Value of a LuaLS setting: the flat spelling (`"workspace.library"`) or the nested one.
+---Value of a LuaLS setting: the flat spelling (`"workspace.library"`) or the nested one. A JSON `null`
+---(`vim.NIL`) is no value, as LuaLS reads it (LUA-16).
 ---@param decoded table|nil
 ---@param dotted string
 ---@return any
@@ -48,8 +49,9 @@ local function setting(decoded, dotted)
   if type(decoded) ~= "table" then
     return nil
   end
-  if decoded[dotted] ~= nil then
-    return decoded[dotted]
+  local flat = decoded[dotted]
+  if flat ~= nil and flat ~= vim.NIL then
+    return flat
   end
   local node = decoded
   for seg in dotted:gmatch("[^.]+") do
@@ -57,6 +59,9 @@ local function setting(decoded, dotted)
       return nil
     end
     node = node[seg]
+  end
+  if node == vim.NIL then
+    return nil
   end
   return node
 end

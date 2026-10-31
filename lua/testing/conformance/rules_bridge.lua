@@ -119,11 +119,13 @@ local function theirs(status)
   return nil
 end
 
----Verdict of testing.nvim per rule id (K15's `rule_status`, also under the `also` ids).
+---Verdict of testing.nvim per rule id (K15's `rule_status`, also under the `also` ids). A rule's own verdict
+---wins over one it gets as another rule's alias (NEW-14 is a rule and an `also` of REL-35); two aliases that
+---disagree give `fail`. Independent of the order `pairs` walks the statuses in.
 ---@param checks Testing.Conformance.CheckResult[]|nil
 ---@return table<string, string>
 local function ours(checks)
-  local by_id = {}
+  local own, aliased = {}, {}
   local index = require("testing.conformance.rules").index()
   for _, check in ipairs(checks or {}) do
     for id, st in pairs(check.rule_status or {}) do
@@ -134,16 +136,22 @@ local function ours(checks)
         status = "fail"
       end
       if status then
-        by_id[id] = status
+        own[id] = status
         local rule = index[id]
         for _, alias in ipairs(rule and rule.also or {}) do
-          by_id[alias] = status
+          if aliased[alias] ~= "fail" then
+            aliased[alias] = status
+          end
         end
       end
     end
   end
-  return by_id
+  for id, status in pairs(own) do
+    aliased[id] = status
+  end
+  return aliased
 end
+M._ours = ours -- seam for specs
 
 ---Run the bridge.
 ---@param root string

@@ -27,8 +27,15 @@ function M.run(ctx)
   if not data then
     return out --[[@as Testing.Conformance.Outcome]]
   end
-  local cmds = (data.facts1 and data.facts1.commands) or {}
-  local audit = data.audit or {}
+  local facts1, ferr = common.facts(data)
+  if not facts1 then
+    return ferr --[[@as Testing.Conformance.Outcome]]
+  end
+  local audit, aerr = common.audit(data, { "composer" })
+  if not audit then
+    return aerr --[[@as Testing.Conformance.Outcome]]
+  end
+  local cmds = facts1.commands or {}
   local routes = type(audit.composer) == "table" and audit.composer or {}
   if #cmds == 0 and #routes == 0 then
     return { na = "the plugin defines no user command" }
