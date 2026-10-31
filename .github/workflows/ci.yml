@@ -92,7 +92,7 @@ jobs:
           version: v0.12.2
       # The result cache, as docs/CI-CACHE.md describes it: the key of the cache action is only the transport
       # (each entry carries its full spec key), pull requests restore and never save, the main branch saves.
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/testing-cache
           key: testing-${{ runner.os }}-nvim0.12.2-${{ github.sha }}
