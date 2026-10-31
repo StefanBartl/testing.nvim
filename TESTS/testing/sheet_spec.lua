@@ -636,6 +636,44 @@ return function(H)
         "Look at: `p4/TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap`",
         "and the snapshots"
       )
+      has(
+        block,
+        "\n" .. tasks.STATES .. " one=inbox -->\n" .. tasks.END,
+        "the machine-readable states line, last inside the block"
+      )
+      local function st(e)
+        return tasks.state_word(
+          vim.tbl_extend("force", { snapshots = {}, rel = "TESTS/sheets/x.sheet.lua" }, e)
+        )
+      end
+      local plain = assert(sheet.validate({ id = "p", title = "P", steps = { { keys = "x" } } }))
+      local manual =
+        assert(sheet.validate({ id = "m", title = "M", engine = "manual", manual = { "x" } }))
+      eq(
+        {
+          st({ sheet = plain, case = { status = "fail" } }),
+          st({ sheet = plain }),
+          st({ sheet = plain, case = { status = "pass" }, stale = "the sheet changed" }),
+          st({ sheet = plain, case = { status = "pass" } }),
+          st({ sheet = manual }),
+          st({ error = "boom" }),
+        },
+        { "red", "never", "stale", "green", "manual", "red" },
+        "the state words: failed, never ran, stale, green, manual, does not load"
+      )
+      local unloadable = tasks.render_block({
+        {
+          root = root .. "/p4",
+          rel = "TESTS/sheets/bad name.sheet.lua",
+          error = "boom",
+          snapshots = {},
+        },
+      })
+      has(
+        unloadable,
+        tasks.STATES .. " bad-name=red -->",
+        "a sheet that does not load: its file name, made safe"
+      )
       local placed = tasks.apply(body, block)
       ok(
         placed:find(tasks.END .. "\n\n## Notizen", 1, true) ~= nil,

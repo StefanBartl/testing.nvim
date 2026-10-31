@@ -23,6 +23,8 @@ local M = {}
 
 M.BEGIN = "<!-- testing:sheets:begin -->"
 M.END = "<!-- testing:sheets:end -->"
+-- The last line inside the block: `<!-- testing:sheets:states <id>=<state> ... -->`, the contract tasks.nvim reads.
+M.STATES = "<!-- testing:sheets:states"
 M.TIMEOUT_MS = 60000
 M.MAX_IDS = 1000
 
@@ -197,6 +199,32 @@ local function state(e)
   return "green, nothing left for a person"
 end
 
+---The machine-readable state of a sheet, for the `states` line of the block (read by tasks.nvim): `red` (failed,
+---or the sheet does not load), `stale`, `never`, `inbox`, `manual` or `green`.
+---@param e Testing.SheetReport.Entry
+---@return string
+function M.state_word(e)
+  local bucket = require("testing.sheet.report").bucket(e)
+  if bucket == "red" then
+    if e.sheet and not e.case then
+      return "never"
+    elseif e.sheet and e.stale then
+      return "stale"
+    end
+    return "red"
+  end
+  return bucket == "automated" and "green" or bucket
+end
+
+---The `<id>=<state>` key of a sheet: its id, or the file name of one that does not load (letters, digits, `_`,
+---`-`, `.` only, so the line splits on blanks and never ends the comment).
+---@param e Testing.SheetReport.Entry
+---@return string
+local function state_key(e)
+  local key = e.sheet and e.sheet.id or vim.fs.basename(e.rel):gsub("%.sheet%.lua$", "")
+  return (key:gsub("[^%w_.%-]", "-"))
+end
+
 ---The block for the sheets of one task. Paths always name their project (`ui.nvim/TESTS/...`): a task
 ---lives in a vault beside many projects, and the text must not depend on which roots a report was given.
 ---@param entries Testing.SheetReport.Entry[] The sheets that name this task.
@@ -244,6 +272,11 @@ function M.render_block(entries, opts)
         )
     end
   end
+  local states = {}
+  for _, e in ipairs(entries) do
+    states[#states + 1] = state_key(e) .. "=" .. M.state_word(e)
+  end
+  out[#out + 1] = M.STATES .. " " .. table.concat(states, " ") .. " -->"
   out[#out + 1] = M.END
   return table.concat(out, "\n")
 end
