@@ -262,6 +262,9 @@ function M.render(entries, opts)
     for _, e in ipairs(list) do
       out[#out + 1] = head(e, multi)
       body(e)
+      if e.task_missing then
+        out[#out + 1] = ("  - task %s is not an open task of the vault"):format(code(e.sheet.task))
+      end
     end
   end
   section("Red, stale or not run", buckets.red, function(e)
@@ -313,22 +316,28 @@ function M.render(entries, opts)
   return table.concat(out, "\n") .. "\n"
 end
 
-M.USAGE = "usage: testing sheets report [<root>...] [--from <ir.json>]... [--out <file>]"
+M.USAGE =
+  "usage: testing sheets report [<root>...] [--from <ir.json>]... [--out <file>] [--tasks <vault> [--tasks-cli <tasks.lua>] [--dry-run]]"
 
----`testing sheets report`: exit 0 written or printed, 2 bad usage, 3 the file could not be written.
+---`testing sheets report`: exit 0 written or printed, 1 a task could not be written (conflict, refused), 2 bad
+---usage, 3 the file could not be written or the engine of tasks.nvim not reached.
 ---@param argv string[] The arguments after `sheets`.
 ---@param sv { out: fun(s: string), err: fun(s: string) }
+---@param deps? { call?: Testing.SheetTasks.Call } A stand-in for the engine (specs).
 ---@return integer
-function M.main(argv, sv)
+function M.main(argv, sv, deps)
   if argv[1] ~= "report" then
     sv.err(M.USAGE)
     return 2
   end
   local roots, out_file, cases = {}, nil, nil
+  local vault, tasks_cli, dry_run = nil, nil, false
   local i = 2
   while i <= #argv do
     local a = argv[i]
-    if a == "--out" or a == "--from" then
+    if a == "--dry-run" then
+      dry_run = true
+    elseif a == "--out" or a == "--from" or a == "--tasks" or a == "--tasks-cli" then
       local v = argv[i + 1]
       if not v then
         sv.err(M.USAGE)
@@ -336,6 +345,10 @@ function M.main(argv, sv)
       end
       if a == "--out" then
         out_file = v
+      elseif a == "--tasks" then
+        vault = v
+      elseif a == "--tasks-cli" then
+        tasks_cli = v
       else
         local got, ferr = M.cases_from_ir(v)
         if not got then
@@ -359,12 +372,48 @@ function M.main(argv, sv)
   if #roots == 0 then
     roots = { vim.fn.getcwd() }
   end
-  local text = M.render(M.collect(roots, { cases = cases }), {
+  if (tasks_cli or dry_run) and not vault then
+    sv.err("testing sheets: --tasks-cli and --dry-run belong to --tasks <vault>\n" .. M.USAGE)
+    return 2
+  end
+  local entries = M.collect(roots, { cases = cases })
+  local code_out = 0
+  if vault then
+    local tasks = require("testing.sheet.tasks")
+    local call = deps and deps.call
+    if not call then
+      local cli, lerr = tasks.locate(vault, { cli = tasks_cli })
+      if not cli then
+        sv.err("testing sheets: " .. tostring(lerr))
+        return 3
+      end
+      call = tasks.caller(cli, vault)
+    end
+    local results, serr =
+      tasks.sync(entries, { call = call, dry_run = dry_run, multi = #roots > 1 })
+    if not results then
+      sv.err("testing sheets: " .. tostring(serr))
+      return 3
+    end
+    for _, r in ipairs(results) do
+      sv.out(
+        ("testing sheets: task %s %s%s"):format(
+          r.id,
+          r.outcome,
+          r.message and (": " .. r.message) or ""
+        )
+      )
+      if r.outcome == "failed" or r.outcome == "truncated" then
+        code_out = 1
+      end
+    end
+  end
+  local text = M.render(entries, {
     date = os.date("!%Y-%m-%d") --[[@as string]],
   })
   if not out_file then
     sv.out((text:gsub("\n$", "")))
-    return 0
+    return code_out
   end
   local ok, werr = require("lib.nvim.fs.write.atomic")(out_file, text, { mkdirp = true })
   if not ok then
@@ -372,7 +421,7 @@ function M.main(argv, sv)
     return 3
   end
   sv.out("testing sheets: wrote " .. out_file)
-  return 0
+  return code_out
 end
 
 return M

@@ -518,7 +518,8 @@ or bad usage, 3 the root cannot be analysed.
 `testing sheets report [<root>...] [--from <ir.json>]... [--out <file>]`: the
 checklist of live checks from the test sheets (TESTS/sheets/*.sheet.lua) and
 their last results (the editor's state, or the IR of a run with `--from`); runs
-nothing. 0 written or printed, 2 bad usage, 3 the file could not be written.
+nothing. `--tasks {vault}` writes the state of each sheet into its task through
+tasks.nvim (`--dry-run`: only say what would change). 0 written or printed, 2 bad usage, 3 the file could not be written.
 See docs/SHEETS.md.
 
 ==============================================================================

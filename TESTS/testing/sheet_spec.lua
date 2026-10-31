@@ -601,6 +601,248 @@ return function(H)
       f:close()
       has(written, "## Red, stale or not run", "the written list")
     end
+
+    -- ===================================================================
+    -- 4. the state written into the tasks (testing.sheet.tasks), through a stand-in engine
+    do
+      local tasks = require("testing.sheet.tasks")
+      local body = "Summary.\n\n## Kontext\n\nWhy.\n\n## Notizen\n\n- a note"
+      local block = tasks.render_block({
+        {
+          root = root .. "/p4",
+          rel = "TESTS/sheets/one.sheet.lua",
+          sheet = assert(sheet.validate({
+            id = "one",
+            title = "One",
+            task = "a/one",
+            steps = { { keys = "x" } },
+            judge = { "looks ok" },
+            manual = { "press it" },
+          })),
+          case = { status = "pass" },
+          snapshots = { "TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap" },
+        },
+      }, { multi = false })
+      has(block, tasks.BEGIN, "the block has its begin marker")
+      has(
+        block,
+        "- **One** (`one`, `TESTS/sheets/one.sheet.lua`): automated part green, waiting for your judgement",
+        "the state"
+      )
+      has(block, "    - [ ] looks ok", "judge criteria are checkboxes")
+      has(block, "    - [ ] press it", "manual steps too")
+      has(
+        block,
+        "Look at: `TESTS/__snapshots__/sheets/one.sheet/s.80x24.snap`",
+        "and the snapshots"
+      )
+      local placed = tasks.apply(body, block)
+      ok(
+        placed:find(tasks.END .. "\n\n## Notizen", 1, true) ~= nil,
+        "the block goes in front of the notes"
+      )
+      has(placed, "## Kontext\n\nWhy.\n\n" .. tasks.BEGIN, "after the other sections")
+      local again = tasks.apply(placed, block:gsub("looks ok", "changed"))
+      local _, n_blocks = again:gsub(vim.pesc(tasks.BEGIN), "")
+      eq(n_blocks, 1, "a second write replaces the block, it does not add one")
+      has(again, "- [ ] changed", "with the new text")
+      has(
+        tasks.apply("No notes here.", block),
+        "No notes here.\n\n" .. tasks.BEGIN,
+        "without notes: at the end"
+      )
+      eq(
+        tasks.ticked("- [x] looks ok\n  - [X] other\n- [ ] open"),
+        { ["looks ok"] = true, other = true },
+        "ticked boxes"
+      )
+
+      -- sync through a stand-in for `tasks call`
+      write(
+        "p4/TESTS/sheets/one.sheet.lua",
+        'return { id = "one", title = "One", task = "a/one", steps = { { keys = "x" } }, judge = { "looks ok" } }'
+      )
+      write(
+        "p4/TESTS/sheets/two.sheet.lua",
+        'return { id = "two", title = "Two", task = "a/gone", steps = { { keys = "x" } } }'
+      )
+      write(
+        "p4/TESTS/sheets/three.sheet.lua",
+        'return { id = "three", title = "Three", steps = { { keys = "x" } } }'
+      )
+      local root4 = root .. "/p4"
+      local cases4 =
+        { ["sheet:one"] = { name = "sheet:one", status = "pass", file = "TESTS/s_spec.lua" } }
+      local calls, current = {}, body
+      local function engine(answer_ops)
+        return function(method, params)
+          calls[#calls + 1] = { method = method, params = params }
+          if method == "bodies" then
+            return {
+              kind = "tasks.bodies",
+              items = { { id = "a/one", etag = "sha256:1", body = current } },
+            }
+          end
+          return answer_ops(params)
+        end
+      end
+      local accept = function(params)
+        current = params.ops[1].body
+        return { kind = "tasks.result", results = { { n = 1, ok = true, outcome = "changed" } } }
+      end
+      local entries = report.collect({ root4 }, { cases = cases4 })
+      local results = assert(tasks.sync(entries, { call = engine(accept), multi = false }))
+      local by = {}
+      for _, r in ipairs(results) do
+        by[r.id] = r.outcome
+      end
+      eq(
+        by,
+        { ["a/one"] = "changed", ["a/gone"] = "missing" },
+        "one task changed, one is not open; a sheet without task is left out"
+      )
+      eq(calls[1].params.ids, { "a/gone", "a/one" }, "one bodies call for all tasks")
+      local op = calls[2].params.ops[1]
+      eq(
+        { op.op, op.id, op.if_match },
+        { "set_body", "a/one", "sha256:1" },
+        "one set_body with the etag that was read"
+      )
+      has(op.body, "- [ ] looks ok", "the block is in the body written")
+      ok(
+        vim.iter(entries):any(function(e)
+          return e.task_missing
+        end),
+        "the entry of the missing task is marked"
+      )
+
+      -- a ticked criterion stays ticked, and the same state is unchanged
+      current = current:gsub("%- %[ %] looks ok", "- [x] looks ok")
+      calls = {}
+      local again_results = assert(
+        tasks.sync(
+          report.collect({ root4 }, { cases = cases4 }),
+          { call = engine(accept), multi = false }
+        )
+      )
+      eq(again_results[2].outcome, "unchanged", "nothing new: unchanged, and the tick is kept")
+      eq(#calls, 1, "no ops call when nothing changed")
+
+      -- a dry run writes nothing; a refused write is a failure with the reason
+      current = body
+      calls = {}
+      local dry = assert(
+        tasks.sync(
+          report.collect({ root4 }, { cases = cases4 }),
+          { call = engine(accept), dry_run = true }
+        )
+      )
+      eq(dry[2].outcome, "would_change", "a dry run says what would change")
+      eq(#calls, 1, "and sends no ops")
+      local refuse = function()
+        return {
+          kind = "tasks.result",
+          results = { { n = 1, ok = false, error = { code = "conflict", message = "stale" } } },
+        }
+      end
+      local refused_r =
+        assert(tasks.sync(report.collect({ root4 }, { cases = cases4 }), { call = engine(refuse) }))
+      eq(
+        { refused_r[2].outcome, refused_r[2].message },
+        { "failed", "conflict: stale" },
+        "a conflict is a failure with its reason"
+      )
+      local nobody = function()
+        return nil, "engine down"
+      end
+      ok(
+        tasks.sync(entries, { call = nobody }) == nil,
+        "an engine that cannot be reached is an error of the whole sync"
+      )
+
+      -- the CLI entry
+      local outs4, errs4 = {}, {}
+      local sv4 = {
+        out = function(s)
+          outs4[#outs4 + 1] = s
+        end,
+        err = function(s)
+          errs4[#errs4 + 1] = s
+        end,
+      }
+      eq(
+        report.main({ "report", root4, "--dry-run" }, sv4),
+        2,
+        "--dry-run without --tasks is bad usage"
+      )
+      eq(
+        report.main({ "report", root4, "--tasks", root, "--tasks-cli", root .. "/nope.lua" }, sv4),
+        3,
+        "a CLI that is not there"
+      )
+      local ir4 = write(
+        "ir4.json",
+        vim.json.encode({
+          cases = {
+            {
+              id = "x::sheet:one",
+              file = "TESTS/s_spec.lua",
+              name = "sheet:one",
+              status = "pass",
+              duration_ms = 1,
+              assertions = { { ok = true } },
+            },
+          },
+        })
+      )
+      current = body
+      outs4 = {}
+      eq(
+        report.main(
+          { "report", root4, "--from", ir4, "--tasks", root },
+          sv4,
+          { call = engine(accept) }
+        ),
+        0,
+        "--tasks with an engine"
+      )
+      local joined = table.concat(outs4, "\n")
+      has(joined, "testing sheets: task a/one changed", "each task is reported")
+      has(
+        joined,
+        "testing sheets: task a/gone missing: not an open task of the vault",
+        "a missing task too"
+      )
+      has(joined, "task `a/gone` is not an open task of the vault", "and the list says so")
+      current = body
+      eq(
+        report.main(
+          { "report", root4, "--from", ir4, "--tasks", root },
+          sv4,
+          { call = engine(refuse) }
+        ),
+        1,
+        "a refused write is exit 1"
+      )
+      ok(
+        tasks.locate(root, { cli = root .. "/nope.lua" }) == nil,
+        "locate refuses a CLI that is not there"
+      )
+      -- found beside the vault like a dependency (the real layout: tasks-vault next to tasks.nvim)
+      write("side/tasks.nvim/lua/tasks_nvim/init.lua", "return {}")
+      write("side/tasks.nvim/scripts/tasks.lua", "-- cli")
+      vim.fn.mkdir(root .. "/side/tasks-vault", "p")
+      local found = tasks.locate(root .. "/side/tasks-vault", {
+        getenv = function()
+          return nil
+        end,
+      })
+      eq(
+        found,
+        root .. "/side/tasks.nvim/scripts/tasks.lua",
+        "the engine beside the vault is found"
+      )
+    end
   end, debug.traceback)
 
   S.cleanup()
